@@ -32,9 +32,15 @@ importers:
 
   packages/core:
     dependencies:
+      '@kodegpt/profiles':
+        specifier: workspace:*
+        version: link:../profiles
       '@kodegpt/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@kodegpt/trust':
+        specifier: workspace:*
+        version: link:../trust
 
   packages/dev-console: {}
 
@@ -42,7 +48,11 @@ importers:
 
   packages/mcp-server: {}
 
-  packages/profiles: {}
+  packages/profiles:
+    dependencies:
+      '@kodegpt/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/protocol:
     dependencies:

@@ -149,6 +149,12 @@ pub enum RuntimeRequest {
         id: String,
         params: WorkspaceRegisterParams,
     },
+    #[serde(rename = "workspace.read_project_profile")]
+    WorkspaceReadProjectProfile {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCapabilityParams,
+    },
     #[serde(rename = "workspace.restrict_policy")]
     WorkspaceRestrictPolicy {
         jsonrpc: JsonRpcVersion,

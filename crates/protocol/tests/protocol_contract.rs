@@ -65,6 +65,7 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "runtime.hello.json",
         "system.inspect_root.json",
         "workspace.register.json",
+        "workspace.read_project_profile.json",
         "workspace.restrict_policy.json",
         "workspace.activate.json",
         "workspace.begin_close.json",

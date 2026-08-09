@@ -12,6 +12,7 @@ name = "kodegpt-runtime"
 path = "src/main.rs"
 
 [dependencies]
+kodegpt-policy = { path = "../policy" }
 kodegpt-protocol = { path = "../protocol" }
 kodegpt-workspace-io = { path = "../workspace-io" }
 serde = { version = "1", features = ["derive"] }

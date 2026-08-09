@@ -2,6 +2,7 @@
 
 mod identity;
 mod mountinfo;
+mod profile;
 mod registry;
 
 pub use identity::{FilesystemIdentity, InspectRootError, InspectedRoot, inspect_root};

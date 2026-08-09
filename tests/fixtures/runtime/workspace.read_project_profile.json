@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_read_project_profile",
+  "method": "workspace.read_project_profile",
+  "params": {
+    "capabilityId": "kc_fixture_1"
+  }
+}

@@ -15,6 +15,7 @@ pub const DEFAULT_AUDIT_ROTATIONS: usize = 5;
 pub enum AuditAction {
     InspectRoot,
     WorkspaceRegister,
+    WorkspaceReadProjectProfile,
     WorkspaceRestrictPolicy,
     WorkspaceActivate,
     WorkspaceBeginClose,
@@ -350,6 +351,7 @@ impl AuditAction {
         match self {
             Self::InspectRoot => "inspect_root",
             Self::WorkspaceRegister => "workspace_register",
+            Self::WorkspaceReadProjectProfile => "workspace_read_project_profile",
             Self::WorkspaceRestrictPolicy => "workspace_restrict_policy",
             Self::WorkspaceActivate => "workspace_activate",
             Self::WorkspaceBeginClose => "workspace_begin_close",

@@ -103,6 +103,24 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "workspace.read_project_profile" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "workspace.restrict_policy" },
         "params": {
           "type": "object",

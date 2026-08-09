@@ -11,6 +11,7 @@ use crate::mountinfo::{
     BackingTreeIdentity, MountInfoEntry, MountInfoError, backing_tree_for_path,
     read_current_mountinfo,
 };
+use crate::profile::{ProjectProfileReadError, read_project_profile};
 
 static NEXT_CAPABILITY_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -46,6 +47,10 @@ pub enum WorkspaceRegistryError {
     IdentityChanged,
     MountTopologyUnavailable,
     RootOverlap,
+    PolicyEscalation,
+    WorkspaceNotReady,
+    FilesystemBoundaryUnavailable,
+    ProjectProfileReadFailed,
     CapabilityNotFound,
 }
 
@@ -58,6 +63,10 @@ impl fmt::Display for WorkspaceRegistryError {
                 formatter.write_str("workspace mount topology is unavailable")
             }
             Self::RootOverlap => formatter.write_str("workspace root overlaps an existing root"),
+            Self::PolicyEscalation => formatter.write_str("workspace policy restriction would escalate authority"),
+            Self::WorkspaceNotReady => formatter.write_str("workspace is not in the required lifecycle phase"),
+            Self::FilesystemBoundaryUnavailable => formatter.write_str("filesystem boundary semantics are unavailable"),
+            Self::ProjectProfileReadFailed => formatter.write_str("project profile could not be read safely"),
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
     }
@@ -167,16 +176,47 @@ impl<P> WorkspaceRegistry<P> {
         Ok(WorkspaceRegistration { capability_id })
     }
 
-    pub fn restrict_policy(
+    pub fn read_project_profile(
+        &self,
+        capability_id: &str,
+    ) -> Result<Option<String>, WorkspaceRegistryError> {
+        let context = self
+            .contexts
+            .get(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        if context.phase != WorkspacePhase::Opening {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
+        }
+        read_project_profile(&context.root_fd).map_err(|error| match error {
+            ProjectProfileReadError::BoundaryUnavailable => {
+                WorkspaceRegistryError::FilesystemBoundaryUnavailable
+            }
+            ProjectProfileReadError::Unsafe
+            | ProjectProfileReadError::TooLarge
+            | ProjectProfileReadError::InvalidUtf8
+            | ProjectProfileReadError::Io(_) => WorkspaceRegistryError::ProjectProfileReadFailed,
+        })
+    }
+
+    pub fn restrict_policy_with<E, F>(
         &mut self,
         capability_id: &str,
         restriction: P,
-    ) -> Result<(), WorkspaceRegistryError> {
+        resolve: F,
+    ) -> Result<(), WorkspaceRegistryError>
+    where
+        F: FnOnce(&P, &P) -> Result<P, E>,
+    {
         let context = self
             .contexts
             .get_mut(capability_id)
             .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
-        context.effective_policy = restriction;
+        if context.phase != WorkspacePhase::Opening {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
+        }
+        let next = resolve(&context.effective_policy, &restriction)
+            .map_err(|_| WorkspaceRegistryError::PolicyEscalation)?;
+        context.effective_policy = next;
         Ok(())
     }
 
@@ -185,7 +225,21 @@ impl<P> WorkspaceRegistry<P> {
             .contexts
             .get_mut(capability_id)
             .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        if context.phase != WorkspacePhase::Opening {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
+        }
         context.phase = WorkspacePhase::Ready;
+        Ok(())
+    }
+
+    pub fn require_ready(&self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        let context = self
+            .contexts
+            .get(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        if context.phase != WorkspacePhase::Ready {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
+        }
         Ok(())
     }
 
@@ -194,22 +248,37 @@ impl<P> WorkspaceRegistry<P> {
             .contexts
             .get_mut(capability_id)
             .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
-        context.phase = WorkspacePhase::Closing;
-        Ok(())
+        match context.phase {
+            WorkspacePhase::Opening => Err(WorkspaceRegistryError::WorkspaceNotReady),
+            WorkspacePhase::Ready => {
+                context.phase = WorkspacePhase::Closing;
+                Ok(())
+            }
+            WorkspacePhase::Closing => Ok(()),
+        }
     }
 
     pub fn cancel_executions(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
-        if !self.contexts.contains_key(capability_id) {
-            return Err(WorkspaceRegistryError::CapabilityNotFound);
+        let context = self
+            .contexts
+            .get(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        if context.phase != WorkspacePhase::Closing {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
         }
         Ok(())
     }
 
     pub fn unregister(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
-        self.contexts
-            .remove(capability_id)
-            .map(|_| ())
-            .ok_or(WorkspaceRegistryError::CapabilityNotFound)
+        let context = self
+            .contexts
+            .get(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        if context.phase == WorkspacePhase::Ready {
+            return Err(WorkspaceRegistryError::WorkspaceNotReady);
+        }
+        self.contexts.remove(capability_id);
+        Ok(())
     }
 
     #[cfg(test)]
@@ -407,6 +476,52 @@ mod tests {
             Err(WorkspaceRegistryError::MountTopologyUnavailable)
         ));
         assert_eq!(malformed.len(), 0);
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn registry_enforces_opening_ready_closing_phase_transitions() {
+        let root = temporary_root("phase-transitions");
+        let identity = inspect_root(&root).expect("root inspected").identity;
+        let mountinfo = mount_line(250, &identity, "/srv/phases", &root);
+        let mut registry = registry_with_mountinfo(mountinfo);
+        let registration = registry
+            .register(&root, &identity, ())
+            .expect("root registers");
+        let capability_id = registration.capability_id;
+
+        assert!(matches!(
+            registry.require_ready(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
+        registry
+            .restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(()))
+            .expect("opening policy restriction accepted");
+        registry.activate(&capability_id).expect("workspace activates");
+        registry.require_ready(&capability_id).expect("ready accepted");
+        assert!(matches!(
+            registry.restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(())),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
+        assert!(matches!(
+            registry.unregister(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
+
+        registry.begin_close(&capability_id).expect("close begins");
+        registry
+            .begin_close(&capability_id)
+            .expect("begin close is idempotent while closing");
+        assert!(matches!(
+            registry.require_ready(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
+        registry
+            .cancel_executions(&capability_id)
+            .expect("closing cancellation accepted");
+        registry.unregister(&capability_id).expect("closing unregisters");
+        assert_eq!(registry.len(), 0);
 
         fs::remove_dir_all(root).expect("root removed");
     }

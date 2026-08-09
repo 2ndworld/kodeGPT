@@ -198,6 +198,25 @@ async fn dispatch_one(
                 },
             )
         }
+        "workspace.read_project_profile" => {
+            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceReadProjectProfile,
+                move |registry| {
+                    let contents = registry.read_project_profile(&capability_id)?;
+                    Ok(json!({ "contents": contents }))
+                },
+            )
+        }
         "workspace.restrict_policy" => {
             let params =
                 match serde_json::from_value::<WorkspaceRestrictPolicyParams>(request.params) {
@@ -214,7 +233,11 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::WorkspaceRestrictPolicy,
                 move |registry| {
-                    registry.restrict_policy(&capability_id, restriction)?;
+                    registry.restrict_policy_with(
+                        &capability_id,
+                        restriction,
+                        kodegpt_policy::restrict_policy,
+                    )?;
                     Ok(json!({ "ok": true }))
                 },
             )
@@ -444,6 +467,14 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
             (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE")
         }
         WorkspaceRegistryError::RootOverlap => (-32024, "WORKSPACE_ROOT_OVERLAP"),
+        WorkspaceRegistryError::PolicyEscalation => (-32027, "WORKSPACE_POLICY_ESCALATION"),
+        WorkspaceRegistryError::WorkspaceNotReady => (-32028, "WORKSPACE_NOT_READY"),
+        WorkspaceRegistryError::ProjectProfileReadFailed => {
+            (-32029, "WORKSPACE_PROFILE_READ_FAILED")
+        }
+        WorkspaceRegistryError::FilesystemBoundaryUnavailable => {
+            (-32030, "FILESYSTEM_BOUNDARY_UNAVAILABLE")
+        }
         WorkspaceRegistryError::CapabilityNotFound => {
             (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
         }
@@ -658,6 +689,18 @@ mod tests {
         })
     }
 
+    fn develop_policy(allow_write: bool) -> Value {
+        json!({
+            "name": "develop",
+            "allowWrite": allow_write,
+            "allowProcess": true,
+            "network": "deny",
+            "allowedExecutableNames": ["node", "python3"],
+            "inheritEnv": false,
+            "envAllowlist": ["LANG"]
+        })
+    }
+
     async fn next_response(
         request_tx: &mpsc::UnboundedSender<Value>,
         response_rx: &mut mpsc::UnboundedReceiver<Value>,
@@ -720,6 +763,158 @@ mod tests {
         assert!(!audit.is_healthy());
         drop(request_tx);
         dispatcher.await.expect("dispatcher task joins");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workspace_project_profile_read_uses_retained_root_fd_after_path_replacement() {
+        let (audit, audit_root) = audit_sink("workspace-profile-read");
+        let workspace = audit_root.with_extension("profile-workspace");
+        let displaced = workspace.with_extension("profile-original");
+        fs::create_dir_all(workspace.join(".kodegpt")).expect("profile directory created");
+        fs::write(
+            workspace.join(".kodegpt/profile.json"),
+            r#"{"name":"observe","allowWrite":false}"#,
+        )
+        .expect("original profile written");
+        let identity = kodegpt_workspace_io::inspect_root(&workspace)
+            .expect("workspace inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registered = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_profile_register",
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": identity,
+                "ceiling": observe_policy()
+            }),
+        )
+        .await;
+        let capability_id = registered["result"]["capabilityId"]
+            .as_str()
+            .expect("registration returns capability")
+            .to_owned();
+
+        fs::rename(&workspace, &displaced).expect("registered pathname displaced");
+        fs::create_dir_all(workspace.join(".kodegpt")).expect("replacement profile directory created");
+        fs::write(
+            workspace.join(".kodegpt/profile.json"),
+            r#"{"name":"trusted","allowWrite":true}"#,
+        )
+        .expect("replacement profile written");
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_profile_read",
+            "workspace.read_project_profile",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        assert_eq!(
+            response["result"]["contents"],
+            r#"{"name":"observe","allowWrite":false}"#
+        );
+
+        let _ = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_profile_unregister",
+            "workspace.unregister",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("workspace_read_project_profile"));
+        fs::remove_dir_all(workspace).expect("replacement removed");
+        fs::remove_dir_all(displaced).expect("original removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workspace_policy_restriction_cannot_widen_after_narrowing() {
+        let (audit, audit_root) = audit_sink("workspace-policy-monotonic");
+        let workspace = audit_root.with_extension("policy-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let identity = kodegpt_workspace_io::inspect_root(&workspace)
+            .expect("workspace inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registered = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_policy_register",
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": identity,
+                "ceiling": develop_policy(true)
+            }),
+        )
+        .await;
+        let capability_id = registered["result"]["capabilityId"]
+            .as_str()
+            .expect("registration returns capability")
+            .to_owned();
+
+        let narrowed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_policy_narrow",
+            "workspace.restrict_policy",
+            json!({
+                "capabilityId": capability_id,
+                "restriction": develop_policy(false)
+            }),
+        )
+        .await;
+        assert_eq!(narrowed["result"]["ok"], true);
+
+        let widened = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_policy_widen",
+            "workspace.restrict_policy",
+            json!({
+                "capabilityId": capability_id,
+                "restriction": develop_policy(true)
+            }),
+        )
+        .await;
+        assert_eq!(widened["error"]["message"], "WORKSPACE_POLICY_ESCALATION");
+
+        let _ = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_policy_unregister",
+            "workspace.unregister",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        fs::remove_dir_all(workspace).expect("workspace removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
