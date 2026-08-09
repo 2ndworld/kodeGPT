@@ -119,6 +119,21 @@ pub struct FileReadParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileTreeParams {
+    pub capability_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileSearchParams {
+    pub capability_id: String,
+    pub path: String,
+    pub query: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessRunParams {
     pub capability_id: String,
     pub logical_executable: String,
@@ -190,6 +205,18 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: FileReadParams,
+    },
+    #[serde(rename = "file.tree")]
+    FileTree {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: FileTreeParams,
+    },
+    #[serde(rename = "file.search")]
+    FileSearch {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: FileSearchParams,
     },
     #[serde(rename = "process.run")]
     ProcessRun {

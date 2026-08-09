@@ -71,6 +71,19 @@ class FakeKernel implements KernelTransport {
         return (await this.cancel) as T;
       case "workspace.activate":
         return this.activateResult as T;
+      case "file.read":
+        return { contents: "file contents", bytesRead: 13, eof: true } as T;
+      case "file.tree":
+        return {
+          entries: [
+            { path: "src", kind: "directory" },
+            { path: "src/index.ts", kind: "file" }
+          ]
+        } as T;
+      case "file.search":
+        return {
+          matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }]
+        } as T;
       case "workspace.restrict_policy":
       case "workspace.begin_close":
       case "workspace.unregister":
@@ -110,6 +123,41 @@ describe("WorkspaceManager", () => {
       "workspace.activate"
     ]);
     expect(kernel.calls[3]?.params.restriction).toMatchObject({ allowWrite: false });
+  });
+
+  it("routes READY public workspace file operations through the private runtime capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_files"
+    });
+
+    const opened = await manager.openWorkspace("/workspace");
+    const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
+    const tree = await manager.tree("ws_files", ".");
+    const matches = await manager.search("ws_files", "needle", ".");
+
+    expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
+    expect(tree).toEqual([
+      { path: "src", kind: "directory" },
+      { path: "src/index.ts", kind: "file" }
+    ]);
+    expect(matches).toEqual([
+      { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
+    ]);
+    expect(JSON.stringify(opened)).not.toContain("kc_fixture");
+    expect(kernel.calls.slice(-3)).toEqual([
+      {
+        method: "file.read",
+        params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
+      },
+      { method: "file.tree", params: { capabilityId: "kc_fixture", path: "." } },
+      {
+        method: "file.search",
+        params: { capabilityId: "kc_fixture", path: ".", query: "needle" }
+      }
+    ]);
   });
 
   it("does not publish READY when workspace.activate returns a malformed acknowledgement", async () => {

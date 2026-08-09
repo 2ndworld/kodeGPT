@@ -11,6 +11,8 @@ export const RUNTIME_METHODS = [
   "workspace.cancel_executions",
   "workspace.unregister",
   "file.read",
+  "file.tree",
+  "file.search",
   "process.run"
 ] as const;
 
@@ -80,6 +82,21 @@ const fileReadParamsSchema = z
   })
   .strict();
 
+const fileTreeParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    path: z.string()
+  })
+  .strict();
+
+const fileSearchParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    path: z.string(),
+    query: z.string().min(1)
+  })
+  .strict();
+
 const processRunParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -113,6 +130,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("workspace.cancel_executions", workspaceCapabilityParamsSchema),
   requestSchema("workspace.unregister", workspaceCapabilityParamsSchema),
   requestSchema("file.read", fileReadParamsSchema),
+  requestSchema("file.tree", fileTreeParamsSchema),
+  requestSchema("file.search", fileSearchParamsSchema),
   requestSchema("process.run", processRunParamsSchema)
 ]);
 

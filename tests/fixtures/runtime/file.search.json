@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_search",
+  "method": "file.search",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": ".",
+    "query": "needle"
+  }
+}

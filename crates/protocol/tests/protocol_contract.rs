@@ -72,6 +72,8 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "workspace.cancel_executions.json",
         "workspace.unregister.json",
         "file.read.json",
+        "file.tree.json",
+        "file.search.json",
         "process.run.json",
     ] {
         let value = fixture(name);

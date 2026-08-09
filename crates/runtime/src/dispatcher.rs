@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kodegpt_protocol::{
+    FileReadParams, FileSearchParams, FileTreeParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, RuntimePolicy,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams,
@@ -348,6 +349,74 @@ async fn dispatch_one(
                 },
             )
         }
+        "file.read" => {
+            let params = match serde_json::from_value::<FileReadParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileRead,
+                move |registry| {
+                    let result = registry.read_file(
+                        &capability_id,
+                        &path,
+                        params.offset,
+                        params.max_bytes,
+                    )?;
+                    Ok(json!(result))
+                },
+            )
+        }
+        "file.tree" => {
+            let params = match serde_json::from_value::<FileTreeParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileTree,
+                move |registry| {
+                    let entries = registry.tree(&capability_id, &path)?;
+                    Ok(json!({ "entries": entries }))
+                },
+            )
+        }
+        "file.search" => {
+            let params = match serde_json::from_value::<FileSearchParams>(request.params) {
+                Ok(params) if !params.query.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            let query = params.query;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileSearch,
+                move |registry| {
+                    let matches = registry.search(&capability_id, &path, &query)?;
+                    Ok(json!({ "matches": matches }))
+                },
+            )
+        }
         #[cfg(feature = "runtime-test-methods")]
         "test.sleep" if test_methods_enabled => {
             let params = match serde_json::from_value::<SleepParams>(request.params) {
@@ -505,6 +574,11 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FilesystemBoundaryUnavailable => {
             (-32030, "FILESYSTEM_BOUNDARY_UNAVAILABLE")
         }
+        WorkspaceRegistryError::FileAccessDenied => (-32031, "FILE_ACCESS_DENIED"),
+        WorkspaceRegistryError::FileNotFound => (-32032, "FILE_NOT_FOUND"),
+        WorkspaceRegistryError::FileInvalidUtf8 => (-32033, "FILE_INVALID_UTF8"),
+        WorkspaceRegistryError::FileLimitExceeded => (-32034, "FILE_LIMIT_EXCEEDED"),
+        WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
         WorkspaceRegistryError::CapabilityNotFound => {
             (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
         }
@@ -922,6 +996,138 @@ mod tests {
         dispatcher.await.expect("dispatcher task joins");
         let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
         assert!(audit_text.contains("workspace_read_project_profile"));
+        fs::remove_dir_all(workspace).expect("replacement removed");
+        fs::remove_dir_all(displaced).expect("original removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn file_operations_use_retained_root_fd_and_fail_before_io_when_audit_is_unavailable() {
+        let (audit, audit_root) = audit_sink("workspace-file-read");
+        let workspace = audit_root.with_extension("file-workspace");
+        let displaced = workspace.with_extension("file-original");
+        fs::create_dir_all(workspace.join("nested")).expect("workspace tree created");
+        fs::write(workspace.join("inside.txt"), "original contents\n")
+            .expect("original file written");
+        fs::write(workspace.join("nested/needle.txt"), "alpha\nneedle here\nomega\n")
+            .expect("search file written");
+        let identity = kodegpt_workspace_io::inspect_root(&workspace)
+            .expect("workspace inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registered = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_register",
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": identity,
+                "ceiling": observe_policy()
+            }),
+        )
+        .await;
+        let capability_id = registered["result"]["capabilityId"]
+            .as_str()
+            .expect("registration returns capability")
+            .to_owned();
+        let activated = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_activate",
+            "workspace.activate",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        assert_eq!(activated["result"]["ok"], true);
+
+        fs::rename(&workspace, &displaced).expect("registered pathname displaced");
+        fs::create_dir_all(workspace.join("nested")).expect("replacement tree created");
+        fs::write(workspace.join("inside.txt"), "replacement contents\n")
+            .expect("replacement file written");
+        fs::write(workspace.join("nested/needle.txt"), "replacement needle\n")
+            .expect("replacement search file written");
+
+        let read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_read",
+            "file.read",
+            json!({
+                "capabilityId": capability_id,
+                "path": "inside.txt",
+                "offset": 0,
+                "maxBytes": 1024
+            }),
+        )
+        .await;
+        assert_eq!(read["result"]["contents"], "original contents\n");
+        assert_eq!(read["result"]["eof"], true);
+
+        let tree = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_tree",
+            "file.tree",
+            json!({ "capabilityId": capability_id, "path": "." }),
+        )
+        .await;
+        let tree_entries = tree["result"]["entries"]
+            .as_array()
+            .expect("tree returns entries");
+        assert!(tree_entries.iter().any(|entry| entry["path"] == "inside.txt"));
+        assert!(tree_entries.iter().any(|entry| entry["path"] == "nested/needle.txt"));
+
+        let search = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_search",
+            "file.search",
+            json!({ "capabilityId": capability_id, "path": ".", "query": "needle" }),
+        )
+        .await;
+        let matches = search["result"]["matches"]
+            .as_array()
+            .expect("search returns matches");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["path"], "nested/needle.txt");
+        assert_eq!(matches[0]["line"], 2);
+        assert_eq!(matches[0]["lineText"], "needle here");
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("file_read"));
+        assert!(audit_text.contains("file_tree"));
+        assert!(audit_text.contains("file_search"));
+
+        audit.inject_faults(AuditFaults {
+            fail_next_decision: true,
+            fail_next_outcome: false,
+        });
+        let blocked = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_audit_blocked",
+            "file.read",
+            json!({
+                "capabilityId": capability_id,
+                "path": "../must-not-resolve",
+                "offset": 0,
+                "maxBytes": 16
+            }),
+        )
+        .await;
+        assert_eq!(blocked["error"]["message"], "AUDIT_UNAVAILABLE");
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
         fs::remove_dir_all(workspace).expect("replacement removed");
         fs::remove_dir_all(displaced).expect("original removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");

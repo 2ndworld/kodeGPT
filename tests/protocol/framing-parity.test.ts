@@ -22,6 +22,8 @@ const FIXTURE_NAMES = [
   "workspace.cancel_executions.json",
   "workspace.unregister.json",
   "file.read.json",
+  "file.tree.json",
+  "file.search.json",
   "process.run.json"
 ] as const;
 
@@ -36,6 +38,8 @@ const EXPECTED_METHODS = [
   "workspace.cancel_executions",
   "workspace.unregister",
   "file.read",
+  "file.tree",
+  "file.search",
   "process.run"
 ] as const;
 

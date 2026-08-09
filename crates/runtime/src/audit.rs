@@ -21,6 +21,9 @@ pub enum AuditAction {
     WorkspaceBeginClose,
     WorkspaceCancelExecutions,
     WorkspaceUnregister,
+    FileRead,
+    FileTree,
+    FileSearch,
     TestEffect,
 }
 
@@ -173,6 +176,13 @@ impl AuditSink {
 
     pub fn is_healthy(&self) -> bool {
         self.state.lock().map(|state| state.healthy).unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    pub fn inject_faults(&self, faults: AuditFaults) {
+        if let Ok(mut state) = self.state.lock() {
+            state.faults = faults;
+        }
     }
 
     pub fn decision(
@@ -357,6 +367,9 @@ impl AuditAction {
             Self::WorkspaceBeginClose => "workspace_begin_close",
             Self::WorkspaceCancelExecutions => "workspace_cancel_executions",
             Self::WorkspaceUnregister => "workspace_unregister",
+            Self::FileRead => "file_read",
+            Self::FileTree => "file_tree",
+            Self::FileSearch => "file_search",
             Self::TestEffect => "test_effect",
         }
     }

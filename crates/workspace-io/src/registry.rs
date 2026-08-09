@@ -12,6 +12,10 @@ use crate::mountinfo::{
     read_current_mountinfo,
 };
 use crate::profile::{ProjectProfileReadError, read_project_profile};
+use crate::read::{
+    SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, TREE_MAX_ENTRIES, ReadFileResult, SearchMatch,
+    TreeEntry, WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
+};
 
 static NEXT_CAPABILITY_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -51,6 +55,11 @@ pub enum WorkspaceRegistryError {
     WorkspaceNotReady,
     FilesystemBoundaryUnavailable,
     ProjectProfileReadFailed,
+    FileAccessDenied,
+    FileNotFound,
+    FileInvalidUtf8,
+    FileLimitExceeded,
+    FileReadFailed,
     CapabilityNotFound,
 }
 
@@ -67,6 +76,11 @@ impl fmt::Display for WorkspaceRegistryError {
             Self::WorkspaceNotReady => formatter.write_str("workspace is not in the required lifecycle phase"),
             Self::FilesystemBoundaryUnavailable => formatter.write_str("filesystem boundary semantics are unavailable"),
             Self::ProjectProfileReadFailed => formatter.write_str("project profile could not be read safely"),
+            Self::FileAccessDenied => formatter.write_str("workspace file access was denied"),
+            Self::FileNotFound => formatter.write_str("workspace file path was not found"),
+            Self::FileInvalidUtf8 => formatter.write_str("workspace file is not valid UTF-8"),
+            Self::FileLimitExceeded => formatter.write_str("workspace file operation limit was exceeded"),
+            Self::FileReadFailed => formatter.write_str("workspace file operation failed"),
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
     }
@@ -232,7 +246,53 @@ impl<P> WorkspaceRegistry<P> {
         Ok(())
     }
 
+    pub fn read_file(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        offset: u64,
+        max_bytes: u64,
+    ) -> Result<ReadFileResult, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        read_file_beneath(&context.root_fd, relative_path, offset, max_bytes)
+            .map_err(map_workspace_read_error)
+    }
+
+    pub fn tree(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+    ) -> Result<Vec<TreeEntry>, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        tree_beneath(&context.root_fd, relative_path, TREE_MAX_ENTRIES)
+            .map_err(map_workspace_read_error)
+    }
+
+    pub fn search(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        query: &str,
+    ) -> Result<Vec<SearchMatch>, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        search_utf8_beneath(
+            &context.root_fd,
+            relative_path,
+            query,
+            SEARCH_MAX_MATCHES,
+            SEARCH_MAX_SNIPPET_BYTES,
+        )
+        .map_err(map_workspace_read_error)
+    }
+
     pub fn require_ready(&self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        self.ready_context(capability_id).map(|_| ())
+    }
+
+    fn ready_context(
+        &self,
+        capability_id: &str,
+    ) -> Result<&WorkspaceSecurityContext<P>, WorkspaceRegistryError> {
         let context = self
             .contexts
             .get(capability_id)
@@ -240,7 +300,7 @@ impl<P> WorkspaceRegistry<P> {
         if context.phase != WorkspacePhase::Ready {
             return Err(WorkspaceRegistryError::WorkspaceNotReady);
         }
-        Ok(())
+        Ok(context)
     }
 
     pub fn begin_close(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
@@ -294,6 +354,23 @@ impl<P> WorkspaceRegistry<P> {
 impl<P> Default for WorkspaceRegistry<P> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn map_workspace_read_error(error: WorkspaceReadError) -> WorkspaceRegistryError {
+    match error {
+        WorkspaceReadError::InvalidPath | WorkspaceReadError::BoundaryViolation => {
+            WorkspaceRegistryError::FileAccessDenied
+        }
+        WorkspaceReadError::BoundaryUnavailable => {
+            WorkspaceRegistryError::FilesystemBoundaryUnavailable
+        }
+        WorkspaceReadError::NotFound => WorkspaceRegistryError::FileNotFound,
+        WorkspaceReadError::InvalidUtf8 => WorkspaceRegistryError::FileInvalidUtf8,
+        WorkspaceReadError::LimitExceeded => WorkspaceRegistryError::FileLimitExceeded,
+        WorkspaceReadError::NotRegularFile | WorkspaceReadError::Io(_) => {
+            WorkspaceRegistryError::FileReadFailed
+        }
     }
 }
 

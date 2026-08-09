@@ -233,6 +233,45 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "file.tree" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "path"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "file.search" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "path", "query"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string" },
+            "query": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "process.run" },
         "params": {
           "type": "object",

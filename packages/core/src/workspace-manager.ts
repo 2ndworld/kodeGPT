@@ -30,6 +30,25 @@ export interface OpenWorkspace {
   effectivePolicy: ProfilePolicy;
 }
 
+export interface WorkspaceFileReadResult {
+  contents: string;
+  bytesRead: number;
+  eof: boolean;
+}
+
+export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
+
+export interface WorkspaceTreeEntry {
+  path: string;
+  kind: WorkspaceTreeEntryKind;
+}
+
+export interface WorkspaceSearchMatch {
+  path: string;
+  line: number;
+  lineText: string;
+}
+
 type WorkspacePhase = "OPENING" | "READY" | "CLOSING";
 
 type WorkspaceState = {
@@ -210,14 +229,101 @@ export class WorkspaceManager {
   }
 
   requireReady(workspaceId: string): OpenWorkspace {
+    return publicWorkspace(this.#requireReadyState(workspaceId));
+  }
+
+  async readFile(
+    workspaceId: string,
+    path: string,
+    options: { offset?: number; maxBytes?: number } = {}
+  ): Promise<WorkspaceFileReadResult> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace file path must not be empty");
+    }
+    const offset = options.offset ?? 0;
+    const maxBytes = options.maxBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RangeError("offset must be a non-negative safe integer");
+    }
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > 1024 * 1024) {
+      throw new RangeError("maxBytes must be an integer in the range 0..1048576");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.read", {
+      capabilityId: state.capabilityId,
+      path,
+      offset,
+      maxBytes
+    });
+    if (
+      !isRecord(result) ||
+      typeof result.contents !== "string" ||
+      !Number.isSafeInteger(result.bytesRead) ||
+      (result.bytesRead as number) < 0 ||
+      typeof result.eof !== "boolean"
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.read returned an invalid payload"
+      );
+    }
+    return {
+      contents: result.contents,
+      bytesRead: result.bytesRead as number,
+      eof: result.eof
+    };
+  }
+
+  async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace tree path must not be empty");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.tree", {
+      capabilityId: state.capabilityId,
+      path
+    });
+    if (!isRecord(result) || !Array.isArray(result.entries)) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.tree returned an invalid payload"
+      );
+    }
+    const entries = result.entries.map(validateTreeEntry);
+    return entries;
+  }
+
+  async search(workspaceId: string, query: string, path = "."): Promise<WorkspaceSearchMatch[]> {
+    if (query.length === 0) {
+      throw new TypeError("Workspace search query must not be empty");
+    }
+    if (path.length === 0) {
+      throw new TypeError("Workspace search path must not be empty");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.search", {
+      capabilityId: state.capabilityId,
+      path,
+      query
+    });
+    if (!isRecord(result) || !Array.isArray(result.matches)) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.search returned an invalid payload"
+      );
+    }
+    return result.matches.map(validateSearchMatch);
+  }
+
+  #requireReadyState(workspaceId: string): WorkspaceState {
     const state = this.#workspaces.get(workspaceId);
     if (state === undefined) {
       throw new WorkspaceNotFoundError(workspaceId);
     }
-    if (state.phase !== "READY") {
+    if (state.phase !== "READY" || state.capabilityId === undefined) {
       throw new WorkspaceNotReadyError(workspaceId);
     }
-    return publicWorkspace(state);
+    return state;
   }
 
   async closeWorkspace(workspaceId: string): Promise<void> {
@@ -311,6 +417,44 @@ function validateInspectResult(value: unknown): asserts value is InspectRootResu
       "system.inspect_root returned an invalid payload"
     );
   }
+}
+
+function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
+  if (
+    !isRecord(value) ||
+    typeof value.path !== "string" ||
+    !isTreeEntryKind(value.kind)
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "file.tree returned an invalid entry"
+    );
+  }
+  return { path: value.path, kind: value.kind };
+}
+
+function isTreeEntryKind(value: unknown): value is WorkspaceTreeEntryKind {
+  return value === "file" || value === "directory" || value === "symlink" || value === "other";
+}
+
+function validateSearchMatch(value: unknown): WorkspaceSearchMatch {
+  if (
+    !isRecord(value) ||
+    typeof value.path !== "string" ||
+    !Number.isSafeInteger(value.line) ||
+    (value.line as number) <= 0 ||
+    typeof value.lineText !== "string"
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "file.search returned an invalid match"
+    );
+  }
+  return {
+    path: value.path,
+    line: value.line as number,
+    lineText: value.lineText
+  };
 }
 
 function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {

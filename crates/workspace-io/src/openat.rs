@@ -69,6 +69,28 @@ pub fn open_existing_beneath(
     .map_err(map_openat_error)
 }
 
+pub fn open_directory_beneath(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+) -> Result<OwnedFd, OpenatBoundaryError> {
+    if relative_path == Path::new(".") {
+        return openat2(
+            root_fd,
+            relative_path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+            REQUIRED_RESOLVE_FLAGS,
+        )
+        .map_err(map_openat_error);
+    }
+
+    open_existing_beneath(
+        root_fd,
+        relative_path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
+    )
+}
+
 pub fn open_parent_beneath(
     root_fd: &OwnedFd,
     relative_path: &Path,

@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_tree",
+  "method": "file.tree",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "."
+  }
+}
