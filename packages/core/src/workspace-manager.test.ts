@@ -125,6 +125,22 @@ describe("WorkspaceManager", () => {
     expect(kernel.calls[3]?.params.restriction).toMatchObject({ allowWrite: false });
   });
 
+  it("lists only public READY workspace snapshots without private runtime capabilities", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_list"
+    });
+
+    expect(manager.listWorkspaces()).toEqual([]);
+    await manager.openWorkspace("/workspace");
+    const listed = manager.listWorkspaces();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe("ws_list");
+    expect(JSON.stringify(listed)).not.toContain("kc_fixture");
+  });
+
   it("routes READY public workspace file operations through the private runtime capability", async () => {
     const kernel = new FakeKernel();
     const manager = new WorkspaceManager({

@@ -228,6 +228,13 @@ export class WorkspaceManager {
     }
   }
 
+  listWorkspaces(): OpenWorkspace[] {
+    return [...this.#workspaces.values()]
+      .filter((state) => state.phase === "READY" && state.capabilityId !== undefined)
+      .map(publicWorkspace)
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
   requireReady(workspaceId: string): OpenWorkspace {
     return publicWorkspace(this.#requireReadyState(workspaceId));
   }
