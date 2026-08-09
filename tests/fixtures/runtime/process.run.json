@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_process",
+  "method": "process.run",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "logicalExecutable": "node",
+    "argv": ["--version"],
+    "cwd": ".",
+    "env": {},
+    "background": false
+  }
+}

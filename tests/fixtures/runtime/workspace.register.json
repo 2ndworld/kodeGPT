@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_register",
+  "method": "workspace.register",
+  "params": {
+    "rootPath": "/tmp/kodegpt-fixture-workspace",
+    "expectedIdentity": {
+      "deviceMajor": 8,
+      "deviceMinor": 1,
+      "inode": "12345"
+    },
+    "ceiling": {
+      "name": "develop",
+      "allowWrite": true,
+      "allowProcess": true,
+      "network": "deny",
+      "allowedExecutableNames": ["git", "node"],
+      "inheritEnv": false,
+      "envAllowlist": []
+    }
+  }
+}

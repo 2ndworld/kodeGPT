@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodegpt.local/schemas/runtime/envelope.schema.json",
+  "title": "KodeGPT Runtime Envelope",
+  "oneOf": [
+    { "$ref": "request.schema.json" },
+    { "$ref": "success-response.schema.json" },
+    { "$ref": "error-response.schema.json" }
+  ]
+}

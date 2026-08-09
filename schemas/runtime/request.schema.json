@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodegpt.local/schemas/runtime/request.schema.json",
+  "title": "KodeGPT Runtime Request",
+  "$defs": {
+    "persistentFilesystemIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceMajor", "deviceMinor", "inode"],
+      "properties": {
+        "deviceMajor": { "type": "integer", "minimum": 0 },
+        "deviceMinor": { "type": "integer", "minimum": 0 },
+        "inode": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtimePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "allowWrite",
+        "allowProcess",
+        "network",
+        "allowedExecutableNames",
+        "inheritEnv",
+        "envAllowlist"
+      ],
+      "properties": {
+        "name": { "enum": ["observe", "develop", "trusted"] },
+        "allowWrite": { "type": "boolean" },
+        "allowProcess": { "type": "boolean" },
+        "network": { "enum": ["deny", "localhost", "allowlist", "unrestricted"] },
+        "allowedExecutableNames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "inheritEnv": { "const": false },
+        "envAllowlist": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "runtime.hello" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "system.inspect_root" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "workspace.register" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rootPath", "expectedIdentity", "ceiling"],
+          "properties": {
+            "rootPath": { "type": "string", "minLength": 1 },
+            "expectedIdentity": { "$ref": "#/$defs/persistentFilesystemIdentity" },
+            "ceiling": { "$ref": "#/$defs/runtimePolicy" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "workspace.restrict_policy" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "restriction"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "restriction": { "$ref": "#/$defs/runtimePolicy" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "workspace.activate" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "file.read" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "path", "offset", "maxBytes"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string" },
+            "offset": { "type": "integer", "minimum": 0 },
+            "maxBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "process.run" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "logicalExecutable", "argv", "cwd", "env", "background"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "logicalExecutable": { "type": "string", "minLength": 1 },
+            "argv": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "cwd": { "type": "string" },
+            "env": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "background": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  ]
+}

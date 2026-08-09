@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_read",
+  "method": "file.read",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "README.md",
+    "offset": 0,
+    "maxBytes": 1024
+  }
+}

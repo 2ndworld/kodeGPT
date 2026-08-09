@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_restrict",
+  "method": "workspace.restrict_policy",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "restriction": {
+      "name": "develop",
+      "allowWrite": false,
+      "allowProcess": true,
+      "network": "deny",
+      "allowedExecutableNames": ["git", "node"],
+      "inheritEnv": false,
+      "envAllowlist": []
+    }
+  }
+}

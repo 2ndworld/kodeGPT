@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodegpt.local/schemas/runtime/success-response.schema.json",
+  "title": "KodeGPT Runtime Success Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jsonrpc", "id", "result"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "result": true
+  }
+}
