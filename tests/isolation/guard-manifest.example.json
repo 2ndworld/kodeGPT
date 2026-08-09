@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "type": "file",
+      "path": "/path/to/protected/file"
+    },
+    {
+      "type": "tree",
+      "path": "/path/to/protected/tree"
+    },
+    {
+      "type": "tcp_listener",
+      "port": 7777
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@kodegpt/runtime-linux-x64",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin/kodegpt-runtime"]
+}

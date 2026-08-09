@@ -1,0 +1,26 @@
+{
+  "name": "kodegpt-workspace",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:rust": "cargo test --workspace",
+    "test:protocol": "vitest run tests/protocol",
+    "test:integration": "vitest run tests/integration",
+    "test:security": "vitest run tests/security",
+    "test:isolation": "vitest run tests/isolation",
+    "test:acceptance": "vitest run tests/integration/full-stack.test.ts tests/security/security-invariants.test.ts",
+    "bench:baseline": "node tests/performance/baseline.mjs",
+    "verify:forbidden": "node scripts/forbidden-patterns.mjs",
+    "verify:package": "node scripts/package-smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
+}
