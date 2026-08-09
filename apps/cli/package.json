@@ -9,6 +9,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@kodegpt/auth": "workspace:*",
     "@kodegpt/trust": "workspace:*"
   }
 }

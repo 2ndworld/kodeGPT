@@ -20,6 +20,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@kodegpt/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
       '@kodegpt/trust':
         specifier: workspace:*
         version: link:../../packages/trust
