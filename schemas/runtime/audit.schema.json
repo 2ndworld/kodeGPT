@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kodegpt.local/schemas/runtime/audit.schema.json",
+  "title": "KodeGPT Security Audit Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "timestampUnixMs",
+    "phase",
+    "requestId",
+    "operationId",
+    "action"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "timestampUnixMs": { "type": "integer", "minimum": 0 },
+    "phase": { "enum": ["decision", "outcome"] },
+    "requestId": {
+      "type": "string",
+      "pattern": "^req_[A-Za-z0-9_-]+$",
+      "maxLength": 96
+    },
+    "operationId": {
+      "type": "string",
+      "pattern": "^op_[A-Za-z0-9_-]+$",
+      "maxLength": 96
+    },
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^kc_[A-Za-z0-9_-]+$",
+      "maxLength": 96
+    },
+    "action": { "enum": ["test_effect"] },
+    "decision": { "const": "allow" },
+    "reason": { "const": "test_authorized" },
+    "outcome": { "enum": ["success", "failed"] }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "phase": { "const": "decision" } },
+        "required": ["phase"]
+      },
+      "then": {
+        "required": ["decision", "reason"],
+        "properties": { "outcome": false }
+      }
+    },
+    {
+      "if": {
+        "properties": { "phase": { "const": "outcome" } },
+        "required": ["phase"]
+      },
+      "then": {
+        "required": ["outcome"],
+        "properties": {
+          "decision": false,
+          "reason": false
+        }
+      }
+    }
+  ]
+}

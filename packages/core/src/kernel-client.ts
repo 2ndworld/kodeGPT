@@ -6,6 +6,7 @@ import { FrameDecoder, encodeFrame } from "@kodegpt/protocol";
 export interface KernelHello {
   runtimeVersion: string;
   testMethods: boolean;
+  auditHealthy: boolean;
 }
 
 export class RuntimeUnavailableError extends Error {
@@ -132,7 +133,12 @@ export class KernelClient {
 
   async hello(): Promise<KernelHello> {
     const result = await this.request<unknown>("runtime.hello", {});
-    if (!isRecord(result) || typeof result.runtimeVersion !== "string" || typeof result.testMethods !== "boolean") {
+    if (
+      !isRecord(result) ||
+      typeof result.runtimeVersion !== "string" ||
+      typeof result.testMethods !== "boolean" ||
+      typeof result.auditHealthy !== "boolean"
+    ) {
       this.#poison(new RuntimeUnavailableError("KodeGPT runtime returned an invalid hello payload"));
       this.#child.kill("SIGKILL");
       throw new RuntimeUnavailableError("KodeGPT runtime returned an invalid hello payload");
@@ -140,7 +146,8 @@ export class KernelClient {
 
     return {
       runtimeVersion: result.runtimeVersion,
-      testMethods: result.testMethods
+      testMethods: result.testMethods,
+      auditHealthy: result.auditHealthy
     };
   }
 
