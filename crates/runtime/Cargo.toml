@@ -3,6 +3,16 @@ name = "kodegpt-runtime"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+runtime-test-methods = []
+
 [[bin]]
 name = "kodegpt-runtime"
 path = "src/main.rs"
+
+[dependencies]
+kodegpt-protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }

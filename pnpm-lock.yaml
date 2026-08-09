@@ -26,7 +26,11 @@ importers:
 
   packages/auth: {}
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@kodegpt/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/dev-console: {}
 
