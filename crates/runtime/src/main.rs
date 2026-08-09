@@ -1,5 +1,6 @@
 mod audit;
 mod dispatcher;
+mod execution;
 mod rpc;
 
 use std::io::{self, Write};

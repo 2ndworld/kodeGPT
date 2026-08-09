@@ -289,6 +289,17 @@ impl<P> WorkspaceRegistry<P> {
         self.ready_context(capability_id).map(|_| ())
     }
 
+    pub fn duplicate_ready_root_fd(
+        &self,
+        capability_id: &str,
+    ) -> Result<OwnedFd, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        context
+            .root_fd
+            .try_clone()
+            .map_err(|_| WorkspaceRegistryError::FileReadFailed)
+    }
+
     fn ready_context(
         &self,
         capability_id: &str,
@@ -413,7 +424,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{WorkspaceRegistry, WorkspaceRegistryError, roots_overlap};
-    use crate::identity::{FilesystemIdentity, inspect_root};
+    use crate::identity::{FilesystemIdentity, filesystem_identity, inspect_root};
     use crate::mountinfo::{BackingTreeIdentity, MountInfoError, parse_mountinfo};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -572,11 +583,23 @@ mod tests {
             registry.require_ready(&capability_id),
             Err(WorkspaceRegistryError::WorkspaceNotReady)
         ));
+        assert!(matches!(
+            registry.duplicate_ready_root_fd(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
         registry
             .restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(()))
             .expect("opening policy restriction accepted");
         registry.activate(&capability_id).expect("workspace activates");
         registry.require_ready(&capability_id).expect("ready accepted");
+        let duplicated = registry
+            .duplicate_ready_root_fd(&capability_id)
+            .expect("ready root fd duplicates");
+        let duplicated_file = fs::File::from(duplicated);
+        assert_eq!(
+            filesystem_identity(&duplicated_file.metadata().expect("duplicated metadata")),
+            identity
+        );
         assert!(matches!(
             registry.restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(())),
             Err(WorkspaceRegistryError::WorkspaceNotReady)
@@ -592,6 +615,10 @@ mod tests {
             .expect("begin close is idempotent while closing");
         assert!(matches!(
             registry.require_ready(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
+        assert!(matches!(
+            registry.duplicate_ready_root_fd(&capability_id),
             Err(WorkspaceRegistryError::WorkspaceNotReady)
         ));
         registry

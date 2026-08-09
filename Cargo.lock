@@ -54,6 +54,9 @@ dependencies = [
 [[package]]
 name = "kodegpt-sandbox"
 version = "0.1.0"
+dependencies = [
+ "rustix",
+]
 
 [[package]]
 name = "kodegpt-workspace-io"
