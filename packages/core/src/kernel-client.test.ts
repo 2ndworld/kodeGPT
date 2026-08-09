@@ -96,6 +96,7 @@ describe("KernelClient persistent runtime", () => {
       expect(elapsed).toBeLessThan(200);
       expect(hello.runtimeVersion).toBe("0.1");
       expect(hello.testMethods).toBe(true);
+      expect(hello.filesystemBoundaryAvailable).toBe(true);
       await expect(sleep).resolves.toEqual({ sleptMs: 500 });
     } finally {
       await client.stop();

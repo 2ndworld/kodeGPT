@@ -2,15 +2,14 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::path::Path;
 
-use rustix::fs::{FileType, Mode, OFlags, ResolveFlags, fstat, openat2};
-use rustix::io::Errno;
+use rustix::fs::{FileType, OFlags, fstat};
+
+use crate::openat::{OpenatBoundaryError, open_existing_beneath};
 
 const PROJECT_PROFILE_PATH: &str = ".kodegpt/profile.json";
 const PROJECT_PROFILE_MAX_BYTES: u64 = 64 * 1024;
-const PROJECT_PROFILE_RESOLVE: ResolveFlags = ResolveFlags::BENEATH
-    .union(ResolveFlags::NO_MAGICLINKS)
-    .union(ResolveFlags::NO_XDEV);
 
 #[derive(Debug)]
 pub(crate) enum ProjectProfileReadError {
@@ -45,17 +44,21 @@ impl std::error::Error for ProjectProfileReadError {
 pub(crate) fn read_project_profile(
     root_fd: &OwnedFd,
 ) -> Result<Option<String>, ProjectProfileReadError> {
-    let fd = match openat2(
+    let fd = match open_existing_beneath(
         root_fd,
-        PROJECT_PROFILE_PATH,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-        PROJECT_PROFILE_RESOLVE,
+        Path::new(PROJECT_PROFILE_PATH),
+        OFlags::RDONLY | OFlags::NONBLOCK,
     ) {
         Ok(fd) => fd,
-        Err(Errno::NOENT) => return Ok(None),
-        Err(Errno::NOSYS) => return Err(ProjectProfileReadError::BoundaryUnavailable),
-        Err(_) => return Err(ProjectProfileReadError::Unsafe),
+        Err(OpenatBoundaryError::NotFound) => return Ok(None),
+        Err(OpenatBoundaryError::BoundaryUnavailable) => {
+            return Err(ProjectProfileReadError::BoundaryUnavailable);
+        }
+        Err(
+            OpenatBoundaryError::InvalidRelativePath
+            | OpenatBoundaryError::BoundaryViolation
+            | OpenatBoundaryError::Os(_),
+        ) => return Err(ProjectProfileReadError::Unsafe),
     };
 
     let stat = fstat(&fd).map_err(|_| ProjectProfileReadError::Unsafe)?;

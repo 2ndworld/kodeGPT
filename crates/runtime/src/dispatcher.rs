@@ -9,6 +9,7 @@ use kodegpt_protocol::{
 };
 use kodegpt_workspace_io::{
     FilesystemIdentity, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
+    probe_filesystem_boundary,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -54,10 +55,28 @@ struct AuditEffectParams {
 }
 
 pub async fn run_dispatcher(
+    requests: mpsc::UnboundedReceiver<Value>,
+    responses: mpsc::UnboundedSender<Value>,
+    test_methods_enabled: bool,
+    audit: Arc<AuditSink>,
+) {
+    let filesystem_boundary_available = probe_filesystem_boundary().is_ok();
+    run_dispatcher_with_boundary_status(
+        requests,
+        responses,
+        test_methods_enabled,
+        audit,
+        filesystem_boundary_available,
+    )
+    .await;
+}
+
+async fn run_dispatcher_with_boundary_status(
     mut requests: mpsc::UnboundedReceiver<Value>,
     responses: mpsc::UnboundedSender<Value>,
     test_methods_enabled: bool,
     audit: Arc<AuditSink>,
+    filesystem_boundary_available: bool,
 ) {
     let mut tasks = JoinSet::new();
     let workspace_registry = Arc::new(Mutex::new(WorkspaceRegistry::<RuntimePolicy>::new()));
@@ -67,8 +86,14 @@ pub async fn run_dispatcher(
         let audit = Arc::clone(&audit);
         let workspace_registry = Arc::clone(&workspace_registry);
         tasks.spawn(async move {
-            let response =
-                dispatch_one(value, test_methods_enabled, audit, workspace_registry).await;
+            let response = dispatch_one(
+                value,
+                test_methods_enabled,
+                audit,
+                workspace_registry,
+                filesystem_boundary_available,
+            )
+            .await;
             let _ = response_tx.send(response);
         });
     }
@@ -81,6 +106,7 @@ async fn dispatch_one(
     test_methods_enabled: bool,
     audit: Arc<AuditSink>,
     workspace_registry: Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    filesystem_boundary_available: bool,
 ) -> Value {
     let request = match parse_request(value) {
         Ok(request) => request,
@@ -98,7 +124,8 @@ async fn dispatch_one(
                 json!({
                     "runtimeVersion": "0.1",
                     "testMethods": cfg!(feature = "runtime-test-methods") && test_methods_enabled,
-                    "auditHealthy": audit.is_healthy()
+                    "auditHealthy": audit.is_healthy(),
+                    "filesystemBoundaryAvailable": filesystem_boundary_available
                 }),
             )
         }
@@ -193,6 +220,9 @@ async fn dispatch_one(
                 None,
                 AuditAction::WorkspaceRegister,
                 move |registry| {
+                    if !filesystem_boundary_available {
+                        return Err(WorkspaceRegistryError::FilesystemBoundaryUnavailable);
+                    }
                     let registration = registry.register(&root_path, &expected_identity, ceiling)?;
                     Ok(json!({ "capabilityId": registration.capability_id }))
                 },
@@ -506,7 +536,7 @@ mod tests {
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use super::run_dispatcher;
+    use super::{run_dispatcher, run_dispatcher_with_boundary_status};
     use crate::audit::{AuditFaults, AuditSink};
 
     fn audit_sink(label: &str) -> (Arc<AuditSink>, PathBuf) {
@@ -526,6 +556,59 @@ mod tests {
             "method": method,
             "params": params
         })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unavailable_filesystem_boundary_is_reported_and_blocks_registration() {
+        let (audit, audit_root) = audit_sink("boundary-unavailable");
+        let workspace = audit_root.with_extension("boundary-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let identity = kodegpt_workspace_io::inspect_root(&workspace)
+            .expect("workspace inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher_with_boundary_status(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+            false,
+        ));
+
+        request_tx
+            .send(request("req_boundary_hello", "runtime.hello", json!({})))
+            .expect("hello accepted");
+        let hello = tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
+            .await
+            .expect("hello arrives")
+            .expect("response channel open");
+        assert_eq!(hello["result"]["filesystemBoundaryAvailable"], false);
+
+        request_tx
+            .send(request(
+                "req_boundary_register",
+                "workspace.register",
+                json!({
+                    "rootPath": workspace.to_string_lossy(),
+                    "expectedIdentity": identity,
+                    "ceiling": observe_policy()
+                }),
+            ))
+            .expect("registration accepted for dispatch");
+        let registration = tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
+            .await
+            .expect("registration response arrives")
+            .expect("response channel open");
+        assert_eq!(
+            registration["error"]["message"],
+            "FILESYSTEM_BOUNDARY_UNAVAILABLE"
+        );
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[cfg(feature = "runtime-test-methods")]

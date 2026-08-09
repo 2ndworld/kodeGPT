@@ -7,6 +7,7 @@ export interface KernelHello {
   runtimeVersion: string;
   testMethods: boolean;
   auditHealthy: boolean;
+  filesystemBoundaryAvailable: boolean;
 }
 
 export class RuntimeUnavailableError extends Error {
@@ -137,7 +138,8 @@ export class KernelClient {
       !isRecord(result) ||
       typeof result.runtimeVersion !== "string" ||
       typeof result.testMethods !== "boolean" ||
-      typeof result.auditHealthy !== "boolean"
+      typeof result.auditHealthy !== "boolean" ||
+      typeof result.filesystemBoundaryAvailable !== "boolean"
     ) {
       this.#poison(new RuntimeUnavailableError("KodeGPT runtime returned an invalid hello payload"));
       this.#child.kill("SIGKILL");
@@ -147,7 +149,8 @@ export class KernelClient {
     return {
       runtimeVersion: result.runtimeVersion,
       testMethods: result.testMethods,
-      auditHealthy: result.auditHealthy
+      auditHealthy: result.auditHealthy,
+      filesystemBoundaryAvailable: result.filesystemBoundaryAvailable
     };
   }
 
