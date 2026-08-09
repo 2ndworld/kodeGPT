@@ -13,6 +13,7 @@ pub const DEFAULT_AUDIT_ROTATIONS: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AuditAction {
+    InspectRoot,
     TestEffect,
 }
 
@@ -23,6 +24,7 @@ pub enum AuditDecision {
 
 #[derive(Debug, Clone, Copy)]
 pub enum AuditReason {
+    RequestValidated,
     TestAuthorized,
 }
 
@@ -340,6 +342,7 @@ impl AuditRecord {
 impl AuditAction {
     fn as_str(self) -> &'static str {
         match self {
+            Self::InspectRoot => "inspect_root",
             Self::TestEffect => "test_effect",
         }
     }
@@ -356,6 +359,7 @@ impl AuditDecision {
 impl AuditReason {
     fn as_str(self) -> &'static str {
         match self {
+            Self::RequestValidated => "request_validated",
             Self::TestAuthorized => "test_authorized",
         }
     }

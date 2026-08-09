@@ -31,9 +31,9 @@
       "pattern": "^kc_[A-Za-z0-9_-]+$",
       "maxLength": 96
     },
-    "action": { "enum": ["test_effect"] },
+    "action": { "enum": ["inspect_root", "test_effect"] },
     "decision": { "const": "allow" },
-    "reason": { "const": "test_authorized" },
+    "reason": { "enum": ["request_validated", "test_authorized"] },
     "outcome": { "enum": ["success", "failed"] }
   },
   "allOf": [
