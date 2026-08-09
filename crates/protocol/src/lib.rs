@@ -9,5 +9,6 @@ pub use types::{
     ProcessRunParams,
     ProfileName, RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy, RuntimeRequest,
     RuntimeResponse, RuntimeRpcError, RuntimeSuccessResponse, SystemInspectRootParams,
-    WorkspaceActivateParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams,
 };

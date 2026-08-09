@@ -35,6 +35,19 @@ describe("canonical runtime JSON Schemas", () => {
     }
   });
 
+  it("includes the complete workspace lifecycle skeleton method set", () => {
+    expect(RUNTIME_METHODS).toEqual(
+      expect.arrayContaining([
+        "workspace.register",
+        "workspace.restrict_policy",
+        "workspace.activate",
+        "workspace.begin_close",
+        "workspace.cancel_executions",
+        "workspace.unregister"
+      ])
+    );
+  });
+
   it("locks inheritEnv to false and closes shared policy/identity definitions", async () => {
     const request = await schema("request.schema.json");
     const policy = request.$defs.runtimePolicy as JsonSchema;

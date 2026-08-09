@@ -1,0 +1,442 @@
+use std::collections::HashMap;
+use std::fmt;
+use std::fs;
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::identity::{FilesystemIdentity, filesystem_identity, inspect_root};
+use crate::mountinfo::{
+    BackingTreeIdentity, MountInfoEntry, MountInfoError, backing_tree_for_path,
+    read_current_mountinfo,
+};
+
+static NEXT_CAPABILITY_ID: AtomicU64 = AtomicU64::new(1);
+
+type MountInfoReader = Box<dyn Fn() -> Result<Vec<MountInfoEntry>, MountInfoError> + Send + Sync>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkspacePhase {
+    Opening,
+    Ready,
+    Closing,
+}
+
+#[allow(dead_code)]
+struct WorkspaceSecurityContext<P> {
+    capability_id: String,
+    canonical_display_root: std::path::PathBuf,
+    root_fd: OwnedFd,
+    persistent_identity: FilesystemIdentity,
+    backing_tree_identity: BackingTreeIdentity,
+    ceiling: P,
+    effective_policy: P,
+    phase: WorkspacePhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRegistration {
+    pub capability_id: String,
+}
+
+#[derive(Debug)]
+pub enum WorkspaceRegistryError {
+    RootInvalid,
+    IdentityChanged,
+    MountTopologyUnavailable,
+    RootOverlap,
+    CapabilityNotFound,
+}
+
+impl fmt::Display for WorkspaceRegistryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RootInvalid => formatter.write_str("workspace root is invalid"),
+            Self::IdentityChanged => formatter.write_str("workspace filesystem identity changed"),
+            Self::MountTopologyUnavailable => {
+                formatter.write_str("workspace mount topology is unavailable")
+            }
+            Self::RootOverlap => formatter.write_str("workspace root overlaps an existing root"),
+            Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceRegistryError {}
+
+pub struct WorkspaceRegistry<P> {
+    contexts: HashMap<String, WorkspaceSecurityContext<P>>,
+    mountinfo_reader: MountInfoReader,
+}
+
+impl<P> WorkspaceRegistry<P> {
+    pub fn new() -> Self {
+        Self {
+            contexts: HashMap::new(),
+            mountinfo_reader: Box::new(read_current_mountinfo),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_mountinfo_reader<F>(reader: F) -> Self
+    where
+        F: Fn() -> Result<Vec<MountInfoEntry>, MountInfoError> + Send + Sync + 'static,
+    {
+        Self {
+            contexts: HashMap::new(),
+            mountinfo_reader: Box::new(reader),
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.contexts.len()
+    }
+
+    pub fn register(
+        &mut self,
+        root_path: &Path,
+        expected_identity: &FilesystemIdentity,
+        ceiling: P,
+    ) -> Result<WorkspaceRegistration, WorkspaceRegistryError>
+    where
+        P: Clone,
+    {
+        let inspected = inspect_root(root_path).map_err(|_| WorkspaceRegistryError::RootInvalid)?;
+        if inspected.identity != *expected_identity {
+            return Err(WorkspaceRegistryError::IdentityChanged);
+        }
+
+        let mountinfo = (self.mountinfo_reader)()
+            .map_err(|_| WorkspaceRegistryError::MountTopologyUnavailable)?;
+        let backing_tree_identity = backing_tree_for_path(&mountinfo, &inspected.canonical_root)
+            .map_err(|_| WorkspaceRegistryError::MountTopologyUnavailable)?;
+
+        let root_file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&inspected.canonical_root)
+            .map_err(|_| WorkspaceRegistryError::RootInvalid)?;
+        let root_metadata = root_file
+            .metadata()
+            .map_err(|_| WorkspaceRegistryError::RootInvalid)?;
+        if !root_metadata.is_dir() {
+            return Err(WorkspaceRegistryError::RootInvalid);
+        }
+        let fd_identity = filesystem_identity(&root_metadata);
+        if fd_identity != inspected.identity || fd_identity != *expected_identity {
+            return Err(WorkspaceRegistryError::IdentityChanged);
+        }
+        if backing_tree_identity.device_major != fd_identity.device_major
+            || backing_tree_identity.device_minor != fd_identity.device_minor
+        {
+            return Err(WorkspaceRegistryError::MountTopologyUnavailable);
+        }
+
+        if self.contexts.values().any(|existing| {
+            roots_overlap(
+                &existing.canonical_display_root,
+                &existing.backing_tree_identity,
+                &existing.persistent_identity,
+                &inspected.canonical_root,
+                &backing_tree_identity,
+                &fd_identity,
+            )
+        }) {
+            return Err(WorkspaceRegistryError::RootOverlap);
+        }
+
+        let capability_id = next_capability_id();
+        let effective_policy = ceiling.clone();
+        let root_fd = OwnedFd::from(root_file);
+        self.contexts.insert(
+            capability_id.clone(),
+            WorkspaceSecurityContext {
+                capability_id: capability_id.clone(),
+                canonical_display_root: inspected.canonical_root,
+                root_fd,
+                persistent_identity: fd_identity,
+                backing_tree_identity,
+                ceiling,
+                effective_policy,
+                phase: WorkspacePhase::Opening,
+            },
+        );
+
+        Ok(WorkspaceRegistration { capability_id })
+    }
+
+    pub fn restrict_policy(
+        &mut self,
+        capability_id: &str,
+        restriction: P,
+    ) -> Result<(), WorkspaceRegistryError> {
+        let context = self
+            .contexts
+            .get_mut(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        context.effective_policy = restriction;
+        Ok(())
+    }
+
+    pub fn activate(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        let context = self
+            .contexts
+            .get_mut(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        context.phase = WorkspacePhase::Ready;
+        Ok(())
+    }
+
+    pub fn begin_close(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        let context = self
+            .contexts
+            .get_mut(capability_id)
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)?;
+        context.phase = WorkspacePhase::Closing;
+        Ok(())
+    }
+
+    pub fn cancel_executions(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        if !self.contexts.contains_key(capability_id) {
+            return Err(WorkspaceRegistryError::CapabilityNotFound);
+        }
+        Ok(())
+    }
+
+    pub fn unregister(&mut self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
+        self.contexts
+            .remove(capability_id)
+            .map(|_| ())
+            .ok_or(WorkspaceRegistryError::CapabilityNotFound)
+    }
+
+    #[cfg(test)]
+    fn retained_fd_identity(&self, capability_id: &str) -> Option<FilesystemIdentity> {
+        let context = self.contexts.get(capability_id)?;
+        let cloned = context.root_fd.try_clone().ok()?;
+        let file = fs::File::from(cloned);
+        let metadata = file.metadata().ok()?;
+        Some(filesystem_identity(&metadata))
+    }
+}
+
+impl<P> Default for WorkspaceRegistry<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn roots_overlap(
+    existing_visible: &Path,
+    existing_backing: &BackingTreeIdentity,
+    existing_identity: &FilesystemIdentity,
+    candidate_visible: &Path,
+    candidate_backing: &BackingTreeIdentity,
+    candidate_identity: &FilesystemIdentity,
+) -> bool {
+    if path_overlap(existing_visible, candidate_visible) {
+        return true;
+    }
+
+    if existing_backing.device_major == candidate_backing.device_major
+        && existing_backing.device_minor == candidate_backing.device_minor
+        && path_overlap(&existing_backing.path, &candidate_backing.path)
+    {
+        return true;
+    }
+
+    existing_identity == candidate_identity
+}
+
+fn path_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn next_capability_id() -> String {
+    let sequence = NEXT_CAPABILITY_ID.fetch_add(1, Ordering::Relaxed);
+    format!("kc_{}_{}", std::process::id(), sequence)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::{WorkspaceRegistry, WorkspaceRegistryError, roots_overlap};
+    use crate::identity::{FilesystemIdentity, inspect_root};
+    use crate::mountinfo::{BackingTreeIdentity, MountInfoError, parse_mountinfo};
+
+    fn temporary_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "kodegpt-registry-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary root created");
+        root
+    }
+
+    fn mount_line(id: u64, identity: &FilesystemIdentity, root: &str, mount_point: &Path) -> String {
+        format!(
+            "{id} 1 {}:{} {root} {} rw,relatime - ext4 /dev/test rw\n",
+            identity.device_major,
+            identity.device_minor,
+            mount_point.display()
+        )
+    }
+
+    fn registry_with_mountinfo(text: String) -> WorkspaceRegistry<()> {
+        WorkspaceRegistry::with_mountinfo_reader(move || parse_mountinfo(&text))
+    }
+
+    #[test]
+    fn registry_rejects_distinct_visible_bind_aliases_with_same_backing_tree() {
+        let left = temporary_root("bind-left");
+        let right = temporary_root("bind-right");
+        let left_identity = inspect_root(&left).expect("left inspected").identity;
+        let right_identity = inspect_root(&right).expect("right inspected").identity;
+        let mountinfo = format!(
+            "{}{}",
+            mount_line(101, &left_identity, "/srv/shared", &left),
+            mount_line(102, &right_identity, "/srv/shared", &right)
+        );
+        let mut registry = registry_with_mountinfo(mountinfo);
+
+        registry
+            .register(&left, &left_identity, ())
+            .expect("first root registers");
+        let error = registry
+            .register(&right, &right_identity, ())
+            .expect_err("backing alias must be rejected");
+
+        assert!(matches!(error, WorkspaceRegistryError::RootOverlap));
+        assert_eq!(registry.len(), 1);
+        fs::remove_dir_all(left).expect("left removed");
+        fs::remove_dir_all(right).expect("right removed");
+    }
+
+    #[test]
+    fn registry_rejects_backing_ancestor_and_descendant_in_both_orders() {
+        let parent_visible = temporary_root("backing-parent");
+        let child_visible = temporary_root("backing-child");
+        let parent_identity = inspect_root(&parent_visible).expect("parent inspected").identity;
+        let child_identity = inspect_root(&child_visible).expect("child inspected").identity;
+        let mountinfo = format!(
+            "{}{}",
+            mount_line(201, &parent_identity, "/srv/repos", &parent_visible),
+            mount_line(202, &child_identity, "/srv/repos/project", &child_visible)
+        );
+
+        let mut parent_first = registry_with_mountinfo(mountinfo.clone());
+        parent_first
+            .register(&parent_visible, &parent_identity, ())
+            .expect("parent registers");
+        assert!(matches!(
+            parent_first.register(&child_visible, &child_identity, ()),
+            Err(WorkspaceRegistryError::RootOverlap)
+        ));
+
+        let mut child_first = registry_with_mountinfo(mountinfo);
+        child_first
+            .register(&child_visible, &child_identity, ())
+            .expect("child registers");
+        assert!(matches!(
+            child_first.register(&parent_visible, &parent_identity, ()),
+            Err(WorkspaceRegistryError::RootOverlap)
+        ));
+
+        fs::remove_dir_all(parent_visible).expect("parent removed");
+        fs::remove_dir_all(child_visible).expect("child removed");
+    }
+
+    #[test]
+    fn exact_device_inode_alias_is_an_overlap_dimension() {
+        let identity = FilesystemIdentity {
+            device_major: 8,
+            device_minor: 1,
+            inode: "12345".to_owned(),
+        };
+        let existing_backing = BackingTreeIdentity {
+            device_major: 8,
+            device_minor: 1,
+            path: PathBuf::from("/backing/left"),
+        };
+        let candidate_backing = BackingTreeIdentity {
+            device_major: 8,
+            device_minor: 1,
+            path: PathBuf::from("/backing/right"),
+        };
+
+        assert!(roots_overlap(
+            Path::new("/visible/left"),
+            &existing_backing,
+            &identity,
+            Path::new("/visible/right"),
+            &candidate_backing,
+            &identity,
+        ));
+    }
+
+    #[test]
+    fn registry_fails_closed_when_mount_topology_is_unavailable_or_malformed() {
+        let root = temporary_root("mount-failure");
+        let identity = inspect_root(&root).expect("root inspected").identity;
+
+        let mut unavailable = WorkspaceRegistry::with_mountinfo_reader(|| {
+            Err(MountInfoError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "mountinfo unavailable",
+            )))
+        });
+        assert!(matches!(
+            unavailable.register(&root, &identity, ()),
+            Err(WorkspaceRegistryError::MountTopologyUnavailable)
+        ));
+        assert_eq!(unavailable.len(), 0);
+
+        let mut malformed = WorkspaceRegistry::with_mountinfo_reader(|| parse_mountinfo("invalid"));
+        assert!(matches!(
+            malformed.register(&root, &identity, ()),
+            Err(WorkspaceRegistryError::MountTopologyUnavailable)
+        ));
+        assert_eq!(malformed.len(), 0);
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn registry_retains_root_fd_and_revalidates_identity_after_open() {
+        let root = temporary_root("retained-fd");
+        let displaced = root.with_extension("original");
+        let identity = inspect_root(&root).expect("root inspected").identity;
+        let mountinfo = mount_line(301, &identity, "/srv/retained", &root);
+        let mut registry = registry_with_mountinfo(mountinfo);
+
+        let registration = registry
+            .register(&root, &identity, ())
+            .expect("root registers");
+        fs::rename(&root, &displaced).expect("registered root displaced");
+        fs::create_dir(&root).expect("replacement root created");
+
+        assert_eq!(
+            registry
+                .retained_fd_identity(&registration.capability_id)
+                .expect("retained fd identity"),
+            identity
+        );
+        assert_ne!(
+            inspect_root(&root).expect("replacement inspected").identity,
+            identity
+        );
+
+        fs::remove_dir_all(root).expect("replacement removed");
+        fs::remove_dir_all(displaced).expect("original removed");
+    }
+}

@@ -67,6 +67,9 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "workspace.register.json",
         "workspace.restrict_policy.json",
         "workspace.activate.json",
+        "workspace.begin_close.json",
+        "workspace.cancel_executions.json",
+        "workspace.unregister.json",
         "file.read.json",
         "process.run.json",
     ] {

@@ -6,6 +6,9 @@ export const RUNTIME_METHODS = [
   "workspace.register",
   "workspace.restrict_policy",
   "workspace.activate",
+  "workspace.begin_close",
+  "workspace.cancel_executions",
+  "workspace.unregister",
   "file.read",
   "process.run"
 ] as const;
@@ -61,6 +64,12 @@ const workspaceActivateParamsSchema = z
   })
   .strict();
 
+const workspaceCapabilityParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1)
+  })
+  .strict();
+
 const fileReadParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -98,6 +107,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("workspace.register", workspaceRegisterParamsSchema),
   requestSchema("workspace.restrict_policy", workspaceRestrictPolicyParamsSchema),
   requestSchema("workspace.activate", workspaceActivateParamsSchema),
+  requestSchema("workspace.begin_close", workspaceCapabilityParamsSchema),
+  requestSchema("workspace.cancel_executions", workspaceCapabilityParamsSchema),
+  requestSchema("workspace.unregister", workspaceCapabilityParamsSchema),
   requestSchema("file.read", fileReadParamsSchema),
   requestSchema("process.run", processRunParamsSchema)
 ]);

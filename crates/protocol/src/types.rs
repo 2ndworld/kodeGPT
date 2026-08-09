@@ -104,6 +104,12 @@ pub struct WorkspaceActivateParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceCapabilityParams {
+    pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileReadParams {
     pub capability_id: String,
     pub path: String,
@@ -154,6 +160,24 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: WorkspaceActivateParams,
+    },
+    #[serde(rename = "workspace.begin_close")]
+    WorkspaceBeginClose {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCapabilityParams,
+    },
+    #[serde(rename = "workspace.cancel_executions")]
+    WorkspaceCancelExecutions {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCapabilityParams,
+    },
+    #[serde(rename = "workspace.unregister")]
+    WorkspaceUnregister {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCapabilityParams,
     },
     #[serde(rename = "file.read")]
     FileRead {

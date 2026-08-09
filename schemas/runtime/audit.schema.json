@@ -31,7 +31,18 @@
       "pattern": "^kc_[A-Za-z0-9_-]+$",
       "maxLength": 96
     },
-    "action": { "enum": ["inspect_root", "test_effect"] },
+    "action": {
+      "enum": [
+        "inspect_root",
+        "workspace_register",
+        "workspace_restrict_policy",
+        "workspace_activate",
+        "workspace_begin_close",
+        "workspace_cancel_executions",
+        "workspace_unregister",
+        "test_effect"
+      ]
+    },
     "decision": { "const": "allow" },
     "reason": { "enum": ["request_validated", "test_authorized"] },
     "outcome": { "enum": ["success", "failed"] }

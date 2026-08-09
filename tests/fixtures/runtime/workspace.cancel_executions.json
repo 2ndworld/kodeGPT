@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_cancel_executions",
+  "method": "workspace.cancel_executions",
+  "params": {
+    "capabilityId": "kc_fixture_1"
+  }
+}

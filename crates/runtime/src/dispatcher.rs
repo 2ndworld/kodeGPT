@@ -1,8 +1,15 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use kodegpt_workspace_io::inspect_root;
+use kodegpt_protocol::{
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, RuntimePolicy,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams,
+};
+use kodegpt_workspace_io::{
+    FilesystemIdentity, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -53,12 +60,15 @@ pub async fn run_dispatcher(
     audit: Arc<AuditSink>,
 ) {
     let mut tasks = JoinSet::new();
+    let workspace_registry = Arc::new(Mutex::new(WorkspaceRegistry::<RuntimePolicy>::new()));
 
     while let Some(value) = requests.recv().await {
         let response_tx = responses.clone();
         let audit = Arc::clone(&audit);
+        let workspace_registry = Arc::clone(&workspace_registry);
         tasks.spawn(async move {
-            let response = dispatch_one(value, test_methods_enabled, audit).await;
+            let response =
+                dispatch_one(value, test_methods_enabled, audit, workspace_registry).await;
             let _ = response_tx.send(response);
         });
     }
@@ -70,6 +80,7 @@ async fn dispatch_one(
     value: Value,
     test_methods_enabled: bool,
     audit: Arc<AuditSink>,
+    workspace_registry: Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
 ) -> Value {
     let request = match parse_request(value) {
         Ok(request) => request,
@@ -167,6 +178,123 @@ async fn dispatch_one(
                 }),
             )
         }
+        "workspace.register" => {
+            let params = match serde_json::from_value::<WorkspaceRegisterParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let root_path = PathBuf::from(params.root_path);
+            let expected_identity = filesystem_identity_from_protocol(params.expected_identity);
+            let ceiling = params.ceiling;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                None,
+                AuditAction::WorkspaceRegister,
+                move |registry| {
+                    let registration = registry.register(&root_path, &expected_identity, ceiling)?;
+                    Ok(json!({ "capabilityId": registration.capability_id }))
+                },
+            )
+        }
+        "workspace.restrict_policy" => {
+            let params =
+                match serde_json::from_value::<WorkspaceRestrictPolicyParams>(request.params) {
+                    Ok(params) => params,
+                    Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let restriction = params.restriction;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceRestrictPolicy,
+                move |registry| {
+                    registry.restrict_policy(&capability_id, restriction)?;
+                    Ok(json!({ "ok": true }))
+                },
+            )
+        }
+        "workspace.activate" => {
+            let params = match serde_json::from_value::<WorkspaceActivateParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceActivate,
+                move |registry| {
+                    registry.activate(&capability_id)?;
+                    Ok(json!({ "ok": true }))
+                },
+            )
+        }
+        "workspace.begin_close" => {
+            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceBeginClose,
+                move |registry| {
+                    registry.begin_close(&capability_id)?;
+                    Ok(json!({ "ok": true }))
+                },
+            )
+        }
+        "workspace.cancel_executions" => {
+            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceCancelExecutions,
+                move |registry| {
+                    registry.cancel_executions(&capability_id)?;
+                    Ok(json!({ "ok": true }))
+                },
+            )
+        }
+        "workspace.unregister" => {
+            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::WorkspaceUnregister,
+                move |registry| {
+                    registry.unregister(&capability_id)?;
+                    Ok(json!({ "ok": true }))
+                },
+            )
+        }
         #[cfg(feature = "runtime-test-methods")]
         "test.sleep" if test_methods_enabled => {
             let params = match serde_json::from_value::<SleepParams>(request.params) {
@@ -241,6 +369,87 @@ async fn dispatch_one(
     }
 }
 
+fn filesystem_identity_from_protocol(
+    identity: ProtocolFilesystemIdentity,
+) -> FilesystemIdentity {
+    FilesystemIdentity {
+        device_major: identity.device_major,
+        device_minor: identity.device_minor,
+        inode: identity.inode,
+    }
+}
+
+fn audited_workspace_operation<F>(
+    audit: &AuditSink,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    request_id: String,
+    capability_id: Option<String>,
+    action: AuditAction,
+    operation: F,
+) -> Value
+where
+    F: FnOnce(&mut WorkspaceRegistry<RuntimePolicy>) -> Result<Value, WorkspaceRegistryError>,
+{
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: format!("op_{operation_suffix}"),
+        capability_id,
+        action,
+    };
+
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let result = match registry.lock() {
+        Ok(mut registry) => operation(&mut registry),
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, result)
+        }
+        Err(error) => {
+            let (code, message) = workspace_registry_error_contract(&error);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+    }
+}
+
+fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'static str) {
+    match error {
+        WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
+        WorkspaceRegistryError::IdentityChanged => (-32022, "WORKSPACE_IDENTITY_CHANGED"),
+        WorkspaceRegistryError::MountTopologyUnavailable => {
+            (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE")
+        }
+        WorkspaceRegistryError::RootOverlap => (-32024, "WORKSPACE_ROOT_OVERLAP"),
+        WorkspaceRegistryError::CapabilityNotFound => {
+            (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
+        }
+    }
+}
+
 fn audited_failure(
     audit: &AuditSink,
     context: &AuditContext,
@@ -267,7 +476,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::run_dispatcher;
-    use crate::audit::AuditSink;
+    use crate::audit::{AuditFaults, AuditSink};
 
     fn audit_sink(label: &str) -> (Arc<AuditSink>, PathBuf) {
         let root = std::env::temp_dir().join(format!(
@@ -434,6 +643,190 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(audit.path()).unwrap().lines().count(), 6);
 
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    fn observe_policy() -> Value {
+        json!({
+            "name": "observe",
+            "allowWrite": false,
+            "allowProcess": false,
+            "network": "deny",
+            "allowedExecutableNames": [],
+            "inheritEnv": false,
+            "envAllowlist": []
+        })
+    }
+
+    async fn next_response(
+        request_tx: &mpsc::UnboundedSender<Value>,
+        response_rx: &mut mpsc::UnboundedReceiver<Value>,
+        id: &str,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        request_tx
+            .send(request(id, method, params))
+            .expect("workspace request accepted");
+        tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
+            .await
+            .expect("workspace response arrives")
+            .expect("workspace response channel open")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workspace_registration_stops_before_root_inspection_when_audit_decision_fails() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-workspace-audit-order-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let missing_workspace = audit_root.with_extension("missing-workspace");
+        let _ = fs::remove_dir_all(&missing_workspace);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_audit_order",
+            "workspace.register",
+            json!({
+                "rootPath": missing_workspace.to_string_lossy(),
+                "expectedIdentity": {
+                    "deviceMajor": 0,
+                    "deviceMinor": 0,
+                    "inode": "0"
+                },
+                "ceiling": observe_policy()
+            }),
+        )
+        .await;
+
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workspace_registration_rejects_overlap_and_supports_lifecycle_skeletons() {
+        let (audit, audit_root) = audit_sink("workspace-lifecycle");
+        let workspace = audit_root.with_extension("registered-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let identity = kodegpt_workspace_io::inspect_root(&workspace)
+            .expect("workspace inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registered = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_register",
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": identity,
+                "ceiling": observe_policy()
+            }),
+        )
+        .await;
+        assert!(
+            registered.get("result").is_some(),
+            "registration failed: {registered}"
+        );
+        let capability_id = registered["result"]["capabilityId"]
+            .as_str()
+            .expect("registration returns capability id")
+            .to_owned();
+        assert!(capability_id.starts_with("kc_"));
+
+        let overlap = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_overlap",
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": kodegpt_workspace_io::inspect_root(&workspace).unwrap().identity,
+                "ceiling": observe_policy()
+            }),
+        )
+        .await;
+        assert_eq!(overlap["error"]["message"], "WORKSPACE_ROOT_OVERLAP");
+
+        for (id, method, params) in [
+            (
+                "req_workspace_restrict",
+                "workspace.restrict_policy",
+                json!({ "capabilityId": capability_id, "restriction": observe_policy() }),
+            ),
+            (
+                "req_workspace_activate",
+                "workspace.activate",
+                json!({ "capabilityId": capability_id }),
+            ),
+            (
+                "req_workspace_begin_close",
+                "workspace.begin_close",
+                json!({ "capabilityId": capability_id }),
+            ),
+            (
+                "req_workspace_cancel",
+                "workspace.cancel_executions",
+                json!({ "capabilityId": capability_id }),
+            ),
+            (
+                "req_workspace_unregister",
+                "workspace.unregister",
+                json!({ "capabilityId": capability_id }),
+            ),
+        ] {
+            let response = next_response(&request_tx, &mut response_rx, id, method, params).await;
+            assert_eq!(response["result"]["ok"], true, "{method} must succeed");
+        }
+
+        let missing = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_missing",
+            "workspace.activate",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        assert_eq!(
+            missing["error"]["message"],
+            "WORKSPACE_CAPABILITY_NOT_FOUND"
+        );
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("workspace_register"));
+        assert!(audit_text.contains("workspace_unregister"));
+
+        fs::remove_dir_all(workspace).expect("workspace removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 }

@@ -56,17 +56,21 @@ pub fn inspect_root(path: &Path) -> Result<InspectedRoot, InspectRootError> {
         return Err(InspectRootError::NotDirectory);
     }
 
-    let device = metadata.dev();
-    let identity = FilesystemIdentity {
-        device_major: libc::major(device) as u32,
-        device_minor: libc::minor(device) as u32,
-        inode: metadata.ino().to_string(),
-    };
+    let identity = filesystem_identity(&metadata);
 
     Ok(InspectedRoot {
         canonical_root,
         identity,
     })
+}
+
+pub(crate) fn filesystem_identity(metadata: &fs::Metadata) -> FilesystemIdentity {
+    let device = metadata.dev();
+    FilesystemIdentity {
+        device_major: libc::major(device) as u32,
+        device_minor: libc::minor(device) as u32,
+        inode: metadata.ino().to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -101,15 +105,17 @@ mod tests {
     }
 
     #[test]
-    fn persistent_identity_changes_when_same_path_is_replaced() {
+    fn persistent_identity_changes_when_same_path_is_replaced_while_original_inode_is_retained() {
         let root = temporary_root("replacement");
         let before = inspect_root(&root).expect("initial identity").identity;
+        let retained_root = fs::File::open(&root).expect("original directory fd retained");
 
         fs::remove_dir_all(&root).expect("initial root removed");
         fs::create_dir(&root).expect("replacement root created");
         let after = inspect_root(&root).expect("replacement identity").identity;
 
         assert_ne!(before, after);
+        drop(retained_root);
         fs::remove_dir_all(root).expect("temporary root removed");
     }
 

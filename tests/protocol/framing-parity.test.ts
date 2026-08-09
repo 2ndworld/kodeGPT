@@ -17,6 +17,9 @@ const FIXTURE_NAMES = [
   "workspace.register.json",
   "workspace.restrict_policy.json",
   "workspace.activate.json",
+  "workspace.begin_close.json",
+  "workspace.cancel_executions.json",
+  "workspace.unregister.json",
   "file.read.json",
   "process.run.json"
 ] as const;
@@ -27,6 +30,9 @@ const EXPECTED_METHODS = [
   "workspace.register",
   "workspace.restrict_policy",
   "workspace.activate",
+  "workspace.begin_close",
+  "workspace.cancel_executions",
+  "workspace.unregister",
   "file.read",
   "process.run"
 ] as const;
