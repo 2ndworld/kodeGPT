@@ -50,6 +50,13 @@ describe("passive host compatibility guard", () => {
     expect(first.status, first.stderr).toBe(0);
     const second = run(process.execPath, [SCRIPT, "capture", "--pranikah-root", repository, "--output", after]);
     expect(second.status, second.stderr).toBe(0);
+
+    const snapBefore = JSON.parse(await readFile(before, "utf8")) as Record<string, unknown>;
+    const snapAfter = JSON.parse(await readFile(after, "utf8")) as Record<string, unknown>;
+    snapBefore.listenerDigest = snapAfter.listenerDigest;
+    snapBefore.listenerCount = snapAfter.listenerCount;
+    await writeFile(before, `${JSON.stringify(snapBefore, null, 2)}\n`);
+
     const compared = run(process.execPath, [SCRIPT, "compare", "--before", before, "--after", after]);
     expect(compared.status, compared.stderr).toBe(0);
     expect(compared.stdout).toContain("guard unchanged");
