@@ -46,6 +46,8 @@
         "file_search",
         "file_write",
         "file_edit",
+        "git_status",
+        "git_diff",
         "artifact_spool_create",
         "test_effect"
       ]
