@@ -19,6 +19,8 @@ use crate::spool::{RawSpoolError, RawSpoolMetadata, RawSpoolStore, RawSpoolWrite
 
 const GIT_PREVIEW_MAX_BYTES: usize = 64 * 1024;
 const CAPTURE_CHUNK_BYTES: usize = 16 * 1024;
+const CHILD_GIT_DIR: &str = "/workspace/.git";
+const CHILD_WORK_TREE: &str = "/workspace";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitOperation {
@@ -54,8 +56,12 @@ impl fmt::Display for GitInspectionError {
         match self {
             Self::Sandbox(error) => write!(formatter, "Git sandbox failed: {error}"),
             Self::Spool(error) => write!(formatter, "Git spool failed: {error}"),
-            Self::ConfigRead(error) => write!(formatter, "Git repository config read failed: {error}"),
-            Self::UnsafeRepositoryConfig => formatter.write_str("Git repository config is unsafe for inspection"),
+            Self::ConfigRead(error) => {
+                write!(formatter, "Git repository config read failed: {error}")
+            }
+            Self::UnsafeRepositoryConfig => {
+                formatter.write_str("Git repository config is unsafe for inspection")
+            }
             Self::RegistryUnavailable => formatter.write_str("Git execution registry unavailable"),
             Self::CaptureFailed => formatter.write_str("Git output capture failed"),
             Self::WaitFailed(error) => write!(formatter, "Git wait failed: {error}"),
@@ -92,6 +98,8 @@ pub fn run_git_inspection(
     let mut spec = SandboxLaunchSpec::new(program);
     spec.args = hardened_git_args(operation, &filter_drivers);
     spec.env = BTreeMap::from([
+        ("GIT_DIR".to_owned(), CHILD_GIT_DIR.to_owned()),
+        ("GIT_WORK_TREE".to_owned(), CHILD_WORK_TREE.to_owned()),
         ("GIT_OPTIONAL_LOCKS".to_owned(), "0".to_owned()),
         ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
         ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
@@ -106,13 +114,15 @@ pub fn run_git_inspection(
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
     let execution_id = match executions.lock() {
-        Ok(mut registry) => registry
-            .register(
-                workspace_capability.to_owned(),
-                process_group,
-                ExecutionKind::Git,
-            )
-            .execution_id,
+        Ok(mut registry) => {
+            registry
+                .register(
+                    workspace_capability.to_owned(),
+                    process_group,
+                    ExecutionKind::Git,
+                )
+                .execution_id
+        }
         Err(_) => {
             terminate_untracked_child(&mut child);
             return Err(GitInspectionError::RegistryUnavailable);
@@ -172,53 +182,82 @@ fn repository_filter_drivers(root_fd: &OwnedFd) -> Result<Vec<String>, GitInspec
 
 fn parse_filter_drivers(config: &str) -> Result<Vec<String>, GitInspectionError> {
     let mut drivers = BTreeSet::new();
+    let mut current_section = String::new();
+
     for raw_line in config.lines() {
         let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') || !line.starts_with('[') {
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        let Some(end) = line.find(']') else {
-            return Err(GitInspectionError::UnsafeRepositoryConfig);
-        };
-        let section = line[1..end].trim();
-        let lower = section.to_ascii_lowercase();
-        if lower == "include" || lower.starts_with("includeif ") || lower.starts_with("includeif\t") {
-            return Err(GitInspectionError::UnsafeRepositoryConfig);
-        }
 
-        let driver = if lower.starts_with("filter ") || lower.starts_with("filter\t") {
-            let rest = section[6..].trim();
-            if rest.len() < 2 || !rest.starts_with('"') || !rest.ends_with('"') {
+        if line.starts_with('[') {
+            let Some(end) = line.find(']') else {
+                return Err(GitInspectionError::UnsafeRepositoryConfig);
+            };
+            let section = line[1..end].trim();
+            let lower = section.to_ascii_lowercase();
+            if lower == "include"
+                || lower.starts_with("includeif ")
+                || lower.starts_with("includeif\t")
+            {
                 return Err(GitInspectionError::UnsafeRepositoryConfig);
             }
-            &rest[1..rest.len() - 1]
-        } else if lower.starts_with("filter.") {
-            &section[7..]
-        } else {
-            continue;
-        };
+            current_section = lower.clone();
 
-        if driver.is_empty()
-            || driver.len() > 128
-            || !driver
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            let driver = if lower.starts_with("filter ") || lower.starts_with("filter\t") {
+                let rest = section[6..].trim();
+                if rest.len() < 2 || !rest.starts_with('"') || !rest.ends_with('"') {
+                    return Err(GitInspectionError::UnsafeRepositoryConfig);
+                }
+                Some(&rest[1..rest.len() - 1])
+            } else if lower.starts_with("filter.") {
+                Some(&section[7..])
+            } else {
+                None
+            };
+
+            if let Some(driver) = driver {
+                if driver.is_empty()
+                    || driver.len() > 128
+                    || !driver.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+                    })
+                {
+                    return Err(GitInspectionError::UnsafeRepositoryConfig);
+                }
+                drivers.insert(driver.to_owned());
+            }
+            continue;
+        }
+
+        let key = line
+            .split_once('=')
+            .map(|(key, _)| key.trim())
+            .unwrap_or_else(|| line.split_ascii_whitespace().next().unwrap_or_default());
+        if (current_section == "core" && key.eq_ignore_ascii_case("worktree"))
+            || (current_section == "extensions" && key.eq_ignore_ascii_case("worktreeconfig"))
         {
             return Err(GitInspectionError::UnsafeRepositoryConfig);
         }
-        drivers.insert(driver.to_owned());
     }
     Ok(drivers.into_iter().collect())
 }
 
 fn hardened_git_args(operation: GitOperation, filter_drivers: &[String]) -> Vec<OsString> {
     let mut args = [
+        "--git-dir=/workspace/.git",
+        "--work-tree=/workspace",
+        "--no-optional-locks",
+        "-c",
+        "core.bare=false",
         "-c",
         "core.fsmonitor=false",
         "-c",
         "core.hooksPath=/dev/null",
         "-c",
         "core.attributesFile=/dev/null",
+        "-c",
+        "core.excludesFile=/dev/null",
         "-c",
         "credential.helper=",
         "-c",
@@ -321,16 +360,12 @@ fn capture_child(
                 writer.write_source(&(bytes.len() as u32).to_be_bytes())?;
                 writer.write_source(&bytes)?;
                 match kind {
-                    StreamKind::Stdout => append_preview(
-                        &mut stdout_preview,
-                        &mut stdout_truncated,
-                        &bytes,
-                    ),
-                    StreamKind::Stderr => append_preview(
-                        &mut stderr_preview,
-                        &mut stderr_truncated,
-                        &bytes,
-                    ),
+                    StreamKind::Stdout => {
+                        append_preview(&mut stdout_preview, &mut stdout_truncated, &bytes)
+                    }
+                    StreamKind::Stderr => {
+                        append_preview(&mut stderr_preview, &mut stderr_truncated, &bytes)
+                    }
                 }
             }
             Ok(StreamMessage::Done(result)) => {
@@ -478,20 +513,25 @@ mod tests {
     }
 
     #[test]
-    fn repository_filter_config_is_neutralized_and_includes_fail_closed() {
+    fn repository_filter_config_is_neutralized_and_unsafe_indirection_fails_closed() {
         assert_eq!(
-            parse_filter_drivers("[filter \"zeta-1\"]\n clean = ./evil\n[filter.alpha]\n process = ./evil\n")
-                .expect("safe filter sections parsed"),
+            parse_filter_drivers(
+                "[filter \"zeta-1\"]\n clean = ./evil\n[filter.alpha]\n process = ./evil\n"
+            )
+            .expect("safe filter sections parsed"),
             vec!["alpha".to_owned(), "zeta-1".to_owned()]
         );
-        assert!(matches!(
-            parse_filter_drivers("[include]\n path = ./evil.cfg\n"),
-            Err(GitInspectionError::UnsafeRepositoryConfig)
-        ));
-        assert!(matches!(
-            parse_filter_drivers("[includeIf \"gitdir:./\"]\n path = ./evil.cfg\n"),
-            Err(GitInspectionError::UnsafeRepositoryConfig)
-        ));
+        for unsafe_config in [
+            "[include]\n path = ./evil.cfg\n",
+            "[includeIf \"gitdir:./\"]\n path = ./evil.cfg\n",
+            "[core]\n worktree = /etc\n",
+            "[extensions]\n worktreeConfig = true\n",
+        ] {
+            assert!(matches!(
+                parse_filter_drivers(unsafe_config),
+                Err(GitInspectionError::UnsafeRepositoryConfig)
+            ));
+        }
     }
 
     #[test]
@@ -529,16 +569,34 @@ mod tests {
             "#!/bin/sh\necho HELPER_EXECUTED >&2\nprintf 'HELPER_EXECUTED\\n'\nexit 97\n",
         )
         .expect("helper fixture");
-        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).expect("helper executable");
-        git(&workspace, &["config", "core.fsmonitor", "/workspace/evil-helper.sh"]);
-        git(&workspace, &["config", "diff.external", "/workspace/evil-helper.sh"]);
-        git(&workspace, &["config", "diff.evil.textconv", "/workspace/evil-helper.sh"]);
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755))
+            .expect("helper executable");
         git(
             &workspace,
-            &["config", "filter.evilfilter.clean", "/workspace/evil-helper.sh"],
+            &["config", "core.fsmonitor", "/workspace/evil-helper.sh"],
         );
-        git(&workspace, &["config", "filter.evilfilter.required", "true"]);
-        fs::write(workspace.join("tracked.txt"), "after\n").expect("working tree modification");
+        git(
+            &workspace,
+            &["config", "diff.external", "/workspace/evil-helper.sh"],
+        );
+        git(
+            &workspace,
+            &["config", "diff.evil.textconv", "/workspace/evil-helper.sh"],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "filter.evilfilter.clean",
+                "/workspace/evil-helper.sh",
+            ],
+        );
+        git(
+            &workspace,
+            &["config", "filter.evilfilter.required", "true"],
+        );
+        fs::write(workspace.join("tracked.txt"), "after\n")
+            .expect("working tree modification");
         fs::write(workspace.join("tracked.flt"), "filter-after\n")
             .expect("filtered working tree modification");
 
