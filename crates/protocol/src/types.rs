@@ -174,6 +174,13 @@ pub struct ProcessRunParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessOperationParams {
+    pub capability_id: String,
+    pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "method", deny_unknown_fields)]
 pub enum RuntimeRequest {
     #[serde(rename = "runtime.hello")]
@@ -277,6 +284,18 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: ProcessRunParams,
+    },
+    #[serde(rename = "process.status")]
+    ProcessStatus {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: ProcessOperationParams,
+    },
+    #[serde(rename = "process.cancel")]
+    ProcessCancel {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: ProcessOperationParams,
     },
 }
 
