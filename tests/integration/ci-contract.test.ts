@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const CI_PATH = fileURLToPath(new URL("../../.github/workflows/ci.yml", import.meta.url));
+const PACKAGE_PATH = fileURLToPath(new URL("../../package.json", import.meta.url));
 const VITEST_CONFIG_PATH = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
 
 describe("release CI contract", () => {
@@ -62,9 +63,15 @@ describe("release CI contract", () => {
     }
   });
 
-  it("keeps Cargo-heavy root tests deterministic on cold runners", async () => {
-    const source = await readFile(VITEST_CONFIG_PATH, "utf8");
-    expect(source).toMatch(/projects:\s*\[[\s\S]*?extends:\s*true[\s\S]*?name:\s*"root-tests"/);
-    expect(source).toMatch(/name:\s*"root-tests"[\s\S]*?fileParallelism:\s*false/);
+  it("keeps Cargo-heavy tests deterministic on cold runners", async () => {
+    const [packageSource, vitestSource] = await Promise.all([
+      readFile(PACKAGE_PATH, "utf8"),
+      readFile(VITEST_CONFIG_PATH, "utf8")
+    ]);
+    expect(packageSource).toContain('"test": "vitest run --no-file-parallelism"');
+    expect(vitestSource).toMatch(
+      /projects:\s*\[[\s\S]*?extends:\s*true[\s\S]*?name:\s*"root-tests"/
+    );
+    expect(vitestSource).toMatch(/name:\s*"root-tests"[\s\S]*?fileParallelism:\s*false/);
   });
 });
