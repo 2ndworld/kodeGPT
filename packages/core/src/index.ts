@@ -1,4 +1,15 @@
 export {
+  ExecutionManager
+} from "./execution-manager.js";
+export type {
+  ProcessArtifactMetadata,
+  ProcessRunInput,
+  ProcessState,
+  ProcessStatus,
+  WorkspaceExecutionAdapter
+} from "./execution-manager.js";
+
+export {
   KernelClient,
   KernelRpcError,
   RuntimeUnavailableError
