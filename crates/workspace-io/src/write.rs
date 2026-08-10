@@ -41,9 +41,7 @@ impl fmt::Display for WorkspaceWriteError {
             Self::NotRegularFile => {
                 formatter.write_str("workspace mutation target is not a regular file")
             }
-            Self::InvalidUtf8 => {
-                formatter.write_str("workspace edit target is not valid UTF-8")
-            }
+            Self::InvalidUtf8 => formatter.write_str("workspace edit target is not valid UTF-8"),
             Self::Conflict => formatter.write_str("workspace edit replacement count conflict"),
             Self::Io(error) => write!(formatter, "workspace mutation failed: {error}"),
         }
@@ -149,7 +147,7 @@ fn destination_mode(
             if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
                 return Err(WorkspaceWriteError::BoundaryViolation);
             }
-            Ok((false, Mode::from_bits_truncate((stat.st_mode & 0o7777) as _)))
+            Ok((false, Mode::from_bits_truncate((stat.st_mode & 0o777) as _)))
         }
         Err(Errno::NOENT) => Ok((true, Mode::RUSR | Mode::WUSR)),
         Err(error) => Err(WorkspaceWriteError::Io(error)),
@@ -265,7 +263,10 @@ mod tests {
             .expect("new file created");
         assert!(created.created);
         assert_eq!(created.bytes_written, 12);
-        assert_eq!(fs::read(root.join("nested/new.txt")).unwrap(), b"new contents");
+        assert_eq!(
+            fs::read(root.join("nested/new.txt")).unwrap(),
+            b"new contents"
+        );
         assert_eq!(
             fs::metadata(root.join("nested/new.txt"))
                 .expect("new metadata")
@@ -275,14 +276,14 @@ mod tests {
             0o600
         );
 
-        let replaced = write_file_atomic_beneath(
-            &fd,
-            Path::new("nested/existing.txt"),
-            b"replacement",
-        )
-        .expect("existing file replaced");
+        let replaced =
+            write_file_atomic_beneath(&fd, Path::new("nested/existing.txt"), b"replacement")
+                .expect("existing file replaced");
         assert!(!replaced.created);
-        assert_eq!(fs::read(root.join("nested/existing.txt")).unwrap(), b"replacement");
+        assert_eq!(
+            fs::read(root.join("nested/existing.txt")).unwrap(),
+            b"replacement"
+        );
         assert_eq!(
             fs::metadata(root.join("nested/existing.txt"))
                 .expect("replacement metadata")
@@ -300,8 +301,7 @@ mod tests {
         let root = temporary_root("boundary");
         let outside = temporary_root("outside");
         fs::write(outside.join("secret.txt"), "outside-secret").expect("outside secret written");
-        symlink(outside.join("secret.txt"), root.join("leaf-link"))
-            .expect("leaf symlink created");
+        symlink(outside.join("secret.txt"), root.join("leaf-link")).expect("leaf symlink created");
         symlink(&outside, root.join("parent-link")).expect("parent symlink created");
         let fd = root_fd(&root);
 
@@ -341,14 +341,8 @@ mod tests {
             "alpha beta alpha\n"
         );
 
-        let result = edit_file_exact_beneath(
-            &fd,
-            Path::new("file.txt"),
-            "alpha",
-            "omega",
-            2,
-        )
-        .expect("edit succeeds");
+        let result = edit_file_exact_beneath(&fd, Path::new("file.txt"), "alpha", "omega", 2)
+            .expect("edit succeeds");
         assert_eq!(result.replacements, 2);
         assert_eq!(
             fs::read_to_string(root.join("file.txt")).unwrap(),
@@ -377,7 +371,8 @@ mod tests {
                 if fs::rename(racer_root.join("target.txt"), &swap).is_err() {
                     continue;
                 }
-                if fs::rename(racer_root.join("alternate"), racer_root.join("target.txt")).is_err() {
+                if fs::rename(racer_root.join("alternate"), racer_root.join("target.txt")).is_err()
+                {
                     let _ = fs::rename(&swap, racer_root.join("target.txt"));
                     continue;
                 }
@@ -391,7 +386,8 @@ mod tests {
         for index in 0..4_000 {
             let contents = format!("inside-{index}");
             match write_file_atomic_beneath(&fd, Path::new("target.txt"), contents.as_bytes()) {
-                Ok(_) | Err(WorkspaceWriteError::BoundaryViolation | WorkspaceWriteError::NotFound) => {}
+                Ok(_)
+                | Err(WorkspaceWriteError::BoundaryViolation | WorkspaceWriteError::NotFound) => {}
                 Err(error) => panic!("unexpected race write error: {error}"),
             }
         }

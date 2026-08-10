@@ -157,6 +157,46 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "workspace.list": [],
         "workspace.open": ["rootPath"]
       });
+
+      const writeResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-write",
+        method: "tools/call",
+        params: {
+          name: "file.write",
+          arguments: { workspaceId: "ws_stdio", path: "created.txt", content: "hello" },
+          _meta: meta()
+        }
+      });
+      const writePayload = await writeResponse;
+      expect(JSON.parse(writePayload.result.content[0].text)).toEqual({
+        bytesWritten: 5,
+        created: true
+      });
+
+      const editResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-edit",
+        method: "tools/call",
+        params: {
+          name: "file.edit",
+          arguments: {
+            workspaceId: "ws_stdio",
+            path: "created.txt",
+            oldText: "hello",
+            newText: "world",
+            expectedReplacements: 1
+          },
+          _meta: meta()
+        }
+      });
+      const editPayload = await editResponse;
+      expect(JSON.parse(editPayload.result.content[0].text)).toEqual({
+        bytesWritten: 5,
+        replacements: 1
+      });
     } finally {
       await handle.close();
     }
