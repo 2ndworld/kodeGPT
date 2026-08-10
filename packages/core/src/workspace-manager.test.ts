@@ -49,6 +49,22 @@ class FakeTrust implements TrustResolver {
   }
 }
 
+const GIT_RESULT = {
+  schemaVersion: 1,
+  exitCode: 0,
+  stdoutPreview: " M tracked.txt\n",
+  stderrPreview: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  artifact: {
+    schemaVersion: 1,
+    artifactId: "ka_fixture",
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    bytesWritten: 14,
+    sourceTruncated: false
+  }
+};
+
 class FakeKernel implements KernelTransport {
   readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   profileRead: Promise<{ contents: string | null }> = Promise.resolve({ contents: null });
@@ -88,6 +104,9 @@ class FakeKernel implements KernelTransport {
         return {
           matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }]
         } as T;
+      case "git.status":
+      case "git.diff":
+        return GIT_RESULT as T;
       case "workspace.restrict_policy":
       case "workspace.begin_close":
       case "workspace.unregister":
@@ -145,7 +164,7 @@ describe("WorkspaceManager", () => {
     expect(JSON.stringify(listed)).not.toContain("kc_fixture");
   });
 
-  it("routes READY public workspace file operations through the private runtime capability", async () => {
+  it("routes READY public workspace file and Git operations through the private runtime capability", async () => {
     const kernel = new FakeKernel();
     const manager = new WorkspaceManager({
       kernel,
@@ -159,6 +178,8 @@ describe("WorkspaceManager", () => {
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
     const tree = await manager.tree("ws_files", ".");
     const matches = await manager.search("ws_files", "needle", ".");
+    const status = await manager.gitStatus("ws_files");
+    const diff = await manager.gitDiff("ws_files");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
     expect(write).toEqual({ bytesWritten: 7, created: true });
@@ -170,8 +191,11 @@ describe("WorkspaceManager", () => {
     expect(matches).toEqual([
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
+    expect(status).toEqual(GIT_RESULT);
+    expect(diff).toEqual(GIT_RESULT);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-5)).toEqual([
+    expect(JSON.stringify(status)).not.toContain("kc_fixture");
+    expect(kernel.calls.slice(-7)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -194,7 +218,9 @@ describe("WorkspaceManager", () => {
       {
         method: "file.search",
         params: { capabilityId: "kc_fixture", path: ".", query: "needle" }
-      }
+      },
+      { method: "git.status", params: { capabilityId: "kc_fixture" } },
+      { method: "git.diff", params: { capabilityId: "kc_fixture" } }
     ]);
   });
 
