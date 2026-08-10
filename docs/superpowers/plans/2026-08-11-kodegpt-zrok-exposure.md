@@ -60,7 +60,7 @@ export interface ExposeZrokOptions {
 }
 
 export interface ZrokReservedName {
-  namespaceToken: string;
+  namespace: string;
   name: string;
   namespaceName: string;
   reserved: true;
@@ -143,14 +143,14 @@ const namesJson = JSON.stringify([{
 }]);
 
 expect(resolveZrokReservedName("public:kodegpt-dev", namesJson)).toEqual({
-  namespaceToken: "public",
+  namespace: "public",
   name: "kodegpt-dev",
   namespaceName: "shares.example.test",
   reserved: true
 });
 ```
 
-Fail closed for malformed/non-array JSON, no match, duplicate exact matches, `reserved:false`, namespace mismatch, empty/invalid `namespaceName`, or invalid derived DNS hostname.
+The `zrok2 list names -n <namespace> --json` command itself scopes the namespace; the resolver uses the validated CLI namespace plus exactly one matching reserved name from that namespace-limited output. Fail closed for malformed/non-array JSON, no match, duplicate exact matches, `reserved:false`, empty/invalid `namespaceName`, or invalid derived DNS hostname.
 
 - [ ] **Step 2: Verify RED**
 

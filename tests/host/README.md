@@ -2,7 +2,7 @@
 
 This directory documents the manual evidence contract for Task 24. Do not commit machine-specific evidence here.
 
-Run deterministic Task 23 first. A host test is valid only when `pnpm test:integration` and `pnpm test:acceptance` are freshly green for the exact KodeGPT commit being tested.
+Run deterministic Task 23 first. A host test is valid only when `pnpm test:integration` and `pnpm test:acceptance` are freshly green for the exact KodeGPT commit being tested. For the managed personal/development path, start the exact installed candidate with `kodegpt expose zrok --name <namespace:name>` using a pre-existing reserved zrok v2 name; keep the emitted query-bearing Server URL local and out of Git/chat transcripts.
 
 ## Evidence file template
 
@@ -14,7 +14,7 @@ Store the completed record outside Git, for example under `/tmp/kodegpt-host-evi
   "date": "2026-08-10T00:00:00+07:00",
   "kodegptCommit": "<exact commit>",
   "planWorkspace": "<ChatGPT plan/workspace>",
-  "connectionPath": "secure-mcp-tunnel",
+  "connectionPath": "zrok-public-https-query-credential",
   "discovery": {
     "observed": false,
     "notes": ""

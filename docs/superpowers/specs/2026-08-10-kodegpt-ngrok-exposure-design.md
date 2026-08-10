@@ -1,8 +1,8 @@
 # KodeGPT v0.1 — Personal ChatGPT ngrok Exposure Design
 
 Date: 2026-08-10
-Status: Design approved; implemented locally with deterministic verification PASS; real ChatGPT host observation and git durability pending
-Scope: Amendment to Task 20 manual exposure contract and Task 24 ChatGPT host compatibility
+Status: Superseded on 2026-08-11 by `docs/superpowers/specs/2026-08-11-kodegpt-zrok-exposure-design.md`. Retained only as historical implementation context; ngrok is not a supported v0.1 provider.
+Scope: Historical amendment to Task 20 manual exposure contract and Task 24 ChatGPT host compatibility
 
 ## 1. Purpose
 

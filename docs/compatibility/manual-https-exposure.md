@@ -11,16 +11,18 @@ A typical manual deployment therefore has two independent layers:
 
 This is generic MCP-host exposure. It is not a claim that ChatGPT, or any other remote MCP client, can connect directly to a user's localhost. Whether a particular host can reach the configured HTTPS endpoint depends on that host's networking and connector capabilities.
 
-## Managed personal/development ngrok exposure
+## Managed personal/development zrok exposure
 
-For the approved personal/development ChatGPT path, KodeGPT can supervise an already-installed and already-authenticated ngrok CLI explicitly:
+For the approved personal/development ChatGPT path, KodeGPT can supervise an already-installed and enabled zrok v2 CLI using a pre-existing reserved name:
 
 ```bash
-kodegpt expose ngrok --hostname <stable-hostname>
+kodegpt expose zrok --name <namespace:name>
 ```
 
-This command still starts the KodeGPT MCP listener only on loopback. It then starts ngrok with the loopback MCP server as upstream and the supplied stable hostname as the public HTTPS authority. `kodegpt start` itself remains tunnel-independent.
+KodeGPT first resolves the reserved name from `zrok2 list names -n <namespace> --json`, derives the public HTTPS authority from that metadata, and then starts its MCP listener only on loopback. It supervises `zrok2 share public` locally with `--force-local`, proxying only `http://127.0.0.1:<port>`. `kodegpt start` itself remains tunnel-independent.
 
-On the first managed exposure for a state root, KodeGPT creates the existing connector credential if none exists and prints the ChatGPT Server URL once. That query-bearing Server URL is a credential and must be kept private. Later runs reuse the stored verifier rather than silently rotating or reconstructing the plaintext credential.
+Readiness is checked through structured `zrok2 list shares --json` metadata for the exact target/mode/frontend endpoint; human-readable zrok logs are not scraped, and raw structured output is never logged because zrok-owned metadata may contain sensitive fields.
 
-KodeGPT does not read, persist, rotate, or print the ngrok account credential. ngrok is only the reachability layer; KodeGPT workspace trust, policy, sandbox, filesystem/process authority, and audit behavior remain unchanged.
+On the first managed exposure for a state root, KodeGPT creates the existing connector credential only after zrok readiness succeeds and prints the ChatGPT Server URL once. That query-bearing Server URL is a credential and must be kept private. Later runs reuse the stored verifier rather than silently rotating or reconstructing the plaintext credential.
+
+KodeGPT does not read, persist, rotate, or print zrok account/environment credentials and does not create namespaces or reserved names. zrok is only the reachability layer; KodeGPT workspace trust, policy, sandbox, filesystem/process authority, and audit behavior remain unchanged.

@@ -12,11 +12,11 @@ KodeGPT v0.1 supports three deliberately separate transport/exposure paths:
 
 - `kodegpt bridge` serves the production stack over stdio without opening a network port. It remains suitable for private subprocess-based connection mechanisms such as Secure MCP Tunnel.
 - `kodegpt start` binds only to loopback for local HTTP access. `--public-url` adds exact HTTPS Host/Origin trust semantics for an operator-managed reverse proxy/tunnel, but `start` itself never spawns an exposure process.
-- `kodegpt expose ngrok --hostname <stable-hostname>` is the explicit personal/development managed-exposure path. It keeps the KodeGPT listener on loopback, enables the approved query-credential compatibility mode for that invocation, and supervises the user's already-configured ngrok executable.
+- `kodegpt expose zrok --name <namespace:name>` is the explicit personal/development managed-exposure path. It resolves an existing zrok v2 reserved name through structured `zrok2` metadata, keeps the KodeGPT listener on loopback, enables the approved query-credential compatibility mode for that invocation, and supervises `zrok2` locally with `--force-local`.
 
-The query-bearing ChatGPT Server URL emitted on first managed exposure is itself a credential and must be kept private. KodeGPT does not read or manage the user's ngrok account credential. ngrok provides reachability only; workspace trust, file/process authority, policy, sandboxing, and audit remain KodeGPT responsibilities.
+The query-bearing ChatGPT Server URL emitted on first managed exposure is itself a credential and must be kept private. KodeGPT does not read or manage zrok account/environment credentials. zrok provides reachability only; workspace trust, file/process authority, policy, sandboxing, and audit remain KodeGPT responsibilities. Structured zrok readiness output is parsed only for target/mode/frontend fields and is never logged raw because zrok-owned metadata may contain sensitive fields.
 
-OpenAI's current guidance recommends Secure MCP Tunnel when a local/private MCP server should be connected without exposing it to the public internet. That is an alternative private path, not a prerequisite for KodeGPT's explicitly public HTTPS ngrok development path. Host compatibility must still be tested through the actual connection path used by the target ChatGPT workspace.
+OpenAI's current guidance recommends Secure MCP Tunnel when a local/private MCP server should be connected without exposing it to the public internet. That is an alternative private path, not a prerequisite for KodeGPT's explicitly public HTTPS zrok development path. Host compatibility must still be tested through the actual connection path used by the target ChatGPT workspace.
 
 ## Plan/workspace capability truth
 
@@ -39,7 +39,7 @@ Before claiming ChatGPT compatibility for a release candidate, capture a local-o
 | date | Absolute date/time of the host test |
 | kodegptCommit | Exact KodeGPT commit tested |
 | planWorkspace | ChatGPT plan/workspace type used for the test |
-| connectionPath | Exact path used, for example `secure-mcp-tunnel-stdio` or `ngrok-public-https-query-credential` |
+| connectionPath | Exact path used, for example `secure-mcp-tunnel-stdio` or `zrok-public-https-query-credential` |
 | discovery | Whether ChatGPT discovered the KodeGPT server/tools |
 | readAction | At least one read-only action and observed result |
 | writeAvailability | Whether write/modify actions were available to that host |

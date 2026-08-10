@@ -1,7 +1,7 @@
 # KodeGPT v0.1 — Managed zrok Exposure Design
 
 Date: 2026-08-11
-Status: Approved design awaiting written-spec review
+Status: Approved; implementation in progress on `feat/kodegpt-v0.1-execution-wt`
 
 ## 1. Goal
 
@@ -93,16 +93,15 @@ Before starting KodeGPT or a zrok share, KodeGPT invokes:
 zrok2 list names -n <namespace-token> --json
 ```
 
-KodeGPT parses the JSON array and requires exactly one matching record with:
+The `-n <namespace-token>` argument is the authoritative namespace scope. Within that namespace-limited JSON array, KodeGPT requires exactly one matching record with:
 
 ```text
-namespaceToken == <namespace-token>
 name           == <reserved-name>
 reserved       == true
 namespaceName  == non-empty hostname
 ```
 
-If zrok is missing, the environment is not enabled, the command exits non-zero, JSON is malformed, no matching name exists, more than one matching name exists, the record is not reserved, or `namespaceName` is invalid, exposure fails before opening the KodeGPT listener.
+KodeGPT does not need to trust or re-export a credential-like namespace field from the returned JSON; the namespace value comes from the already validated CLI selection and the zrok command scope. If zrok is missing, the environment is not enabled, the command exits non-zero, JSON is malformed, no matching name exists, more than one matching name exists, the record is not reserved, or `namespaceName` is invalid, exposure fails before opening the KodeGPT listener.
 
 The public MCP URL is derived from the resolved metadata:
 

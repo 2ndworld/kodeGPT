@@ -1,6 +1,8 @@
 # KodeGPT ngrok Exposure Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+Status: Superseded on 2026-08-11 by `docs/superpowers/plans/2026-08-11-kodegpt-zrok-exposure.md`. Retained only as historical implementation context; ngrok is not a supported v0.1 provider.
+
+> **For agentic workers:** This plan is historical and must not be executed for the current v0.1 candidate.
 
 **Goal:** Add an explicit personal/development `kodegpt expose ngrok` path while preserving loopback binding, the existing connector verifier, and existing `start`/`bridge` behavior.
 
