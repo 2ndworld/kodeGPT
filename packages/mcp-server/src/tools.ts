@@ -17,6 +17,8 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.diff", required: ["workspaceId"] },
+  { name: "git.status", required: ["workspaceId"] },
   { name: "profile.current", required: ["workspaceId"] },
   { name: "profile.inspect", required: ["name"] },
   { name: "system.capabilities", required: [] },
@@ -158,6 +160,26 @@ export function registerKodegptTools(server: McpServer, context: KodegptToolCont
     },
     async ({ workspaceId, path, content }) =>
       toolResult(await context.workspace.writeFile({ workspaceId, path, content }))
+  );
+
+  server.registerTool(
+    "git.diff",
+    {
+      description: "Inspect the current workspace diff through hardened read-only Git.",
+      inputSchema: { workspaceId: z.string().min(1) },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId }) => toolResult(await context.git.diff({ workspaceId }))
+  );
+
+  server.registerTool(
+    "git.status",
+    {
+      description: "Inspect the current workspace status through hardened read-only Git.",
+      inputSchema: { workspaceId: z.string().min(1) },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId }) => toolResult(await context.git.status({ workspaceId }))
   );
 
   server.registerTool(

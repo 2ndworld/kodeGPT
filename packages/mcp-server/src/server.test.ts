@@ -9,6 +9,8 @@ const expectedTools = [
   "file.search",
   "file.tree",
   "file.write",
+  "git.diff",
+  "git.status",
   "profile.current",
   "profile.inspect",
   "system.capabilities",
@@ -31,6 +33,8 @@ describe("KodeGPT MCP semantic surface", () => {
       { name: "file.search", required: ["workspaceId", "query"] },
       { name: "file.tree", required: ["workspaceId"] },
       { name: "file.write", required: ["workspaceId", "path", "content"] },
+      { name: "git.diff", required: ["workspaceId"] },
+      { name: "git.status", required: ["workspaceId"] },
       { name: "profile.current", required: ["workspaceId"] },
       { name: "profile.inspect", required: ["name"] },
       { name: "system.capabilities", required: [] },
@@ -54,6 +58,10 @@ describe("KodeGPT MCP semantic surface", () => {
         editFile: async () => ({}),
         search: async () => [],
         tree: async () => []
+      },
+      git: {
+        status: async () => ({}),
+        diff: async () => ({})
       },
       profile: {
         current: async () => ({}),

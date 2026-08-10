@@ -46,6 +46,17 @@ export interface WorkspaceFileEditResult {
   replacements: number;
 }
 
+export interface WorkspaceGitInspectionResult {
+  schemaVersion: number;
+  exitCode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  sourceTruncated: boolean;
+  bytesSpooled: number;
+}
+
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface WorkspaceTreeEntry {
@@ -361,6 +372,14 @@ export class WorkspaceManager {
     };
   }
 
+  async gitStatus(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
+    return this.#gitInspection(workspaceId, "git.status");
+  }
+
+  async gitDiff(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
+    return this.#gitInspection(workspaceId, "git.diff");
+  }
+
   async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
     if (path.length === 0) {
       throw new TypeError("Workspace tree path must not be empty");
@@ -400,6 +419,47 @@ export class WorkspaceManager {
       );
     }
     return result.matches.map(validateSearchMatch);
+  }
+
+  async #gitInspection(
+    workspaceId: string,
+    method: "git.status" | "git.diff"
+  ): Promise<WorkspaceGitInspectionResult> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>(method, {
+      capabilityId: state.capabilityId
+    });
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      !Number.isSafeInteger(result.exitCode) ||
+      typeof result.stdoutPreview !== "string" ||
+      typeof result.stderrPreview !== "string" ||
+      typeof result.stdoutTruncated !== "boolean" ||
+      typeof result.stderrTruncated !== "boolean" ||
+      typeof result.sourceTruncated !== "boolean" ||
+      !Number.isSafeInteger(result.bytesSpooled) ||
+      (result.bytesSpooled as number) < 0 ||
+      "artifact" in result ||
+      "artifactId" in result ||
+      "processGroup" in result ||
+      "pid" in result
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        `${method} returned an invalid payload`
+      );
+    }
+    return {
+      schemaVersion: 1,
+      exitCode: result.exitCode as number,
+      stdoutPreview: result.stdoutPreview,
+      stderrPreview: result.stderrPreview,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
+      sourceTruncated: result.sourceTruncated,
+      bytesSpooled: result.bytesSpooled as number
+    };
   }
 
   #requireReadyState(workspaceId: string): WorkspaceState {

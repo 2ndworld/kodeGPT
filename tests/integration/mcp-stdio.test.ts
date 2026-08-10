@@ -42,6 +42,28 @@ const context: KodegptToolContext = {
     search: async () => [],
     tree: async () => []
   },
+  git: {
+    status: async () => ({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: " M tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 15
+    }),
+    diff: async () => ({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: "diff --git a/tracked.txt b/tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 40
+    })
+  },
   profile: {
     current: async () => ({ name: "observe" }),
     inspect: async ({ name }) => ({ name })
@@ -118,6 +140,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.search",
         "file.tree",
         "file.write",
+        "git.diff",
+        "git.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",
@@ -148,6 +172,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.search": ["workspaceId", "query"],
         "file.tree": ["workspaceId"],
         "file.write": ["workspaceId", "path", "content"],
+        "git.diff": ["workspaceId"],
+        "git.status": ["workspaceId"],
         "profile.current": ["workspaceId"],
         "profile.inspect": ["name"],
         "system.capabilities": [],
@@ -197,6 +223,33 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         bytesWritten: 5,
         replacements: 1
       });
+
+      for (const name of ["git.status", "git.diff"] as const) {
+        const gitResponse = nextMessage(stdout);
+        writeMessage(stdin, {
+          jsonrpc: "2.0",
+          id: `stdio-${name}`,
+          method: "tools/call",
+          params: {
+            name,
+            arguments: { workspaceId: "ws_stdio" },
+            _meta: meta()
+          }
+        });
+        const gitPayload = await gitResponse;
+        const result = JSON.parse(gitPayload.result.content[0].text);
+        expect(result).toMatchObject({
+          schemaVersion: 1,
+          exitCode: 0,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false
+        });
+        expect(JSON.stringify(result)).not.toContain("ka_");
+        expect(result).not.toHaveProperty("artifact");
+        expect(result).not.toHaveProperty("pid");
+        expect(result).not.toHaveProperty("processGroup");
+      }
     } finally {
       await handle.close();
     }

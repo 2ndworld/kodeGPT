@@ -21,6 +21,28 @@ const toolContext: KodegptToolContext = {
     search: async () => [],
     tree: async () => []
   },
+  git: {
+    status: async () => ({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: " M tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 15
+    }),
+    diff: async () => ({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: "diff --git a/tracked.txt b/tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 40
+    })
+  },
   profile: {
     current: async () => ({ name: "observe" }),
     inspect: async ({ name }) => ({ name })
@@ -291,6 +313,8 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
         "file.search",
         "file.tree",
         "file.write",
+        "git.diff",
+        "git.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",

@@ -31,6 +31,11 @@ export interface WorkspaceToolContext {
   tree(input: { workspaceId: string; path?: string }): Promise<unknown> | unknown;
 }
 
+export interface GitToolContext {
+  status(input: { workspaceId: string }): Promise<unknown> | unknown;
+  diff(input: { workspaceId: string }): Promise<unknown> | unknown;
+}
+
 export interface ProfileToolContext {
   current(input: { workspaceId: string }): Promise<unknown> | unknown;
   inspect(input: { name: "observe" | "develop" | "trusted" }): Promise<unknown> | unknown;
@@ -43,6 +48,7 @@ export interface SystemToolContext {
 
 export interface KodegptToolContext {
   workspace: WorkspaceToolContext;
+  git: GitToolContext;
   profile: ProfileToolContext;
   system: SystemToolContext;
 }
@@ -65,6 +71,8 @@ export interface WorkspaceManagerToolAdapter {
     newText: string,
     expectedReplacements: number
   ): Promise<unknown> | unknown;
+  gitStatus(workspaceId: string): Promise<unknown> | unknown;
+  gitDiff(workspaceId: string): Promise<unknown> | unknown;
   search(workspaceId: string, query: string, path?: string): Promise<unknown> | unknown;
   tree(workspaceId: string, path?: string): Promise<unknown> | unknown;
 }
@@ -99,6 +107,10 @@ export function createKodegptToolContext(options: {
       search: ({ workspaceId, query, path }) =>
         options.workspaceManager.search(workspaceId, query, path),
       tree: ({ workspaceId, path }) => options.workspaceManager.tree(workspaceId, path)
+    },
+    git: {
+      status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),
+      diff: ({ workspaceId }) => options.workspaceManager.gitDiff(workspaceId)
     },
     profile: {
       current: ({ workspaceId }) => ({

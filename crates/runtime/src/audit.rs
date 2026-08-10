@@ -26,6 +26,8 @@ pub enum AuditAction {
     FileSearch,
     FileWrite,
     FileEdit,
+    GitStatus,
+    GitDiff,
     ArtifactSpoolCreate,
     TestEffect,
 }
@@ -375,6 +377,8 @@ impl AuditAction {
             Self::FileSearch => "file_search",
             Self::FileWrite => "file_write",
             Self::FileEdit => "file_edit",
+            Self::GitStatus => "git_status",
+            Self::GitDiff => "git_diff",
             Self::ArtifactSpoolCreate => "artifact_spool_create",
             Self::TestEffect => "test_effect",
         }

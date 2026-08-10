@@ -77,6 +77,28 @@ class FakeKernel implements KernelTransport {
         return { bytesWritten: 7, created: true } as T;
       case "file.edit":
         return { bytesWritten: 11, replacements: 2 } as T;
+      case "git.status":
+        return {
+          schemaVersion: 1,
+          exitCode: 0,
+          stdoutPreview: " M tracked.txt\n",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 15
+        } as T;
+      case "git.diff":
+        return {
+          schemaVersion: 1,
+          exitCode: 0,
+          stdoutPreview: "diff --git a/tracked.txt b/tracked.txt\n",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 40
+        } as T;
       case "file.tree":
         return {
           entries: [
@@ -157,12 +179,35 @@ describe("WorkspaceManager", () => {
     const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
     const write = await manager.writeFile("ws_files", "created.txt", "created");
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
+    const gitStatus = await manager.gitStatus("ws_files");
+    const gitDiff = await manager.gitDiff("ws_files");
     const tree = await manager.tree("ws_files", ".");
     const matches = await manager.search("ws_files", "needle", ".");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
     expect(write).toEqual({ bytesWritten: 7, created: true });
     expect(edit).toEqual({ bytesWritten: 11, replacements: 2 });
+    expect(gitStatus).toEqual({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: " M tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 15
+    });
+    expect(gitDiff).toEqual({
+      schemaVersion: 1,
+      exitCode: 0,
+      stdoutPreview: "diff --git a/tracked.txt b/tracked.txt\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 40
+    });
+    expect(JSON.stringify({ gitStatus, gitDiff })).not.toContain("ka_");
     expect(tree).toEqual([
       { path: "src", kind: "directory" },
       { path: "src/index.ts", kind: "file" }
@@ -171,7 +216,7 @@ describe("WorkspaceManager", () => {
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-5)).toEqual([
+    expect(kernel.calls.slice(-7)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -190,6 +235,8 @@ describe("WorkspaceManager", () => {
           expectedReplacements: 2
         }
       },
+      { method: "git.status", params: { capabilityId: "kc_fixture" } },
+      { method: "git.diff", params: { capabilityId: "kc_fixture" } },
       { method: "file.tree", params: { capabilityId: "kc_fixture", path: "." } },
       {
         method: "file.search",
