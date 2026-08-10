@@ -1,0 +1,58 @@
+name: Task 16 targeted final verification
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare trusted runtime fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libcap-dev libselinux1-dev
+          sudo chown root:root /usr/local/bin
+          sudo chmod 0755 /usr/local/bin
+          curl --fail --location --retry 3 --output /tmp/bubblewrap.tar.xz https://github.com/containers/bubblewrap/releases/download/v0.11.2/bubblewrap-0.11.2.tar.xz
+          tar -C /tmp -xf /tmp/bubblewrap.tar.xz
+          meson setup /tmp/bubblewrap-0.11.2/_build /tmp/bubblewrap-0.11.2 -Dtests=false
+          meson compile -C /tmp/bubblewrap-0.11.2/_build
+          sudo install -o root -g root -m 0755 /tmp/bubblewrap-0.11.2/_build/bwrap /usr/local/bin/bwrap
+          for name in sh python3 git; do
+            SOURCE="$(command -v "$name")"
+            SOURCE="$(readlink -f "$SOURCE")"
+            sudo install -o root -g root -m 0755 "$SOURCE" "/usr/local/bin/$name"
+          done
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Rust protocol
+        run: cargo test -p kodegpt-protocol
+      - name: TypeScript protocol parity
+        run: pnpm test:protocol
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Functional process tests
+        run: cargo test -p kodegpt-runtime process -- --nocapture
+      - name: Process security source regression
+        run: pnpm exec vitest run tests/security/process-policy.test.ts
+      - name: Core and MCP targeted tests
+        run: |
+          pnpm --filter @kodegpt/core test
+          pnpm --filter @kodegpt/mcp-server test
+          pnpm exec vitest run tests/integration/mcp-stdio.test.ts tests/integration/mcp-http.test.ts
