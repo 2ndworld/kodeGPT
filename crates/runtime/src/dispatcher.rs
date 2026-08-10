@@ -1,18 +1,7 @@
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use kodegpt_protocol::{
-    FileEditParams, FileReadParams, FileSearchParams, FileTreeParams, FileWriteParams,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProfileName, RuntimePolicy,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
-};
-use kodegpt_workspace_io::{
-    FilesystemIdentity, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
-    probe_filesystem_boundary,
-};
-use serde::Deserialize;
+use kodegpt_protocol::{GitDiffParams, GitStatusParams, RuntimePolicy};
+use kodegpt_workspace_io::{WorkspaceRegistry, WorkspaceRegistryError, probe_filesystem_boundary};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
@@ -20,39 +9,32 @@ use tokio::task::JoinSet;
 use crate::audit::{
     AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink,
 };
+use crate::execution::ExecutionRegistry;
+use crate::git::{GitOperation, run_git_inspection};
 use crate::rpc::{error_response, parse_request, success_response};
+use crate::spool::RawSpoolStore;
 
-#[cfg(feature = "runtime-test-methods")]
-use std::io::Write as _;
+mod workspace_authority {
+    include!("workspace_dispatcher.rs");
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SystemInspectRootParams {
-    path: String,
-}
-
-#[cfg(feature = "runtime-test-methods")]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SleepParams {
-    delay_ms: u64,
-}
-
-#[cfg(feature = "runtime-test-methods")]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct EchoAfterParams {
-    value: Value,
-    delay_ms: u64,
-}
-
-#[cfg(feature = "runtime-test-methods")]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AuditEffectParams {
-    marker_path: String,
-    #[serde(default, rename = "secret")]
-    _secret: Option<String>,
+    pub(super) async fn dispatch_shared(
+        value: serde_json::Value,
+        test_methods_enabled: bool,
+        audit: std::sync::Arc<crate::audit::AuditSink>,
+        workspace_registry: std::sync::Arc<
+            std::sync::Mutex<kodegpt_workspace_io::WorkspaceRegistry<kodegpt_protocol::RuntimePolicy>>,
+        >,
+        filesystem_boundary_available: bool,
+    ) -> serde_json::Value {
+        dispatch_one(
+            value,
+            test_methods_enabled,
+            audit,
+            workspace_registry,
+            filesystem_boundary_available,
+        )
+        .await
+    }
 }
 
 pub async fn run_dispatcher(
@@ -81,20 +63,40 @@ async fn run_dispatcher_with_boundary_status(
 ) {
     let mut tasks = JoinSet::new();
     let workspace_registry = Arc::new(Mutex::new(WorkspaceRegistry::<RuntimePolicy>::new()));
+    let execution_registry = Arc::new(Mutex::new(ExecutionRegistry::default()));
+    let raw_spool = RawSpoolStore::open(audit.state_root(), Arc::clone(&audit))
+        .ok()
+        .map(Arc::new);
 
     while let Some(value) = requests.recv().await {
         let response_tx = responses.clone();
         let audit = Arc::clone(&audit);
         let workspace_registry = Arc::clone(&workspace_registry);
+        let execution_registry = Arc::clone(&execution_registry);
+        let raw_spool = raw_spool.as_ref().map(Arc::clone);
         tasks.spawn(async move {
-            let response = dispatch_one(
-                value,
-                test_methods_enabled,
-                audit,
-                workspace_registry,
-                filesystem_boundary_available,
-            )
-            .await;
+            let response = match value.get("method").and_then(Value::as_str) {
+                Some("git.status" | "git.diff") => {
+                    dispatch_git_request(
+                        value,
+                        audit,
+                        workspace_registry,
+                        execution_registry,
+                        raw_spool,
+                    )
+                    .await
+                }
+                _ => {
+                    workspace_authority::dispatch_shared(
+                        value,
+                        test_methods_enabled,
+                        audit,
+                        workspace_registry,
+                        filesystem_boundary_available,
+                    )
+                    .await
+                }
+            };
             let _ = response_tx.send(response);
         });
     }
@@ -102,12 +104,12 @@ async fn run_dispatcher_with_boundary_status(
     while tasks.join_next().await.is_some() {}
 }
 
-async fn dispatch_one(
+async fn dispatch_git_request(
     value: Value,
-    test_methods_enabled: bool,
     audit: Arc<AuditSink>,
     workspace_registry: Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
-    filesystem_boundary_available: bool,
+    execution_registry: Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
 ) -> Value {
     let request = match parse_request(value) {
         Ok(request) => request,
@@ -115,468 +117,60 @@ async fn dispatch_one(
     };
 
     match request.method.as_str() {
-        "runtime.hello" => {
-            if request.params.as_object().is_none_or(|params| !params.is_empty()) {
-                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-            }
-
-            success_response(
-                request.id,
-                json!({
-                    "runtimeVersion": "0.1",
-                    "testMethods": cfg!(feature = "runtime-test-methods") && test_methods_enabled,
-                    "auditHealthy": audit.is_healthy(),
-                    "filesystemBoundaryAvailable": filesystem_boundary_available
-                }),
-            )
-        }
-        "system.inspect_root" => {
-            let params = match serde_json::from_value::<SystemInspectRootParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+        "git.status" => {
+            let params = match serde_json::from_value::<GitStatusParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() => params,
+                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
-            let operation_suffix = request.id.strip_prefix("req_").unwrap_or("redacted");
-            let audit_context = AuditContext {
-                request_id: request.id.clone(),
-                operation_id: format!("op_{operation_suffix}"),
-                capability_id: None,
-                action: AuditAction::InspectRoot,
-            };
-
-            if audit
-                .decision(
-                    &audit_context,
-                    AuditDecision::Allow,
-                    AuditReason::RequestValidated,
-                )
-                .is_err()
-            {
-                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
-            }
-
-            let inspected = match inspect_root(&PathBuf::from(params.path)) {
-                Ok(inspected) => inspected,
-                Err(_) => {
-                    return audited_failure(
-                        &audit,
-                        &audit_context,
-                        request.id,
-                        -32020,
-                        "WORKSPACE_ROOT_INVALID",
-                    );
-                }
-            };
-            let canonical_state_root = match fs::canonicalize(audit.state_root()) {
-                Ok(path) => path,
-                Err(_) => {
-                    return audited_failure(
-                        &audit,
-                        &audit_context,
-                        request.id,
-                        -32010,
-                        "AUDIT_UNAVAILABLE",
-                    );
-                }
-            };
-
-            if inspected.canonical_root.starts_with(&canonical_state_root)
-                || canonical_state_root.starts_with(&inspected.canonical_root)
-            {
-                return audited_failure(
-                    &audit,
-                    &audit_context,
-                    request.id,
-                    -32021,
-                    "WORKSPACE_STATE_OVERLAP",
-                );
-            }
-
-            if audit
-                .outcome(&audit_context, AuditOutcome::Success)
-                .is_err()
-            {
-                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
-            }
-
-            success_response(
-                request.id,
-                json!({
-                    "canonicalRoot": inspected.canonical_root.to_string_lossy(),
-                    "identity": inspected.identity
-                }),
-            )
-        }
-        "workspace.register" => {
-            let params = match serde_json::from_value::<WorkspaceRegisterParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let root_path = PathBuf::from(params.root_path);
-            let expected_identity = filesystem_identity_from_protocol(params.expected_identity);
-            let ceiling = params.ceiling;
-            audited_workspace_operation(
+            dispatch_git_operation(
                 &audit,
                 &workspace_registry,
+                &execution_registry,
+                raw_spool,
                 request.id,
-                None,
-                AuditAction::WorkspaceRegister,
-                move |registry| {
-                    if !filesystem_boundary_available {
-                        return Err(WorkspaceRegistryError::FilesystemBoundaryUnavailable);
-                    }
-                    let registration = registry.register(&root_path, &expected_identity, ceiling)?;
-                    Ok(json!({ "capabilityId": registration.capability_id }))
-                },
+                params.capability_id,
+                GitOperation::Status,
+                AuditAction::GitStatus,
             )
+            .await
         }
-        "workspace.read_project_profile" => {
-            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+        "git.diff" => {
+            let params = match serde_json::from_value::<GitDiffParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() => params,
+                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
+            dispatch_git_operation(
                 &audit,
                 &workspace_registry,
+                &execution_registry,
+                raw_spool,
                 request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceReadProjectProfile,
-                move |registry| {
-                    let contents = registry.read_project_profile(&capability_id)?;
-                    Ok(json!({ "contents": contents }))
-                },
+                params.capability_id,
+                GitOperation::Diff,
+                AuditAction::GitDiff,
             )
-        }
-        "workspace.restrict_policy" => {
-            let params =
-                match serde_json::from_value::<WorkspaceRestrictPolicyParams>(request.params) {
-                    Ok(params) => params,
-                    Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-                };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let restriction = params.restriction;
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceRestrictPolicy,
-                move |registry| {
-                    registry.restrict_policy_with(
-                        &capability_id,
-                        restriction,
-                        kodegpt_policy::restrict_policy,
-                    )?;
-                    Ok(json!({ "ok": true }))
-                },
-            )
-        }
-        "workspace.activate" => {
-            let params = match serde_json::from_value::<WorkspaceActivateParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceActivate,
-                move |registry| {
-                    registry.activate(&capability_id)?;
-                    Ok(json!({ "ok": true }))
-                },
-            )
-        }
-        "workspace.begin_close" => {
-            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceBeginClose,
-                move |registry| {
-                    registry.begin_close(&capability_id)?;
-                    Ok(json!({ "ok": true }))
-                },
-            )
-        }
-        "workspace.cancel_executions" => {
-            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceCancelExecutions,
-                move |registry| {
-                    registry.cancel_executions(&capability_id)?;
-                    Ok(json!({ "ok": true }))
-                },
-            )
-        }
-        "workspace.unregister" => {
-            let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceUnregister,
-                move |registry| {
-                    registry.unregister(&capability_id)?;
-                    Ok(json!({ "ok": true }))
-                },
-            )
-        }
-        "file.read" => {
-            let params = match serde_json::from_value::<FileReadParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let path = PathBuf::from(params.path);
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::FileRead,
-                move |registry| {
-                    let result = registry.read_file(
-                        &capability_id,
-                        &path,
-                        params.offset,
-                        params.max_bytes,
-                    )?;
-                    Ok(json!(result))
-                },
-            )
-        }
-        "file.tree" => {
-            let params = match serde_json::from_value::<FileTreeParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let path = PathBuf::from(params.path);
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::FileTree,
-                move |registry| {
-                    let entries = registry.tree(&capability_id, &path)?;
-                    Ok(json!({ "entries": entries }))
-                },
-            )
-        }
-        "file.search" => {
-            let params = match serde_json::from_value::<FileSearchParams>(request.params) {
-                Ok(params) if !params.query.is_empty() => params,
-                Ok(_) | Err(_) => {
-                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-                }
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let path = PathBuf::from(params.path);
-            let query = params.query;
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::FileSearch,
-                move |registry| {
-                    let matches = registry.search(&capability_id, &path, &query)?;
-                    Ok(json!({ "matches": matches }))
-                },
-            )
-        }
-        "file.write" => {
-            let params = match serde_json::from_value::<FileWriteParams>(request.params) {
-                Ok(params) if !params.path.is_empty() => params,
-                Ok(_) | Err(_) => {
-                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-                }
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let path = PathBuf::from(params.path);
-            let content = params.content;
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::FileWrite,
-                move |registry| {
-                    let result = registry.write_file_with_policy(
-                        &capability_id,
-                        &path,
-                        content.as_bytes(),
-                        mutation_allowed,
-                    )?;
-                    Ok(json!(result))
-                },
-            )
-        }
-        "file.edit" => {
-            let params = match serde_json::from_value::<FileEditParams>(request.params) {
-                Ok(params) if !params.path.is_empty() && !params.old_text.is_empty() => params,
-                Ok(_) | Err(_) => {
-                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-                }
-            };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            let path = PathBuf::from(params.path);
-            let old_text = params.old_text;
-            let new_text = params.new_text;
-            let expected_replacements = params.expected_replacements;
-            audited_workspace_operation(
-                &audit,
-                &workspace_registry,
-                request.id,
-                Some(audit_capability_id),
-                AuditAction::FileEdit,
-                move |registry| {
-                    let result = registry.edit_file_with_policy(
-                        &capability_id,
-                        &path,
-                        &old_text,
-                        &new_text,
-                        expected_replacements,
-                        mutation_allowed,
-                    )?;
-                    Ok(json!(result))
-                },
-            )
-        }
-        #[cfg(feature = "runtime-test-methods")]
-        "test.sleep" if test_methods_enabled => {
-            let params = match serde_json::from_value::<SleepParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            tokio::time::sleep(std::time::Duration::from_millis(params.delay_ms)).await;
-            success_response(request.id, json!({ "sleptMs": params.delay_ms }))
-        }
-        #[cfg(feature = "runtime-test-methods")]
-        "test.echo_after" if test_methods_enabled => {
-            let params = match serde_json::from_value::<EchoAfterParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            tokio::time::sleep(std::time::Duration::from_millis(params.delay_ms)).await;
-            success_response(request.id, json!({ "value": params.value }))
-        }
-        #[cfg(feature = "runtime-test-methods")]
-        "test.audit_effect" if test_methods_enabled => {
-            let params = match serde_json::from_value::<AuditEffectParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
-            };
-            let marker_path = PathBuf::from(&params.marker_path);
-            if marker_path.parent() != Some(audit.state_root()) || marker_path.file_name().is_none() {
-                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-            }
-
-            let operation_suffix = request.id.strip_prefix("req_").unwrap_or("redacted");
-            let audit_context = AuditContext {
-                request_id: request.id.clone(),
-                operation_id: format!("op_{operation_suffix}"),
-                capability_id: None,
-                action: AuditAction::TestEffect,
-            };
-
-            if audit
-                .decision(
-                    &audit_context,
-                    AuditDecision::Allow,
-                    AuditReason::TestAuthorized,
-                )
-                .is_err()
-            {
-                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
-            }
-
-            let effect_result = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&marker_path)
-                .and_then(|mut file| {
-                    file.write_all(b"effect")?;
-                    file.sync_all()
-                });
-            if effect_result.is_err() {
-                let _ = audit.outcome(&audit_context, AuditOutcome::Failed);
-                return error_response(Some(request.id), -32011, "TEST_EFFECT_FAILED");
-            }
-
-            if audit
-                .outcome(&audit_context, AuditOutcome::Success)
-                .is_err()
-            {
-                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
-            }
-
-            success_response(request.id, json!({ "created": true }))
+            .await
         }
         _ => error_response(Some(request.id), -32601, "METHOD_NOT_FOUND"),
     }
 }
 
-fn filesystem_identity_from_protocol(
-    identity: ProtocolFilesystemIdentity,
-) -> FilesystemIdentity {
-    FilesystemIdentity {
-        device_major: identity.device_major,
-        device_minor: identity.device_minor,
-        inode: identity.inode,
-    }
-}
-
-fn audited_workspace_operation<F>(
-    audit: &AuditSink,
+async fn dispatch_git_operation(
+    audit: &Arc<AuditSink>,
     registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
     request_id: String,
-    capability_id: Option<String>,
+    capability_id: String,
+    operation: GitOperation,
     action: AuditAction,
-    operation: F,
-) -> Value
-where
-    F: FnOnce(&mut WorkspaceRegistry<RuntimePolicy>) -> Result<Value, WorkspaceRegistryError>,
-{
+) -> Value {
     let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
     let context = AuditContext {
         request_id: request_id.clone(),
-        operation_id: format!("op_{operation_suffix}"),
-        capability_id,
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
         action,
     };
 
@@ -591,8 +185,14 @@ where
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
 
-    let result = match registry.lock() {
-        Ok(mut registry) => operation(&mut registry),
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
         Err(_) => {
             return audited_failure(
                 audit,
@@ -604,40 +204,67 @@ where
         }
     };
 
-    match result {
-        Ok(result) => {
-            if audit.outcome(&context, AuditOutcome::Success).is_err() {
-                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
-            }
-            success_response(request_id, result)
-        }
-        Err(error) => {
-            let (code, message) = workspace_registry_error_contract(&error);
-            audited_failure(audit, &context, request_id, code, message)
-        }
-    }
-}
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32038,
+            "GIT_INSPECTION_UNAVAILABLE",
+        );
+    };
 
-fn mutation_allowed(policy: &RuntimePolicy) -> bool {
-    policy.allow_write && policy.name != ProfileName::Observe
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_inspection(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            operation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) | Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32039,
+                "GIT_INSPECTION_FAILED",
+            );
+        }
+    };
+
+    let outcome = if result.exit_code == 0 {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
 }
 
 fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'static str) {
     match error {
         WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
         WorkspaceRegistryError::IdentityChanged => (-32022, "WORKSPACE_IDENTITY_CHANGED"),
-        WorkspaceRegistryError::MountTopologyUnavailable => {
-            (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE")
-        }
+        WorkspaceRegistryError::MountTopologyUnavailable => (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE"),
         WorkspaceRegistryError::RootOverlap => (-32024, "WORKSPACE_ROOT_OVERLAP"),
         WorkspaceRegistryError::PolicyEscalation => (-32027, "WORKSPACE_POLICY_ESCALATION"),
         WorkspaceRegistryError::WorkspaceNotReady => (-32028, "WORKSPACE_NOT_READY"),
-        WorkspaceRegistryError::ProjectProfileReadFailed => {
-            (-32029, "WORKSPACE_PROFILE_READ_FAILED")
-        }
-        WorkspaceRegistryError::FilesystemBoundaryUnavailable => {
-            (-32030, "FILESYSTEM_BOUNDARY_UNAVAILABLE")
-        }
+        WorkspaceRegistryError::ProjectProfileReadFailed => (-32029, "WORKSPACE_PROFILE_READ_FAILED"),
+        WorkspaceRegistryError::FilesystemBoundaryUnavailable => (-32030, "FILESYSTEM_BOUNDARY_UNAVAILABLE"),
         WorkspaceRegistryError::FileAccessDenied => (-32031, "FILE_ACCESS_DENIED"),
         WorkspaceRegistryError::FileNotFound => (-32032, "FILE_NOT_FOUND"),
         WorkspaceRegistryError::FileInvalidUtf8 => (-32033, "FILE_INVALID_UTF8"),
@@ -645,9 +272,7 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
         WorkspaceRegistryError::FileWriteConflict => (-32036, "FILE_EDIT_CONFLICT"),
         WorkspaceRegistryError::FileWriteFailed => (-32037, "FILE_WRITE_FAILED"),
-        WorkspaceRegistryError::CapabilityNotFound => {
-            (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
-        }
+        WorkspaceRegistryError::CapabilityNotFound => (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND"),
     }
 }
 
@@ -670,24 +295,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
-    #[cfg(feature = "runtime-test-methods")]
-    use std::time::Instant;
 
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use super::{run_dispatcher, run_dispatcher_with_boundary_status};
-    use crate::audit::{AuditFaults, AuditSink};
-
-    fn audit_sink(label: &str) -> (Arc<AuditSink>, PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "kodegpt-dispatcher-{label}-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let sink = Arc::new(AuditSink::open(&root));
-        (sink, root)
-    }
+    use super::run_dispatcher;
+    use crate::audit::AuditSink;
 
     fn request(id: &str, method: &str, params: Value) -> Value {
         json!({
@@ -699,949 +312,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn unavailable_filesystem_boundary_is_reported_and_blocks_registration() {
-        let (audit, audit_root) = audit_sink("boundary-unavailable");
-        let workspace = audit_root.with_extension("boundary-workspace");
-        fs::create_dir_all(&workspace).expect("workspace created");
-        let identity = kodegpt_workspace_io::inspect_root(&workspace)
-            .expect("workspace inspected")
-            .identity;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher_with_boundary_status(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-            false,
+    async fn top_level_router_preserves_non_git_runtime_dispatch() {
+        let state = std::env::temp_dir().join(format!(
+            "kodegpt-dispatch-router-{}",
+            std::process::id()
         ));
-
-        request_tx
-            .send(request("req_boundary_hello", "runtime.hello", json!({})))
-            .expect("hello accepted");
-        let hello = tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
-            .await
-            .expect("hello arrives")
-            .expect("response channel open");
-        assert_eq!(hello["result"]["filesystemBoundaryAvailable"], false);
-
-        request_tx
-            .send(request(
-                "req_boundary_register",
-                "workspace.register",
-                json!({
-                    "rootPath": workspace.to_string_lossy(),
-                    "expectedIdentity": identity,
-                    "ceiling": observe_policy()
-                }),
-            ))
-            .expect("registration accepted for dispatch");
-        let registration = tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
-            .await
-            .expect("registration response arrives")
-            .expect("response channel open");
-        assert_eq!(
-            registration["error"]["message"],
-            "FILESYSTEM_BOUNDARY_UNAVAILABLE"
-        );
-
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher joins");
-        fs::remove_dir_all(workspace).expect("workspace removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[cfg(feature = "runtime-test-methods")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn dispatcher_keeps_runtime_hello_responsive_while_sleep_is_pending() {
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let (audit, audit_root) = audit_sink("concurrency");
-        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, true, audit));
-
-        request_tx
-            .send(request("req_sleep", "test.sleep", json!({ "delayMs": 500 })))
-            .expect("sleep request accepted");
-        let started = Instant::now();
-        request_tx
-            .send(request("req_hello", "runtime.hello", json!({})))
-            .expect("hello request accepted");
-
-        let first = tokio::time::timeout(Duration::from_millis(200), response_rx.recv())
-            .await
-            .expect("hello must complete within 200 ms")
-            .expect("response channel open");
-        assert_eq!(first["id"], "req_hello");
-        assert!(started.elapsed() < Duration::from_millis(200));
-
-        let second = tokio::time::timeout(Duration::from_millis(700), response_rx.recv())
-            .await
-            .expect("sleep eventually completes")
-            .expect("response channel open");
-        assert_eq!(second["id"], "req_sleep");
-
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[cfg(feature = "runtime-test-methods")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn dispatcher_correlates_out_of_order_test_responses_by_id() {
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let (audit, audit_root) = audit_sink("correlation");
-        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, true, audit));
-
-        for (id, value, delay_ms) in [
-            ("req_a", "A", 120_u64),
-            ("req_b", "B", 10_u64),
-            ("req_c", "C", 60_u64),
-        ] {
-            request_tx
-                .send(request(
-                    id,
-                    "test.echo_after",
-                    json!({ "value": value, "delayMs": delay_ms }),
-                ))
-                .expect("request accepted");
-        }
-
-        let mut seen = Vec::new();
-        for _ in 0..3 {
-            let response = tokio::time::timeout(Duration::from_millis(300), response_rx.recv())
-                .await
-                .expect("response arrives")
-                .expect("response channel open");
-            seen.push((
-                response["id"].as_str().expect("id string").to_owned(),
-                response["result"]["value"]
-                    .as_str()
-                    .expect("echo value")
-                    .to_owned(),
-            ));
-        }
-
-        assert_eq!(
-            seen,
-            vec![
-                ("req_b".to_owned(), "B".to_owned()),
-                ("req_c".to_owned(), "C".to_owned()),
-                ("req_a".to_owned(), "A".to_owned()),
-            ]
-        );
-
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    async fn inspect_root_once(audit: Arc<AuditSink>, path: &PathBuf, id: &str) -> Value {
+        let _ = fs::remove_dir_all(&state);
+        let audit = Arc::new(AuditSink::open(&state));
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
         let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
-        request_tx
-            .send(request(
-                id,
-                "system.inspect_root",
-                json!({ "path": path.to_string_lossy() }),
-            ))
-            .expect("inspect request accepted");
-        drop(request_tx);
 
-        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+        request_tx
+            .send(request("req_router_hello", "runtime.hello", json!({})))
+            .expect("hello accepted");
+        let response = tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
             .await
-            .expect("inspect response arrives")
+            .expect("hello response arrives")
             .expect("response channel open");
-        dispatcher.await.expect("dispatcher task joins");
-        response
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn inspect_root_returns_identity_without_capability_and_is_audited() {
-        let (audit, audit_root) = audit_sink("inspect-valid");
-        let workspace = audit_root.with_extension("workspace");
-        fs::create_dir_all(&workspace).expect("workspace created");
-
-        let response = inspect_root_once(Arc::clone(&audit), &workspace, "req_inspect_valid").await;
-        assert_eq!(response["id"], "req_inspect_valid");
-        assert_eq!(response["result"]["canonicalRoot"], fs::canonicalize(&workspace).unwrap().to_string_lossy().as_ref());
-        assert!(response["result"]["identity"]["inode"].as_str().is_some());
-        assert!(response["result"].get("capabilityId").is_none());
-
-        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
-        assert_eq!(audit_text.lines().count(), 2);
-        assert!(audit_text.contains("inspect_root"));
-
-        fs::remove_dir_all(workspace).expect("workspace removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn inspect_root_rejects_equal_ancestor_and_descendant_state_overlap() {
-        let (audit, audit_root) = audit_sink("inspect-overlap");
-        let descendant = audit_root.join("workspace-child");
-        fs::create_dir_all(&descendant).expect("descendant fixture created");
-        let ancestor = audit_root
-            .parent()
-            .expect("temporary root has parent")
-            .to_path_buf();
-
-        for (id, path) in [
-            ("req_inspect_equal", audit_root.clone()),
-            ("req_inspect_descendant", descendant),
-            ("req_inspect_ancestor", ancestor),
-        ] {
-            let response = inspect_root_once(Arc::clone(&audit), &path, id).await;
-            assert_eq!(response["error"]["message"], "WORKSPACE_STATE_OVERLAP");
-        }
-        assert_eq!(fs::read_to_string(audit.path()).unwrap().lines().count(), 6);
-
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    fn observe_policy() -> Value {
-        json!({
-            "name": "observe",
-            "allowWrite": false,
-            "allowProcess": false,
-            "network": "deny",
-            "allowedExecutableNames": [],
-            "inheritEnv": false,
-            "envAllowlist": []
-        })
-    }
-
-    fn develop_policy(allow_write: bool) -> Value {
-        json!({
-            "name": "develop",
-            "allowWrite": allow_write,
-            "allowProcess": true,
-            "network": "deny",
-            "allowedExecutableNames": ["node", "python3"],
-            "inheritEnv": false,
-            "envAllowlist": ["LANG"]
-        })
-    }
-
-    async fn next_response(
-        request_tx: &mpsc::UnboundedSender<Value>,
-        response_rx: &mut mpsc::UnboundedReceiver<Value>,
-        id: &str,
-        method: &str,
-        params: Value,
-    ) -> Value {
-        request_tx
-            .send(request(id, method, params))
-            .expect("workspace request accepted");
-        tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
-            .await
-            .expect("workspace response arrives")
-            .expect("workspace response channel open")
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn workspace_registration_stops_before_root_inspection_when_audit_decision_fails() {
-        let audit_root = std::env::temp_dir().join(format!(
-            "kodegpt-dispatcher-workspace-audit-order-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&audit_root);
-        let missing_workspace = audit_root.with_extension("missing-workspace");
-        let _ = fs::remove_dir_all(&missing_workspace);
-        let audit = Arc::new(AuditSink::open_with_faults(
-            &audit_root,
-            AuditFaults {
-                fail_next_decision: true,
-                fail_next_outcome: false,
-            },
-        ));
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        let response = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_audit_order",
-            "workspace.register",
-            json!({
-                "rootPath": missing_workspace.to_string_lossy(),
-                "expectedIdentity": {
-                    "deviceMajor": 0,
-                    "deviceMinor": 0,
-                    "inode": "0"
-                },
-                "ceiling": observe_policy()
-            }),
-        )
-        .await;
-
-        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
-        assert!(!audit.is_healthy());
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn workspace_project_profile_read_uses_retained_root_fd_after_path_replacement() {
-        let (audit, audit_root) = audit_sink("workspace-profile-read");
-        let workspace = audit_root.with_extension("profile-workspace");
-        let displaced = workspace.with_extension("profile-original");
-        fs::create_dir_all(workspace.join(".kodegpt")).expect("profile directory created");
-        fs::write(
-            workspace.join(".kodegpt/profile.json"),
-            r#"{"name":"observe","allowWrite":false}"#,
-        )
-        .expect("original profile written");
-        let identity = kodegpt_workspace_io::inspect_root(&workspace)
-            .expect("workspace inspected")
-            .identity;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        let registered = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_profile_register",
-            "workspace.register",
-            json!({
-                "rootPath": workspace.to_string_lossy(),
-                "expectedIdentity": identity,
-                "ceiling": observe_policy()
-            }),
-        )
-        .await;
-        let capability_id = registered["result"]["capabilityId"]
-            .as_str()
-            .expect("registration returns capability")
-            .to_owned();
-
-        fs::rename(&workspace, &displaced).expect("registered pathname displaced");
-        fs::create_dir_all(workspace.join(".kodegpt")).expect("replacement profile directory created");
-        fs::write(
-            workspace.join(".kodegpt/profile.json"),
-            r#"{"name":"trusted","allowWrite":true}"#,
-        )
-        .expect("replacement profile written");
-
-        let response = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_profile_read",
-            "workspace.read_project_profile",
-            json!({ "capabilityId": capability_id }),
-        )
-        .await;
-        assert_eq!(
-            response["result"]["contents"],
-            r#"{"name":"observe","allowWrite":false}"#
-        );
-
-        let _ = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_profile_unregister",
-            "workspace.unregister",
-            json!({ "capabilityId": capability_id }),
-        )
-        .await;
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
-        assert!(audit_text.contains("workspace_read_project_profile"));
-        fs::remove_dir_all(workspace).expect("replacement removed");
-        fs::remove_dir_all(displaced).expect("original removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn file_operations_use_retained_root_fd_and_fail_before_io_when_audit_is_unavailable() {
-        let (audit, audit_root) = audit_sink("workspace-file-read");
-        let workspace = audit_root.with_extension("file-workspace");
-        let displaced = workspace.with_extension("file-original");
-        fs::create_dir_all(workspace.join("nested")).expect("workspace tree created");
-        fs::write(workspace.join("inside.txt"), "original contents\n")
-            .expect("original file written");
-        fs::write(workspace.join("nested/needle.txt"), "alpha\nneedle here\nomega\n")
-            .expect("search file written");
-        let identity = kodegpt_workspace_io::inspect_root(&workspace)
-            .expect("workspace inspected")
-            .identity;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        let registered = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_register",
-            "workspace.register",
-            json!({
-                "rootPath": workspace.to_string_lossy(),
-                "expectedIdentity": identity,
-                "ceiling": observe_policy()
-            }),
-        )
-        .await;
-        let capability_id = registered["result"]["capabilityId"]
-            .as_str()
-            .expect("registration returns capability")
-            .to_owned();
-        let activated = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_activate",
-            "workspace.activate",
-            json!({ "capabilityId": capability_id }),
-        )
-        .await;
-        assert_eq!(activated["result"]["ok"], true);
-
-        fs::rename(&workspace, &displaced).expect("registered pathname displaced");
-        fs::create_dir_all(workspace.join("nested")).expect("replacement tree created");
-        fs::write(workspace.join("inside.txt"), "replacement contents\n")
-            .expect("replacement file written");
-        fs::write(workspace.join("nested/needle.txt"), "replacement needle\n")
-            .expect("replacement search file written");
-
-        let read = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_read",
-            "file.read",
-            json!({
-                "capabilityId": capability_id,
-                "path": "inside.txt",
-                "offset": 0,
-                "maxBytes": 1024
-            }),
-        )
-        .await;
-        assert_eq!(read["result"]["contents"], "original contents\n");
-        assert_eq!(read["result"]["eof"], true);
-
-        let tree = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_tree",
-            "file.tree",
-            json!({ "capabilityId": capability_id, "path": "." }),
-        )
-        .await;
-        let tree_entries = tree["result"]["entries"]
-            .as_array()
-            .expect("tree returns entries");
-        assert!(tree_entries.iter().any(|entry| entry["path"] == "inside.txt"));
-        assert!(tree_entries.iter().any(|entry| entry["path"] == "nested/needle.txt"));
-
-        let search = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_search",
-            "file.search",
-            json!({ "capabilityId": capability_id, "path": ".", "query": "needle" }),
-        )
-        .await;
-        let matches = search["result"]["matches"]
-            .as_array()
-            .expect("search returns matches");
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0]["path"], "nested/needle.txt");
-        assert_eq!(matches[0]["line"], 2);
-        assert_eq!(matches[0]["lineText"], "needle here");
-
-        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
-        assert!(audit_text.contains("file_read"));
-        assert!(audit_text.contains("file_tree"));
-        assert!(audit_text.contains("file_search"));
-
-        audit.inject_faults(AuditFaults {
-            fail_next_decision: true,
-            fail_next_outcome: false,
-        });
-        let blocked = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_file_audit_blocked",
-            "file.read",
-            json!({
-                "capabilityId": capability_id,
-                "path": "../must-not-resolve",
-                "offset": 0,
-                "maxBytes": 16
-            }),
-        )
-        .await;
-        assert_eq!(blocked["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert_eq!(response["id"], "req_router_hello");
+        assert_eq!(response["result"]["runtimeVersion"], "0.1");
 
         drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        fs::remove_dir_all(workspace).expect("replacement removed");
-        fs::remove_dir_all(displaced).expect("original removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn workspace_policy_restriction_cannot_widen_after_narrowing() {
-        let (audit, audit_root) = audit_sink("workspace-policy-monotonic");
-        let workspace = audit_root.with_extension("policy-workspace");
-        fs::create_dir_all(&workspace).expect("workspace created");
-        let identity = kodegpt_workspace_io::inspect_root(&workspace)
-            .expect("workspace inspected")
-            .identity;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        let registered = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_policy_register",
-            "workspace.register",
-            json!({
-                "rootPath": workspace.to_string_lossy(),
-                "expectedIdentity": identity,
-                "ceiling": develop_policy(true)
-            }),
-        )
-        .await;
-        let capability_id = registered["result"]["capabilityId"]
-            .as_str()
-            .expect("registration returns capability")
-            .to_owned();
-
-        let narrowed = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_policy_narrow",
-            "workspace.restrict_policy",
-            json!({
-                "capabilityId": capability_id,
-                "restriction": develop_policy(false)
-            }),
-        )
-        .await;
-        assert_eq!(narrowed["result"]["ok"], true);
-
-        let widened = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_policy_widen",
-            "workspace.restrict_policy",
-            json!({
-                "capabilityId": capability_id,
-                "restriction": develop_policy(true)
-            }),
-        )
-        .await;
-        assert_eq!(widened["error"]["message"], "WORKSPACE_POLICY_ESCALATION");
-
-        let _ = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_policy_unregister",
-            "workspace.unregister",
-            json!({ "capabilityId": capability_id }),
-        )
-        .await;
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        fs::remove_dir_all(workspace).expect("workspace removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn workspace_registration_rejects_overlap_and_supports_lifecycle_skeletons() {
-        let (audit, audit_root) = audit_sink("workspace-lifecycle");
-        let workspace = audit_root.with_extension("registered-workspace");
-        fs::create_dir_all(&workspace).expect("workspace created");
-        let identity = kodegpt_workspace_io::inspect_root(&workspace)
-            .expect("workspace inspected")
-            .identity;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        let registered = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_register",
-            "workspace.register",
-            json!({
-                "rootPath": workspace.to_string_lossy(),
-                "expectedIdentity": identity,
-                "ceiling": observe_policy()
-            }),
-        )
-        .await;
-        assert!(
-            registered.get("result").is_some(),
-            "registration failed: {registered}"
-        );
-        let capability_id = registered["result"]["capabilityId"]
-            .as_str()
-            .expect("registration returns capability id")
-            .to_owned();
-        assert!(capability_id.starts_with("kc_"));
-
-        let overlap = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_overlap",
-            "workspace.register",
-            json!({
-                "rootPath": workspace.to_string_lossy(),
-                "expectedIdentity": kodegpt_workspace_io::inspect_root(&workspace).unwrap().identity,
-                "ceiling": observe_policy()
-            }),
-        )
-        .await;
-        assert_eq!(overlap["error"]["message"], "WORKSPACE_ROOT_OVERLAP");
-
-        for (id, method, params) in [
-            (
-                "req_workspace_restrict",
-                "workspace.restrict_policy",
-                json!({ "capabilityId": capability_id, "restriction": observe_policy() }),
-            ),
-            (
-                "req_workspace_activate",
-                "workspace.activate",
-                json!({ "capabilityId": capability_id }),
-            ),
-            (
-                "req_workspace_begin_close",
-                "workspace.begin_close",
-                json!({ "capabilityId": capability_id }),
-            ),
-            (
-                "req_workspace_cancel",
-                "workspace.cancel_executions",
-                json!({ "capabilityId": capability_id }),
-            ),
-            (
-                "req_workspace_unregister",
-                "workspace.unregister",
-                json!({ "capabilityId": capability_id }),
-            ),
-        ] {
-            let response = next_response(&request_tx, &mut response_rx, id, method, params).await;
-            assert_eq!(response["result"]["ok"], true, "{method} must succeed");
-        }
-
-        let missing = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_workspace_missing",
-            "workspace.activate",
-            json!({ "capabilityId": capability_id }),
-        )
-        .await;
-        assert_eq!(
-            missing["error"]["message"],
-            "WORKSPACE_CAPABILITY_NOT_FOUND"
-        );
-
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
-        assert!(audit_text.contains("workspace_register"));
-        assert!(audit_text.contains("workspace_unregister"));
-
-        fs::remove_dir_all(workspace).expect("workspace removed");
-        fs::remove_dir_all(audit_root).expect("audit root removed");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn file_mutations_enforce_policy_boundaries_self_protection_and_audit_order() {
-        use std::os::unix::fs::symlink;
-
-        let (audit, audit_root) = audit_sink("file-mutation-security");
-        let observe_workspace = audit_root.with_extension("observe-workspace");
-        let denied_workspace = audit_root.with_extension("denied-workspace");
-        let writable_workspace = audit_root.with_extension("writable-workspace");
-        let other_workspace = audit_root.with_extension("other-workspace");
-        for workspace in [
-            &observe_workspace,
-            &denied_workspace,
-            &writable_workspace,
-            &other_workspace,
-        ] {
-            fs::create_dir_all(workspace).expect("workspace created");
-        }
-        fs::write(writable_workspace.join("edit.txt"), "alpha beta alpha\n")
-            .expect("edit fixture written");
-        fs::write(other_workspace.join("secret.txt"), "other-secret")
-            .expect("other workspace secret written");
-        fs::write(audit_root.join("state-secret.txt"), "state-secret")
-            .expect("state secret written");
-        symlink(&other_workspace, writable_workspace.join("other-link"))
-            .expect("other workspace symlink created");
-        symlink(&audit_root, writable_workspace.join("state-link"))
-            .expect("state symlink created");
-
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
-        let dispatcher = tokio::spawn(run_dispatcher(
-            request_rx,
-            response_tx,
-            false,
-            Arc::clone(&audit),
-        ));
-
-        async fn register_ready(
-            request_tx: &mpsc::UnboundedSender<Value>,
-            response_rx: &mut mpsc::UnboundedReceiver<Value>,
-            workspace: &std::path::Path,
-            label: &str,
-            policy: Value,
-        ) -> String {
-            let identity = kodegpt_workspace_io::inspect_root(workspace)
-                .expect("workspace inspected")
-                .identity;
-            let registered = next_response(
-                request_tx,
-                response_rx,
-                &format!("req_mutation_register_{label}"),
-                "workspace.register",
-                json!({
-                    "rootPath": workspace.to_string_lossy(),
-                    "expectedIdentity": identity,
-                    "ceiling": policy
-                }),
-            )
-            .await;
-            let capability_id = registered["result"]["capabilityId"]
-                .as_str()
-                .expect("registration returns capability")
-                .to_owned();
-            let activated = next_response(
-                request_tx,
-                response_rx,
-                &format!("req_mutation_activate_{label}"),
-                "workspace.activate",
-                json!({ "capabilityId": capability_id }),
-            )
-            .await;
-            assert_eq!(activated["result"]["ok"], true);
-            capability_id
-        }
-
-        let observe_cap = register_ready(
-            &request_tx,
-            &mut response_rx,
-            &observe_workspace,
-            "observe",
-            json!({
-                "name": "observe",
-                "allowWrite": true,
-                "allowProcess": false,
-                "network": "deny",
-                "allowedExecutableNames": [],
-                "inheritEnv": false,
-                "envAllowlist": []
-            }),
-        )
-        .await;
-        let denied_cap = register_ready(
-            &request_tx,
-            &mut response_rx,
-            &denied_workspace,
-            "denied",
-            develop_policy(false),
-        )
-        .await;
-        let writable_cap = register_ready(
-            &request_tx,
-            &mut response_rx,
-            &writable_workspace,
-            "writable",
-            develop_policy(true),
-        )
-        .await;
-        let _other_cap = register_ready(
-            &request_tx,
-            &mut response_rx,
-            &other_workspace,
-            "other",
-            develop_policy(true),
-        )
-        .await;
-
-        for (label, capability_id) in [("observe", &observe_cap), ("allow-write-false", &denied_cap)] {
-            let denied = next_response(
-                &request_tx,
-                &mut response_rx,
-                &format!("req_mutation_deny_{label}"),
-                "file.write",
-                json!({
-                    "capabilityId": capability_id,
-                    "path": "blocked.txt",
-                    "content": "must-not-write"
-                }),
-            )
-            .await;
-            assert_eq!(denied["error"]["message"], "FILE_ACCESS_DENIED");
-        }
-        assert!(!observe_workspace.join("blocked.txt").exists());
-        assert!(!denied_workspace.join("blocked.txt").exists());
-
-        let created = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_mutation_write",
-            "file.write",
-            json!({
-                "capabilityId": writable_cap,
-                "path": "created.txt",
-                "content": "created safely"
-            }),
-        )
-        .await;
-        assert_eq!(created["result"]["created"], true);
-        assert_eq!(
-            fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
-            "created safely"
-        );
-
-        for (label, path) in [
-            ("traversal", "../escape.txt"),
-            ("cross-workspace", "other-link/secret.txt"),
-            ("state", "state-link/state-secret.txt"),
-        ] {
-            let denied = next_response(
-                &request_tx,
-                &mut response_rx,
-                &format!("req_mutation_boundary_{label}"),
-                "file.write",
-                json!({
-                    "capabilityId": writable_cap,
-                    "path": path,
-                    "content": "overwrite"
-                }),
-            )
-            .await;
-            assert_eq!(denied["error"]["message"], "FILE_ACCESS_DENIED");
-        }
-        assert_eq!(
-            fs::read_to_string(other_workspace.join("secret.txt")).unwrap(),
-            "other-secret"
-        );
-        assert_eq!(
-            fs::read_to_string(audit_root.join("state-secret.txt")).unwrap(),
-            "state-secret"
-        );
-
-        let conflict = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_mutation_edit_conflict",
-            "file.edit",
-            json!({
-                "capabilityId": writable_cap,
-                "path": "edit.txt",
-                "oldText": "alpha",
-                "newText": "omega",
-                "expectedReplacements": 1
-            }),
-        )
-        .await;
-        assert_eq!(conflict["error"]["message"], "FILE_EDIT_CONFLICT");
-        assert_eq!(
-            fs::read_to_string(writable_workspace.join("edit.txt")).unwrap(),
-            "alpha beta alpha\n"
-        );
-
-        let edited = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_mutation_edit",
-            "file.edit",
-            json!({
-                "capabilityId": writable_cap,
-                "path": "edit.txt",
-                "oldText": "alpha",
-                "newText": "omega",
-                "expectedReplacements": 2
-            }),
-        )
-        .await;
-        assert_eq!(edited["result"]["replacements"], 2);
-        assert_eq!(
-            fs::read_to_string(writable_workspace.join("edit.txt")).unwrap(),
-            "omega beta omega\n"
-        );
-
-        audit.inject_faults(AuditFaults {
-            fail_next_decision: true,
-            fail_next_outcome: false,
-        });
-        let audit_blocked = next_response(
-            &request_tx,
-            &mut response_rx,
-            "req_mutation_audit_blocked",
-            "file.write",
-            json!({
-                "capabilityId": writable_cap,
-                "path": "audit-blocked.txt",
-                "content": "must-not-exist"
-            }),
-        )
-        .await;
-        assert_eq!(audit_blocked["error"]["message"], "AUDIT_UNAVAILABLE");
-        assert!(!writable_workspace.join("audit-blocked.txt").exists());
-
-        drop(request_tx);
-        dispatcher.await.expect("dispatcher task joins");
-        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
-        assert!(audit_text.contains("file_write"));
-        assert!(audit_text.contains("file_edit"));
-        for secret in [
-            "must-not-write",
-            "created safely",
-            "overwrite",
-            "alpha",
-            "omega",
-            "must-not-exist",
-        ] {
-            assert!(!audit_text.contains(secret), "audit must not record mutation content");
-        }
-        for workspace in [
-            observe_workspace,
-            denied_workspace,
-            writable_workspace,
-            other_workspace,
-        ] {
-            fs::remove_dir_all(workspace).expect("workspace removed");
-        }
-        fs::remove_dir_all(audit_root).expect("audit root removed");
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(PathBuf::from(state)).expect("state removed");
     }
 }
