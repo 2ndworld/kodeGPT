@@ -17,6 +17,24 @@ const temporaryRoots: string[] = [];
 import { existsSync } from "node:fs";
 
 beforeAll(() => {
+  if (!existsSync(runtimePath)) {
+    const cargoBuild = spawnSync("cargo", ["build", "--release", "-p", "kodegpt-runtime"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024
+    });
+    expect(cargoBuild.error).toBeUndefined();
+    expect(cargoBuild.status, cargoBuild.stderr).toBe(0);
+
+    const stage = spawnSync(process.execPath, [join(root, "scripts/stage-runtime.mjs")], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    });
+    expect(stage.error).toBeUndefined();
+    expect(stage.status, stage.stderr).toBe(0);
+  }
+
   if (!existsSync(cliPath)) {
     const buildCli = spawnSync("pnpm", ["--filter", "kodegpt", "run", "build:cli"], {
       cwd: root,
@@ -26,7 +44,7 @@ beforeAll(() => {
     expect(buildCli.error).toBeUndefined();
     expect(buildCli.status, buildCli.stderr).toBe(0);
   }
-});
+}, 120_000);
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((p) => rm(p, { recursive: true, force: true })));
