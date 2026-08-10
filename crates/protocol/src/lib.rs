@@ -7,8 +7,8 @@ pub use frame::{FrameError, MAX_FRAME_BYTES, read_frame, write_frame};
 pub use types::{
     FileEditParams, FileReadParams, FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams,
     GitStatusParams, InheritEnvDisabled, JsonRpcVersion, NetworkMode, PersistentFilesystemIdentity,
-    ProcessRunParams, ProfileName, RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy,
-    RuntimeRequest, RuntimeResponse, RuntimeRpcError, RuntimeSuccessResponse, SystemInspectRootParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
+    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimeErrorResponse, RuntimeHelloParams,
+    RuntimePolicy, RuntimeRequest, RuntimeResponse, RuntimeRpcError, RuntimeSuccessResponse,
+    SystemInspectRootParams, WorkspaceActivateParams, WorkspaceCapabilityParams,
+    WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };
