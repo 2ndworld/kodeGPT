@@ -1,0 +1,48 @@
+name: Task 16 protocol repair
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Ensure ProcessOperationParams is a closed serde contract
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path("crates/protocol/src/types.rs")
+          text = path.read_text()
+          pattern = re.compile(
+              r"(?:#\[derive\([^\n]+\)\]\n)?(?:#\[serde\([^\n]+\)\]\n)?pub struct ProcessOperationParams \{\n"
+              r"    pub capability_id: String,\n    pub operation_id: String,\n\}"
+          )
+          replacement = '''#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessOperationParams {
+    pub capability_id: String,
+    pub operation_id: String,
+}'''
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit("ProcessOperationParams block not found exactly once")
+          path.write_text(updated)
+          PY
+          if ! git diff --quiet -- crates/protocol/src/types.rs; then
+            git config user.name "kodegpt-task16-verifier"
+            git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+            git add crates/protocol/src/types.rs
+            git commit -m "fix(protocol): close process operation params contract"
+            git push origin "HEAD:${HEAD_BRANCH}"
+          fi
