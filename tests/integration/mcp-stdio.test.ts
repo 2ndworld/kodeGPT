@@ -30,6 +30,22 @@ const mutatingFileAnnotations = {
   openWorldHint: false
 };
 
+const gitResult = {
+  schemaVersion: 1,
+  exitCode: 0,
+  stdoutPreview: " M tracked.txt\n",
+  stderrPreview: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  artifact: {
+    schemaVersion: 1,
+    artifactId: "ka_stdio",
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    bytesWritten: 14,
+    sourceTruncated: false
+  }
+};
+
 const context: KodegptToolContext = {
   workspace: {
     list: async () => [],
@@ -41,6 +57,10 @@ const context: KodegptToolContext = {
     editFile: async () => ({ bytesWritten: 5, replacements: 1 }),
     search: async () => [],
     tree: async () => []
+  },
+  git: {
+    status: async () => gitResult,
+    diff: async () => gitResult
   },
   profile: {
     current: async () => ({ name: "observe" }),
@@ -118,6 +138,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.search",
         "file.tree",
         "file.write",
+        "git.diff",
+        "git.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",
@@ -148,6 +170,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.search": ["workspaceId", "query"],
         "file.tree": ["workspaceId"],
         "file.write": ["workspaceId", "path", "content"],
+        "git.diff": ["workspaceId"],
+        "git.status": ["workspaceId"],
         "profile.current": ["workspaceId"],
         "profile.inspect": ["name"],
         "system.capabilities": [],
@@ -197,6 +221,22 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         bytesWritten: 5,
         replacements: 1
       });
+
+      for (const name of ["git.status", "git.diff"]) {
+        const gitResponse = nextMessage(stdout);
+        writeMessage(stdin, {
+          jsonrpc: "2.0",
+          id: `stdio-${name}`,
+          method: "tools/call",
+          params: {
+            name,
+            arguments: { workspaceId: "ws_stdio" },
+            _meta: meta()
+          }
+        });
+        const gitPayload = await gitResponse;
+        expect(JSON.parse(gitPayload.result.content[0].text)).toEqual(gitResult);
+      }
     } finally {
       await handle.close();
     }
