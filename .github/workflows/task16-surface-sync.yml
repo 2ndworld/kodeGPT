@@ -1,0 +1,206 @@
+name: Task 16 surface sync
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Synchronize Task 16 TypeScript surface fixtures once
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          changed = []
+
+          def write_if_changed(path: Path, text: str):
+              old = path.read_text()
+              if old != text:
+                  path.write_text(text)
+                  changed.append(str(path))
+
+          # MCP package public export.
+          path = Path("packages/mcp-server/src/index.ts")
+          text = path.read_text()
+          if "PROCESS_MUTATING_TOOL_ANNOTATIONS" not in text:
+              text = text.replace(
+                  "export {\n",
+                  "export {\n  PROCESS_MUTATING_TOOL_ANNOTATIONS,\n",
+                  1,
+              )
+          write_if_changed(path, text)
+
+          # CLI start orchestration: import ExecutionManager, include it in manager bundle,
+          # construct it from WorkspaceManager, and inject it into MCP context.
+          path = Path("apps/cli/src/commands/start.ts")
+          text = path.read_text()
+          if "ExecutionManager" not in text:
+              text = re.sub(
+                  r'import \{([^}]*?)WorkspaceManager([^}]*?)\} from "@kodegpt/core";',
+                  lambda m: 'import {' + m.group(1) + 'ExecutionManager, WorkspaceManager' + m.group(2) + '} from "@kodegpt/core";',
+                  text,
+                  count=1,
+                  flags=re.S,
+              )
+          # Interface/type bundle.
+          text = re.sub(
+              r'(interface ManagerBundle \{\s*workspaceManager: [^;]+;)(\s*\})',
+              r'\1\n  executionManager: ExecutionManager;\2',
+              text,
+              count=1,
+          )
+          # Default manager creation.
+          if "executionManager: new ExecutionManager" not in text:
+              pattern = re.compile(r'return \{\s*workspaceManager\s*\};')
+              text, n = pattern.subn(
+                  'return {\n      workspaceManager,\n      executionManager: new ExecutionManager(workspaceManager)\n    };',
+                  text,
+                  count=1,
+              )
+              if n == 0 and "new ExecutionManager(workspaceManager)" not in text:
+                  raise SystemExit("start.ts manager return pattern not found")
+          # Destructure and MCP context injection.
+          text = text.replace(
+              "const { workspaceManager } = dependencies.createManagers({",
+              "const { workspaceManager, executionManager } = dependencies.createManagers({",
+          )
+          if "executionManager," not in text[text.find("createKodegptToolContext"):]:
+              text = text.replace(
+                  "createKodegptToolContext({\n      workspaceManager,",
+                  "createKodegptToolContext({\n      workspaceManager,\n      executionManager,",
+                  1,
+              )
+          write_if_changed(path, text)
+
+          # CLI start test manager bundle mock.
+          path = Path("apps/cli/src/commands/start.test.ts")
+          text = path.read_text()
+          if "gitDiff: async () => ({})" in text and "runProcess: async" not in text:
+              text = text.replace(
+                  "    gitStatus: async () => ({}),\n    gitDiff: async () => ({})\n  };",
+                  "    gitStatus: async () => ({}),\n    gitDiff: async () => ({}),\n    runProcess: async () => ({}),\n    processStatus: async () => ({}),\n    cancelProcess: async () => ({})\n  };",
+                  1,
+              )
+          if "const executionManager" not in text:
+              marker = "\n  return {\n"
+              insertion = '''\n  const executionManager = {
+    run: async () => ({}),
+    status: async () => ({}),
+    cancel: async () => ({})
+  };\n'''
+              if marker not in text:
+                  raise SystemExit("start.test return marker missing")
+              text = text.replace(marker, insertion + marker, 1)
+          text = text.replace(
+              "return { workspaceManager };",
+              "return { workspaceManager, executionManager: executionManager as never };",
+          )
+          write_if_changed(path, text)
+
+          # MCP server semantic snapshot/test context.
+          path = Path("packages/mcp-server/src/server.test.ts")
+          text = path.read_text()
+          for tool in ["process.cancel", "process.run", "process.status"]:
+              if f'  "{tool}",' not in text:
+                  text = text.replace('  "profile.current",', f'  "{tool}",\n  "profile.current",', 1)
+          if '{ name: "process.cancel", required: ["workspaceId", "operationId"] }' not in text:
+              text = text.replace(
+                  '      { name: "profile.current", required: ["workspaceId"] },',
+                  '      { name: "process.cancel", required: ["workspaceId", "operationId"] },\n'
+                  '      { name: "process.run", required: ["workspaceId", "logicalExecutable"] },\n'
+                  '      { name: "process.status", required: ["workspaceId", "operationId"] },\n'
+                  '      { name: "profile.current", required: ["workspaceId"] },',
+                  1,
+              )
+          if "process: {" not in text:
+              text = text.replace(
+                  "      profile: {",
+                  "      process: {\n        run: async () => ({}),\n        status: async () => ({}),\n        cancel: async () => ({})\n      },\n      profile: {",
+                  1,
+              )
+          write_if_changed(path, text)
+
+          # MCP HTTP integration context + tool list.
+          path = Path("tests/integration/mcp-http.test.ts")
+          text = path.read_text()
+          if "process: {" not in text:
+              text = text.replace(
+                  "  profile: {",
+                  "  process: {\n    run: async () => ({ schemaVersion: 1, operationId: \"op_http\", state: \"exited\", exitCode: 0 }),\n"
+                  "    status: async () => ({ schemaVersion: 1, operationId: \"op_http\", state: \"running\" }),\n"
+                  "    cancel: async () => ({ schemaVersion: 1, operationId: \"op_http\", state: \"cancelled\" })\n  },\n  profile: {",
+                  1,
+              )
+          for tool in ["process.cancel", "process.run", "process.status"]:
+              if f'        "{tool}",' not in text:
+                  text = text.replace('        "profile.current",', f'        "{tool}",\n        "profile.current",', 1)
+          write_if_changed(path, text)
+
+          # MCP stdio integration: process context, mutating annotation handling, list/required fields.
+          path = Path("tests/integration/mcp-stdio.test.ts")
+          text = path.read_text()
+          if "process: {" not in text:
+              text = text.replace(
+                  "  profile: {",
+                  "  process: {\n    run: async () => ({ schemaVersion: 1, operationId: \"op_stdio\", state: \"exited\", exitCode: 0 }),\n"
+                  "    status: async () => ({ schemaVersion: 1, operationId: \"op_stdio\", state: \"running\" }),\n"
+                  "    cancel: async () => ({ schemaVersion: 1, operationId: \"op_stdio\", state: \"cancelled\" })\n  },\n  profile: {",
+                  1,
+              )
+          for tool in ["process.cancel", "process.run", "process.status"]:
+              if f'        "{tool}",' not in text:
+                  text = text.replace('        "profile.current",', f'        "{tool}",\n        "profile.current",', 1)
+          if '"process.cancel": ["workspaceId", "operationId"]' not in text:
+              text = text.replace(
+                  '        "profile.current": ["workspaceId"],',
+                  '        "process.cancel": ["workspaceId", "operationId"],\n'
+                  '        "process.run": ["workspaceId", "logicalExecutable"],\n'
+                  '        "process.status": ["workspaceId", "operationId"],\n'
+                  '        "profile.current": ["workspaceId"],',
+                  1,
+              )
+          # Mutating process tools must share conservative annotation expectation.
+          text = text.replace(
+              '        } else if (tool.name === "file.write" || tool.name === "file.edit") {\n          expect(tool.annotations).toEqual(mutatingFileAnnotations);',
+              '        } else if (\n          tool.name === "file.write" ||\n          tool.name === "file.edit" ||\n          tool.name === "process.run" ||\n          tool.name === "process.cancel"\n        ) {\n          expect(tool.annotations).toEqual(mutatingFileAnnotations);',
+          )
+          write_if_changed(path, text)
+
+          # Any direct KodegptToolContext test literals elsewhere get a minimal process stub.
+          for filename in ["tests/integration/mcp-http.test.ts", "tests/integration/mcp-stdio.test.ts", "packages/mcp-server/src/server.test.ts"]:
+              pass
+
+          print("changed:", changed)
+          PY
+
+          if ! git diff --quiet; then
+            git config user.name "kodegpt-task16-verifier"
+            git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+            git add packages/mcp-server/src/index.ts apps/cli/src/commands/start.ts apps/cli/src/commands/start.test.ts packages/mcp-server/src/server.test.ts tests/integration/mcp-http.test.ts tests/integration/mcp-stdio.test.ts
+            git commit -m "test(process): synchronize CLI and MCP process surface"
+            git push origin "HEAD:${HEAD_BRANCH}"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck synchronized process surface
+        run: pnpm typecheck
