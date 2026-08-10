@@ -69,6 +69,7 @@ export interface StartDependencies extends ProductionServiceStackDependencies {
     toolContext: KodegptToolContext;
     httpTrust: HttpTrustConfig;
     bearerAuthenticator: BearerAuthenticator;
+    queryCredentialCompatibility?: boolean;
   }): McpNodeHandle;
   bindLoopback(options: { mcp: McpNodeHandle; port: number }): Promise<BoundLoopbackServer>;
 }
@@ -79,6 +80,8 @@ export interface StartKodegptOptions {
   port?: number;
   publicUrl?: string;
   maxRequestBodyBytes?: number;
+  queryCredentialCompatibility?: boolean;
+  allowMissingConnectorCredential?: boolean;
 }
 
 export interface KodegptStartStatus {
@@ -117,12 +120,16 @@ export function formatKodegptStartStatus(status: KodegptStartStatus): string {
 export interface ProductionServiceStackOptions {
   runtimePath: string;
   stateRoot?: string;
+  allowMissingConnectorCredential?: boolean;
 }
 
 export interface ProductionServiceStackDependencies {
   prepareStateRoot(stateRoot: string): Promise<void>;
   prepareAudit(stateRoot: string): Promise<void>;
-  prepareConnectorAuth?(stateRoot: string): Promise<BearerAuthenticator>;
+  prepareConnectorAuth?(
+    stateRoot: string,
+    options: { allowMissingCredential: boolean }
+  ): Promise<BearerAuthenticator>;
   prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
   startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
@@ -156,7 +163,9 @@ export async function createProductionServiceStack(
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
     const bearerAuthenticator = dependencies.prepareConnectorAuth
-      ? await dependencies.prepareConnectorAuth(stateRoot)
+      ? await dependencies.prepareConnectorAuth(stateRoot, {
+          allowMissingCredential: options.allowMissingConnectorCredential ?? false
+        })
       : undefined;
     const extensionRegistry = await dependencies.prepareExtensionRegistry(stateRoot);
 
@@ -208,6 +217,14 @@ export async function startKodegpt(
   const maxRequestBodyBytes =
     options.maxRequestBodyBytes ?? DEFAULT_MCP_MAX_REQUEST_BODY_BYTES;
   validatePort(port);
+  if (
+    options.allowMissingConnectorCredential &&
+    (!(options.queryCredentialCompatibility ?? false) || options.publicUrl === undefined)
+  ) {
+    throw new Error(
+      "Connector bootstrap requires explicit query credential compatibility and a public URL"
+    );
+  }
 
   const stack = await createProductionServiceStack(options, dependencies);
   let mcp: McpNodeHandle | undefined;
@@ -228,6 +245,7 @@ export async function startKodegpt(
     mcp = dependencies.createMcp({
       toolContext: stack.toolContext,
       httpTrust,
+      queryCredentialCompatibility: options.queryCredentialCompatibility ?? false,
       bearerAuthenticator: stack.bearerAuthenticator
     });
     bound = await dependencies.bindLoopback({ mcp, port });
@@ -266,9 +284,9 @@ export const defaultStartDependencies: StartDependencies = {
     await ensurePrivateDirectory(logs);
     await ensurePrivateDirectory(join(logs, "security"));
   },
-  prepareConnectorAuth: async (stateRoot) => {
+  prepareConnectorAuth: async (stateRoot, options) => {
     const store = new ConnectorCredentialStore(stateRoot);
-    if ((await store.loadVerifier()) === undefined) {
+    if (!options.allowMissingCredential && (await store.loadVerifier()) === undefined) {
       throw new Error("Connector credential is unavailable; rotate a connector credential first");
     }
     return new ConnectorBearerAuthenticator(store);

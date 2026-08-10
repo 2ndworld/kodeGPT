@@ -49,7 +49,7 @@ describe("manual HTTPS exposure", () => {
     }
   });
 
-  it("keeps the listener loopback-only and starts no exposure subprocess", async () => {
+  it("keeps normal start loopback-only and tunnel-independent", async () => {
     const sourcePath = fileURLToPath(
       new URL("../../apps/cli/src/commands/start.ts", import.meta.url)
     );
@@ -59,5 +59,17 @@ describe("manual HTTPS exposure", () => {
     expect(source).not.toMatch(/from\s+["']node:child_process["']/);
     expect(source).not.toMatch(/\b(?:spawn|exec|fork)\s*\(/);
     expect(source).not.toMatch(/\b(?:ngrok|cloudflared|localtunnel)\b/i);
+  });
+
+  it("keeps ngrok process ownership inside the explicit exposure module", async () => {
+    const sourcePath = fileURLToPath(
+      new URL("../../apps/cli/src/commands/expose-ngrok.ts", import.meta.url)
+    );
+    const source = await readFile(sourcePath, "utf8");
+    expect(source).toMatch(/from\s+["']node:child_process["']/);
+    expect(source).toMatch(/\bspawn\b/);
+    expect(source).toMatch(/\bngrok\b/i);
+    expect(source).toContain("127.0.0.1");
+    expect(source).not.toContain("0.0.0.0");
   });
 });

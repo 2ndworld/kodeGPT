@@ -70,6 +70,8 @@ const trust = createHttpTrustConfig({
   maxRequestBodyBytes: 64 * 1024
 });
 
+const TEST_CONNECTOR_VALUE = "[REDACTED_SECRET]";
+
 function meta(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
@@ -91,6 +93,7 @@ async function post(
   handler: ReturnType<typeof createKodegptHttpHandler>,
   body: unknown,
   options: {
+    url?: string;
     host?: string | null;
     origin?: string;
     contentType?: string;
@@ -112,7 +115,7 @@ async function post(
   if (options.authorization !== undefined) headers.set("authorization", options.authorization);
   if (options.mcpName !== undefined) headers.set("mcp-name", options.mcpName);
   return handler.fetch(
-    new Request("http://127.0.0.1:43121/mcp", {
+    new Request(options.url ?? "http://127.0.0.1:43121/mcp", {
       method: "POST",
       headers,
       body: text
@@ -121,16 +124,23 @@ async function post(
 }
 
 function validAuthorization(): string {
-  return ["Bear", "er", " accepted-by-test-authenticator"].join("");
+  return ["Bear", "er ", TEST_CONNECTOR_VALUE].join("");
 }
 
-function createHandler() {
+function mcpUrlWithQueryCredential(...values: string[]): string {
+  const url = new URL("http://127.0.0.1:43121/mcp");
+  for (const value of values) url.searchParams.append("kodegpt_token", value);
+  return url.toString();
+}
+
+function createHandler(options: { queryCredentialCompatibility?: boolean } = {}) {
   return createKodegptHttpHandler({
     toolContext,
     httpTrust: trust,
     bearerAuthenticator: {
       authenticate: async (authorization) => authorization === validAuthorization()
-    }
+    },
+    ...options
   });
 }
 
@@ -189,6 +199,71 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
     } finally {
       await handler.close();
     }
+  });
+
+  it("does not let the personal query credential authenticate normal HTTP mode", async () => {
+    const handler = createHandler();
+    try {
+      const response = await post(handler, discoverBody("query-disabled"), {
+        url: mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE)
+      });
+      expect(response.status).toBe(401);
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("accepts exactly one personal query credential only when compatibility is enabled", async () => {
+    const handler = createHandler({ queryCredentialCompatibility: true });
+    try {
+      const accepted = await post(handler, discoverBody("query-enabled"), {
+        url: mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE)
+      });
+      expect(accepted.status).toBe(200);
+
+      const wrong = await post(handler, discoverBody("query-wrong"), {
+        url: mcpUrlWithQueryCredential("wrong-test-value")
+      });
+      expect(wrong.status).toBe(401);
+
+      const wrongPath = new URL(mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE));
+      wrongPath.pathname = "/not-mcp";
+      const outsideMcpPath = await post(handler, discoverBody("query-wrong-path"), {
+        url: wrongPath.toString()
+      });
+      expect(outsideMcpPath.status).toBe(401);
+
+      const duplicate = await post(handler, discoverBody("query-duplicate"), {
+        url: mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE, TEST_CONNECTOR_VALUE)
+      });
+      expect(duplicate.status).toBe(401);
+
+      const ambiguous = await post(handler, discoverBody("query-ambiguous"), {
+        url: mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE),
+        authorization: validAuthorization()
+      });
+      expect(ambiguous.status).toBe(401);
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("removes the personal query credential from the URL forwarded to MCP", async () => {
+    const module = (await import("../../packages/mcp-server/src/http.js")) as Record<
+      string,
+      unknown
+    >;
+    expect(module.resolveHttpCredential).toBeTypeOf("function");
+    const resolveHttpCredential = module.resolveHttpCredential as (
+      request: Request,
+      enabled: boolean
+    ) => { authorization: string | undefined; forwardedUrl: string } | null;
+    const url = new URL(mcpUrlWithQueryCredential(TEST_CONNECTOR_VALUE));
+    url.searchParams.set("keep", "yes");
+    const resolved = resolveHttpCredential(new Request(url), true);
+    expect(resolved).not.toBeNull();
+    expect(new URL(resolved!.forwardedUrl).searchParams.get("keep")).toBe("yes");
+    expect(new URL(resolved!.forwardedUrl).searchParams.has("kodegpt_token")).toBe(false);
   });
 
   it("rejects malformed modern metadata and method/name header mismatches", async () => {

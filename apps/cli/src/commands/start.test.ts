@@ -188,6 +188,51 @@ describe("kodegpt start orchestration", () => {
     expect(events.slice(-3)).toEqual(["bind.close", "mcp.close", "kernel.stop"]);
   });
 
+  it("rejects connector bootstrap unless it is paired with explicit public query compatibility", async () => {
+    await expect(
+      startKodegpt(
+        {
+          runtimePath: "/runtime",
+          stateRoot: "/state",
+          port: 43121,
+          allowMissingConnectorCredential: true
+        },
+        dependencies([])
+      )
+    ).rejects.toThrow(/bootstrap/i);
+  });
+
+  it("keeps query credential compatibility disabled by default and programmatic-only", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateMcp = deps.createMcp;
+    const captured: Array<Record<string, unknown>> = [];
+    deps.createMcp = (options) => {
+      captured.push(options as unknown as Record<string, unknown>);
+      return originalCreateMcp(options);
+    };
+
+    const normal = await runStartCommand(
+      ["--runtime", "/runtime", "--state-root", "/state", "--port", "43121"],
+      deps
+    );
+    expect(captured.at(-1)?.queryCredentialCompatibility).toBe(false);
+    await normal.close();
+
+    const enabled = await startKodegpt(
+      {
+        runtimePath: "/runtime",
+        stateRoot: "/state",
+        port: 43121,
+        queryCredentialCompatibility: true
+      },
+      deps
+    );
+    expect(captured.at(-1)?.queryCredentialCompatibility).toBe(true);
+    expect(enabled.status.host).toBe("127.0.0.1");
+    await enabled.close();
+  });
+
   it("parses the start command module strictly and formats only safe status", async () => {
     const events: string[] = [];
     const started = await runStartCommand(

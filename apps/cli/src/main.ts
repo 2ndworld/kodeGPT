@@ -7,6 +7,7 @@ import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
 import { runBridgeCommand } from "./commands/bridge.js";
+import { formatExposeNgrokStatus, runExposeNgrokCommand } from "./commands/expose-ngrok.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
 import { resolveRuntimePath, RUNTIME_PACKAGE_LINUX_X64 } from "./runtime-resolver.js";
@@ -28,6 +29,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "bridge":
       await bridge(rest);
+      return;
+    case "expose":
+      await expose(rest);
       return;
     case "--help":
     case "-h":
@@ -101,6 +105,25 @@ async function bridge(args: string[]): Promise<void> {
   process.exit(0);
 }
 
+async function expose(args: string[]): Promise<void> {
+  const [provider, ...rest] = args;
+  if (provider !== "ngrok") {
+    throw new Error("expose command requires provider: ngrok");
+  }
+  if (rest.includes("--runtime") && process.env.NODE_ENV !== "test" && process.env.NODE_ENV !== "development") {
+    throw new Error("--runtime is available only in development and tests");
+  }
+  const runtimePath = await resolveRuntimePath();
+  const exposeArgs = rest.includes("--runtime") ? rest : [...rest, "--runtime", runtimePath];
+  const exposed = await runExposeNgrokCommand(exposeArgs);
+  process.stdout.write(`${formatExposeNgrokStatus(exposed.status)}\n`);
+  await Promise.race([
+    waitForShutdown(exposed.close),
+    exposed.termination.finally(() => exposed.close())
+  ]);
+  process.exit(0);
+}
+
 function extractStateRoot(args: string[]): { stateRoot: string; remaining: string[] } {
   let stateRoot = join(homedir(), ".kodegpt");
   const remaining: string[] = [];
@@ -159,6 +182,7 @@ function helpText(): string {
     "  kodegpt workspace list [--state-root <path>]",
     "  kodegpt start [--state-root <path>] [--port <port>] [--public-url <https-url>]",
     "  kodegpt bridge [--state-root <path>]",
+    "  kodegpt expose ngrok --hostname <stable-hostname> [--port <port>] [--state-root <path>]",
     ""
   ].join("\n");
 }

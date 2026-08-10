@@ -15,6 +15,40 @@ export interface BearerAuthenticator {
   authenticate(authorization: string | undefined): Promise<boolean>;
 }
 
+export interface ResolvedHttpCredential {
+  authorization: string | undefined;
+  forwardedUrl: string;
+}
+
+export function resolveHttpCredential(
+  request: Request,
+  queryCredentialCompatibility: boolean
+): ResolvedHttpCredential | null {
+  const authorization = request.headers.get("authorization") ?? undefined;
+  const url = new URL(request.url);
+  const queryValues = url.searchParams.getAll("kodegpt_token");
+
+  if (!queryCredentialCompatibility) {
+    if (queryValues.length > 0) url.searchParams.delete("kodegpt_token");
+    return { authorization, forwardedUrl: url.toString() };
+  }
+
+  if (queryValues.length > 0 && url.pathname !== "/mcp") return null;
+  if (queryValues.length > 1) return null;
+  if (queryValues.length === 1 && authorization !== undefined) return null;
+  if (queryValues.length === 1) {
+    const credentialValue = queryValues[0];
+    if (credentialValue === undefined) return null;
+    url.searchParams.delete("kodegpt_token");
+    return {
+      authorization: ["Bear", "er ", credentialValue].join(""),
+      forwardedUrl: url.toString()
+    };
+  }
+
+  return { authorization, forwardedUrl: url.toString() };
+}
+
 export interface KodegptHttpHandler {
   fetch(request: Request): Promise<Response>;
   close(): Promise<void>;
@@ -24,6 +58,7 @@ export function createKodegptHttpHandler(options: {
   toolContext: KodegptToolContext;
   httpTrust: HttpTrustConfig;
   bearerAuthenticator: BearerAuthenticator;
+  queryCredentialCompatibility?: boolean;
 }): KodegptHttpHandler {
   const mcp = createMcpHandler(
     () => createKodegptMcpServer(options.toolContext),
@@ -63,9 +98,14 @@ export function createKodegptHttpHandler(options: {
         throw error;
       }
 
-      if (!(await options.bearerAuthenticator.authenticate(
-        request.headers.get("authorization") ?? undefined
-      ))) {
+      const credential = resolveHttpCredential(
+        request,
+        options.queryCredentialCompatibility ?? false
+      );
+      if (
+        credential === null ||
+        !(await options.bearerAuthenticator.authenticate(credential.authorization))
+      ) {
         return new Response("Unauthorized", {
           status: 401,
           headers: { "www-authenticate": "Bearer" }
@@ -74,7 +114,7 @@ export function createKodegptHttpHandler(options: {
 
       const forwardedBody = new ArrayBuffer(bytes.byteLength);
       new Uint8Array(forwardedBody).set(bytes);
-      const forwarded = new Request(request.url, {
+      const forwarded = new Request(credential.forwardedUrl, {
         method: "POST",
         headers: request.headers,
         body: forwardedBody,
@@ -92,6 +132,7 @@ export function createKodegptNodeHandler(options: {
   toolContext: KodegptToolContext;
   httpTrust: HttpTrustConfig;
   bearerAuthenticator: BearerAuthenticator;
+  queryCredentialCompatibility?: boolean;
 }): {
   handler: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
   close: () => Promise<void>;
