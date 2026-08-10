@@ -15,6 +15,8 @@ export const RUNTIME_METHODS = [
   "file.search",
   "file.write",
   "file.edit",
+  "git.status",
+  "git.diff",
   "process.run"
 ] as const;
 
@@ -117,6 +119,12 @@ const fileEditParamsSchema = z
   })
   .strict();
 
+const gitCapabilityParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1)
+  })
+  .strict();
+
 const processRunParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -154,6 +162,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.search", fileSearchParamsSchema),
   requestSchema("file.write", fileWriteParamsSchema),
   requestSchema("file.edit", fileEditParamsSchema),
+  requestSchema("git.status", gitCapabilityParamsSchema),
+  requestSchema("git.diff", gitCapabilityParamsSchema),
   requestSchema("process.run", processRunParamsSchema)
 ]);
 

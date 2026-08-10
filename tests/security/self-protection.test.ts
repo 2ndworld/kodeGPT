@@ -36,14 +36,14 @@ describe("race-safe file mutation source regressions", () => {
   });
 
   it("keeps write/edit behind runtime policy and durable audit authority", async () => {
-    const dispatcher = await source("crates/runtime/src/dispatcher.rs");
+    const workspaceAuthority = await source("crates/runtime/src/workspace_dispatcher.rs");
 
-    expect(dispatcher).toContain("policy.allow_write && policy.name != ProfileName::Observe");
-    expect(dispatcher).toContain("AuditAction::FileWrite");
-    expect(dispatcher).toContain("AuditAction::FileEdit");
-    expect(dispatcher).toContain("audited_workspace_operation(");
-    expect(dispatcher).toContain("write_file_with_policy");
-    expect(dispatcher).toContain("edit_file_with_policy");
+    expect(workspaceAuthority).toContain("policy.allow_write && policy.name != ProfileName::Observe");
+    expect(workspaceAuthority).toContain("AuditAction::FileWrite");
+    expect(workspaceAuthority).toContain("AuditAction::FileEdit");
+    expect(workspaceAuthority).toContain("audited_workspace_operation(");
+    expect(workspaceAuthority).toContain("write_file_with_policy");
+    expect(workspaceAuthority).toContain("edit_file_with_policy");
   });
 
   it("keeps public MCP mutation inputs on opaque workspace IDs with exact mutating annotations", async () => {

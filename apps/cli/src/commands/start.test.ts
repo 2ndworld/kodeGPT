@@ -40,7 +40,9 @@ function dependencies(
     writeFile: async () => ({}),
     editFile: async () => ({}),
     search: async () => [],
-    tree: async () => []
+    tree: async () => [],
+    gitStatus: async () => ({}),
+    gitDiff: async () => ({})
   };
 
   return {

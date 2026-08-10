@@ -29,11 +29,11 @@ describe("workspace read boundary source regressions", () => {
   });
 
   it("keeps every runtime file method behind the durable audit operation wrapper", async () => {
-    const dispatcher = await source("crates/runtime/src/dispatcher.rs");
+    const workspaceAuthority = await source("crates/runtime/src/workspace_dispatcher.rs");
 
     for (const action of ["FileRead", "FileTree", "FileSearch"]) {
-      expect(dispatcher).toContain(`AuditAction::${action}`);
+      expect(workspaceAuthority).toContain(`AuditAction::${action}`);
     }
-    expect(dispatcher).toContain("audited_workspace_operation(");
+    expect(workspaceAuthority).toContain("audited_workspace_operation(");
   });
 });

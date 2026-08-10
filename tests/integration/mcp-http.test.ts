@@ -9,6 +9,22 @@ import { createHttpTrustConfig } from "../../packages/auth/src/http-trust.js";
 import { createKodegptHttpHandler } from "../../packages/mcp-server/src/http.js";
 import type { KodegptToolContext } from "../../packages/mcp-server/src/tool-context.js";
 
+const gitResult = {
+  schemaVersion: 1,
+  exitCode: 0,
+  stdoutPreview: "",
+  stderrPreview: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  artifact: {
+    schemaVersion: 1,
+    artifactId: "ka_http",
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    bytesWritten: 0,
+    sourceTruncated: false
+  }
+};
+
 const toolContext: KodegptToolContext = {
   workspace: {
     list: async () => [],
@@ -20,6 +36,10 @@ const toolContext: KodegptToolContext = {
     editFile: async () => ({ bytesWritten: 5, replacements: 1 }),
     search: async () => [],
     tree: async () => []
+  },
+  git: {
+    status: async () => gitResult,
+    diff: async () => gitResult
   },
   profile: {
     current: async () => ({ name: "observe" }),
@@ -291,6 +311,8 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
         "file.search",
         "file.tree",
         "file.write",
+        "git.diff",
+        "git.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",

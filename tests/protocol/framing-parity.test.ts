@@ -26,6 +26,8 @@ const FIXTURE_NAMES = [
   "file.search.json",
   "file.write.json",
   "file.edit.json",
+  "git.status.json",
+  "git.diff.json",
   "process.run.json"
 ] as const;
 
@@ -44,6 +46,8 @@ const EXPECTED_METHODS = [
   "file.search",
   "file.write",
   "file.edit",
+  "git.status",
+  "git.diff",
   "process.run"
 ] as const;
 

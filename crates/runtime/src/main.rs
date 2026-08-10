@@ -1,6 +1,7 @@
 mod audit;
 mod dispatcher;
 mod execution;
+mod git;
 mod rpc;
 mod spool;
 
