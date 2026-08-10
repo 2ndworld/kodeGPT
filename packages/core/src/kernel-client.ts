@@ -214,9 +214,18 @@ export class KernelClient {
     if (this.#state === "running") {
       this.#state = "stopping";
       this.#child.stdin.end();
+      const killTimer = setTimeout(() => {
+        if (this.#child.exitCode === null && this.#child.signalCode === null) {
+          this.#child.kill("SIGKILL");
+        }
+      }, 2000);
+      try {
+        await this.#exitPromise;
+      } finally {
+        clearTimeout(killTimer);
+      }
     }
 
-    await this.#exitPromise;
     this.#state = "closed";
   }
 

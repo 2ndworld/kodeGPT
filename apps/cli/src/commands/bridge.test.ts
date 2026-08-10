@@ -1,0 +1,146 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { bridgeKodegpt, parseBridgeArguments } from "./bridge.js";
+
+const roots: string[] = [];
+
+async function stateRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "kodegpt-cli-bridge-unit-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("bridge command unit tests", () => {
+  it("parses bridge arguments correctly", () => {
+    const parsed = parseBridgeArguments([
+      "--runtime",
+      "/path/to/runtime",
+      "--state-root",
+      "/path/to/state"
+    ]);
+    expect(parsed).toEqual({
+      runtimePath: "/path/to/runtime",
+      stateRoot: "/path/to/state"
+    });
+  });
+
+  it("rejects missing --runtime option", () => {
+    expect(() => parseBridgeArguments(["--state-root", "/path/to/state"])).toThrow(
+      "bridge requires --runtime <path>"
+    );
+  });
+
+  it("rejects unknown options", () => {
+    expect(() =>
+      parseBridgeArguments(["--runtime", "/path/to/runtime", "--invalid", "val"])
+    ).toThrow("Unknown bridge option: --invalid");
+  });
+
+  it("instantiates and closes stdio bridge with mock dependencies", async () => {
+    const root = await stateRoot();
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+
+    let kernelStopped = false;
+    const processResult = {
+      schemaVersion: 1,
+      operationId: "op_1",
+      state: "completed" as const,
+      exitCode: 0,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://1" as const,
+        mediaType: "text/plain",
+        sizeBytes: 0,
+        sourceTruncated: false
+      }
+    };
+
+    const dependencies = {
+      prepareStateRoot: async () => {},
+      prepareAudit: async () => {},
+      prepareExtensionRegistry: async () => ({ listEnabled: async () => [] }),
+      startKernel: async () => ({
+        request: async <T>() => ({}) as T,
+        hello: async () => ({
+          runtimeVersion: "0.1.0",
+          auditHealthy: true as const,
+          filesystemBoundaryAvailable: true as const,
+          testMethods: false
+        }),
+        stop: async () => {
+          kernelStopped = true;
+        }
+      }),
+      createTrustProfile: () => ({
+        trust: {},
+        inspectProfile: () => ({ name: "observe" })
+      }),
+      createManagers: () => ({
+        workspaceManager: {
+          listWorkspaces: async () => [],
+          openWorkspace: async () => ({ id: "ws_1", canonicalRoot: "/tmp" }),
+          closeWorkspace: async () => ({ ok: true }),
+          requireReady: () => ({ effectivePolicy: { name: "observe" } }),
+          readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+          writeFile: async () => ({ bytesWritten: 0, created: true }),
+          editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
+          search: async () => [],
+          tree: async () => [],
+          gitStatus: async () => ({
+            schemaVersion: 1,
+            exitCode: 0,
+            stdoutPreview: "",
+            stderrPreview: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            sourceTruncated: false,
+            bytesSpooled: 0,
+            artifact: processResult.artifact
+          }),
+          gitDiff: async () => ({
+            schemaVersion: 1,
+            exitCode: 0,
+            stdoutPreview: "",
+            stderrPreview: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            sourceTruncated: false,
+            bytesSpooled: 0,
+            artifact: processResult.artifact
+          }),
+          runProcess: async () => processResult,
+          processStatus: async () => processResult,
+          processCancel: async () => ({ ...processResult, state: "cancelled" as const })
+        }
+      })
+    };
+
+    const bridged = await bridgeKodegpt(
+      {
+        runtimePath: "/tmp/mock-runtime",
+        stateRoot: root,
+        streams: { stdin, stdout }
+      },
+      dependencies
+    );
+
+    await bridged.close();
+    expect(kernelStopped).toBe(true);
+  });
+});

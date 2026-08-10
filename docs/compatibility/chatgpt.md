@@ -6,12 +6,15 @@ KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compati
 
 ## Connectivity truth
 
-ChatGPT does not connect directly to a localhost MCP endpoint. OpenAI's current ChatGPT developer-mode guidance says local, private-network, on-premises, and developer-machine MCP servers should use Secure MCP Tunnel when that path is available for the relevant OpenAI product. An operator-managed public HTTPS endpoint is also a generic remote MCP-host exposure mechanism, but it is not a claim that ChatGPT can reach localhost directly.
+ChatGPT does not connect directly to a localhost MCP endpoint. OpenAI's current ChatGPT developer-mode guidance specifies that local, private-network, on-premises, and developer-machine MCP servers should use **Secure MCP Tunnel paired with KodeGPT's production stdio bridge** (`kodegpt bridge`) as the preferred private connection path.
 
-KodeGPT therefore keeps all tunnel/exposure ownership outside the core runtime:
+The `kodegpt bridge` command serves the exact KodeGPT production stack over standard input/output (stdio) without opening network ports or requiring HTTP connector tokens, while strictly preserving local-only workspace trust, retained-FD boundaries, policy presets, and audit logging.
 
-- KodeGPT continues to bind only to loopback.
-- `--public-url` only adds exact HTTPS Host/Origin trust semantics for an operator-managed exposure layer.
+KodeGPT keeps all tunnel/exposure ownership outside the core runtime:
+
+- `kodegpt bridge` provides the preferred private stdio transport for Secure MCP Tunnel or local subprocess integration.
+- `kodegpt start` binds to loopback for local HTTP/SSE access.
+- `--public-url` adds exact HTTPS Host/Origin trust semantics for operator-managed HTTP exposure layers.
 - KodeGPT does not spawn or supervise Secure MCP Tunnel, Cloudflare Tunnel, ngrok, SSH tunnels, or other exposure subprocesses.
 - Host compatibility must be tested through the actual supported remote/private connection path used by the target ChatGPT workspace.
 

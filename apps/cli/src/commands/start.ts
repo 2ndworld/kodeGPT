@@ -64,17 +64,7 @@ export interface BoundLoopbackServer {
   close(): Promise<void>;
 }
 
-export interface StartDependencies {
-  prepareStateRoot(stateRoot: string): Promise<void>;
-  prepareAudit(stateRoot: string): Promise<void>;
-  prepareConnectorAuth(stateRoot: string): Promise<BearerAuthenticator>;
-  prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
-  startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
-  createTrustProfile(stateRoot: string): TrustProfileBundle;
-  createManagers(options: {
-    kernel: StartKernel;
-    trustProfile: TrustProfileBundle;
-  }): ManagerBundle;
+export interface StartDependencies extends ProductionServiceStackDependencies {
   createMcp(options: {
     toolContext: KodegptToolContext;
     httpTrust: HttpTrustConfig;
@@ -124,27 +114,50 @@ export function formatKodegptStartStatus(status: KodegptStartStatus): string {
   ].join(" ");
 }
 
-export async function startKodegpt(
-  options: StartKodegptOptions,
-  dependencies: StartDependencies = defaultStartDependencies
-): Promise<StartedKodegpt> {
+export interface ProductionServiceStackOptions {
+  runtimePath: string;
+  stateRoot?: string;
+}
+
+export interface ProductionServiceStackDependencies {
+  prepareStateRoot(stateRoot: string): Promise<void>;
+  prepareAudit(stateRoot: string): Promise<void>;
+  prepareConnectorAuth?(stateRoot: string): Promise<BearerAuthenticator>;
+  prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
+  startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
+  createTrustProfile(stateRoot: string): TrustProfileBundle;
+  createManagers(options: {
+    kernel: StartKernel;
+    trustProfile: TrustProfileBundle;
+  }): ManagerBundle;
+}
+
+export interface ProductionServiceStack {
+  stateRoot: string;
+  kernel: StartKernel;
+  hello: KernelHello;
+  bearerAuthenticator?: BearerAuthenticator;
+  toolContext: KodegptToolContext;
+  extensionRegistry: ExtensionRegistryToolAdapter;
+  close(): Promise<void>;
+}
+
+export async function createProductionServiceStack(
+  options: ProductionServiceStackOptions,
+  dependencies: ProductionServiceStackDependencies = defaultStartDependencies
+): Promise<ProductionServiceStack> {
   if (options.runtimePath.length === 0) {
     throw new TypeError("runtimePath must not be empty");
   }
   const stateRoot = options.stateRoot ?? join(homedir(), ".kodegpt");
-  const port = options.port ?? DEFAULT_MCP_PORT;
-  const maxRequestBodyBytes =
-    options.maxRequestBodyBytes ?? DEFAULT_MCP_MAX_REQUEST_BODY_BYTES;
-  validatePort(port);
 
   let kernel: StartKernel | undefined;
-  let mcp: McpNodeHandle | undefined;
-  let bound: BoundLoopbackServer | undefined;
-
   try {
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
-    const bearerAuthenticator = await dependencies.prepareConnectorAuth(stateRoot);
+    const bearerAuthenticator = dependencies.prepareConnectorAuth
+      ? await dependencies.prepareConnectorAuth(stateRoot)
+      : undefined;
     const extensionRegistry = await dependencies.prepareExtensionRegistry(stateRoot);
 
     kernel = await dependencies.startKernel({ runtimePath: options.runtimePath, stateRoot });
@@ -167,6 +180,43 @@ export async function startKodegpt(
         systemHealth(await kernel!.hello(), await auditReader.readRecentAuditEvents(20))
     });
 
+    let closed = false;
+    return {
+      stateRoot,
+      kernel,
+      hello,
+      bearerAuthenticator,
+      toolContext,
+      extensionRegistry,
+      async close(): Promise<void> {
+        if (closed) return;
+        closed = true;
+        await kernel?.stop();
+      }
+    };
+  } catch (error) {
+    await kernel?.stop().catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function startKodegpt(
+  options: StartKodegptOptions,
+  dependencies: StartDependencies = defaultStartDependencies
+): Promise<StartedKodegpt> {
+  const port = options.port ?? DEFAULT_MCP_PORT;
+  const maxRequestBodyBytes =
+    options.maxRequestBodyBytes ?? DEFAULT_MCP_MAX_REQUEST_BODY_BYTES;
+  validatePort(port);
+
+  const stack = await createProductionServiceStack(options, dependencies);
+  let mcp: McpNodeHandle | undefined;
+  let bound: BoundLoopbackServer | undefined;
+
+  try {
+    if (!stack.bearerAuthenticator) {
+      throw new Error("Connector authenticator is missing for startKodegpt");
+    }
     const authority = `${LOOPBACK_HOST}:${port}`;
     const httpTrust = createHttpTrustConfig({
       allowedHosts: [authority, `localhost:${port}`],
@@ -175,7 +225,11 @@ export async function startKodegpt(
       maxRequestBodyBytes
     });
 
-    mcp = dependencies.createMcp({ toolContext, httpTrust, bearerAuthenticator });
+    mcp = dependencies.createMcp({
+      toolContext: stack.toolContext,
+      httpTrust,
+      bearerAuthenticator: stack.bearerAuthenticator
+    });
     bound = await dependencies.bindLoopback({ mcp, port });
 
     const status: KodegptStartStatus = {
@@ -183,7 +237,7 @@ export async function startKodegpt(
       port: bound.port,
       protocolVersion: MCP_PROTOCOL_VERSION,
       surfaceVersion: MCP_SURFACE_VERSION,
-      runtimeVersion: hello.runtimeVersion,
+      runtimeVersion: stack.hello.runtimeVersion,
       auditHealthy: true,
       filesystemBoundaryAvailable: true
     };
@@ -194,16 +248,16 @@ export async function startKodegpt(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
-        await closeRuntimeStack(bound, mcp, kernel);
+        await closeRuntimeStack(bound, mcp, stack.kernel);
       }
     };
   } catch (error) {
-    await closeRuntimeStack(bound, mcp, kernel).catch(() => undefined);
+    await closeRuntimeStack(bound, mcp, stack.kernel).catch(() => undefined);
     throw error;
   }
 }
 
-const defaultStartDependencies: StartDependencies = {
+export const defaultStartDependencies: StartDependencies = {
   prepareStateRoot: async (stateRoot) => {
     await ensurePrivateDirectory(stateRoot);
   },

@@ -6,6 +6,7 @@ import { KernelClient } from "@kodegpt/core";
 import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
+import { runBridgeCommand } from "./commands/bridge.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
 import { resolveRuntimePath, RUNTIME_PACKAGE_LINUX_X64 } from "./runtime-resolver.js";
@@ -24,6 +25,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "start":
       await start(rest);
+      return;
+    case "bridge":
+      await bridge(rest);
       return;
     case "--help":
     case "-h":
@@ -83,6 +87,18 @@ async function start(args: string[]): Promise<void> {
   const started = await runStartCommand(startArgs);
   process.stdout.write(`${formatKodegptStartStatus(started.status)}\n`);
   await waitForShutdown(started.close);
+  process.exit(0);
+}
+
+async function bridge(args: string[]): Promise<void> {
+  if (args.includes("--runtime") && process.env.NODE_ENV !== "test" && process.env.NODE_ENV !== "development") {
+    throw new Error("--runtime is available only in development and tests");
+  }
+  const runtimePath = await resolveRuntimePath();
+  const bridgeArgs = args.includes("--runtime") ? args : [...args, "--runtime", runtimePath];
+  const bridged = await runBridgeCommand(bridgeArgs);
+  await waitForShutdown(bridged.close, { listenStdin: true });
+  process.exit(0);
 }
 
 function extractStateRoot(args: string[]): { stateRoot: string; remaining: string[] } {
@@ -104,16 +120,32 @@ function extractStateRoot(args: string[]): { stateRoot: string; remaining: strin
   return { stateRoot, remaining };
 }
 
-async function waitForShutdown(close: () => Promise<void>): Promise<void> {
+async function waitForShutdown(
+  close: () => Promise<void>,
+  options?: { listenStdin?: boolean }
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let closing = false;
     const shutdown = () => {
       if (closing) return;
       closing = true;
+      if (options?.listenStdin) {
+        process.stdin.pause();
+      }
       void close().then(resolve, reject);
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+    if (options?.listenStdin) {
+      if (process.stdin.readableEnded) {
+        shutdown();
+      } else {
+        process.stdin.resume();
+        process.stdin.once("end", shutdown);
+        process.stdin.once("close", shutdown);
+        process.stdin.once("error", shutdown);
+      }
+    }
   });
 }
 
@@ -126,6 +158,7 @@ function helpText(): string {
     "  kodegpt workspace untrust <trust-id> [--state-root <path>]",
     "  kodegpt workspace list [--state-root <path>]",
     "  kodegpt start [--state-root <path>] [--port <port>] [--public-url <https-url>]",
+    "  kodegpt bridge [--state-root <path>]",
     ""
   ].join("\n");
 }

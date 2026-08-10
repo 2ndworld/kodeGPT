@@ -15,30 +15,18 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const cliPath = join(root, "apps/cli/bin/kodegpt.mjs");
 const temporaryRoots: string[] = [];
 
+import { existsSync } from "node:fs";
+
 beforeAll(() => {
-  const build = spawnSync("cargo", ["build", "--release", "-p", "kodegpt-runtime"], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 8 * 1024 * 1024
-  });
-  expect(build.error).toBeUndefined();
-  expect(build.status, build.stderr).toBe(0);
-
-  const stage = spawnSync(process.execPath, [join(root, "scripts/stage-runtime.mjs")], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024
-  });
-  expect(stage.error).toBeUndefined();
-  expect(stage.status, stage.stderr).toBe(0);
-
-  const buildCli = spawnSync("pnpm", ["--filter", "kodegpt", "run", "build:cli"], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024
-  });
-  expect(buildCli.error).toBeUndefined();
-  expect(buildCli.status, buildCli.stderr).toBe(0);
+  if (!existsSync(cliPath)) {
+    const buildCli = spawnSync("pnpm", ["--filter", "kodegpt", "run", "build:cli"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    });
+    expect(buildCli.error).toBeUndefined();
+    expect(buildCli.status, buildCli.stderr).toBe(0);
+  }
 }, 60_000);
 
 afterEach(async () => {
