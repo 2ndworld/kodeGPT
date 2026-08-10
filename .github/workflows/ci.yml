@@ -48,18 +48,47 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends apparmor apparmor-profiles bubblewrap meson ninja-build pkg-config libcap-dev libselinux1-dev
+          sudo apt-get install -y --no-install-recommends apparmor apparmor-profiles apparmor-utils bubblewrap meson ninja-build pkg-config libcap-dev libselinux1-dev
           cat <<'EOF' | sudo tee /etc/apparmor.d/bwrap-userns-restrict > /dev/null
           abi <abi/4.0>,
+
           include <tunables/global>
-          profile kodegpt_bwrap /usr/bin/bwrap flags=(unconfined) {
-            userns,
-            change_profile -> kodegpt_unpriv_bwrap,
+
+          profile kodegpt_bwrap /usr/bin/bwrap flags=(attach_disconnected) {
+            allow capability,
+            allow file rwlkm /{**,},
+            allow network,
+            allow unix,
+            allow ptrace,
+            allow signal,
+            allow mqueue,
+            allow io_uring,
+            allow userns,
+            allow mount,
+            allow umount,
+            allow pivot_root,
+            allow dbus,
+
+            allow px /** -> kodegpt_bwrap//&kodegpt_unpriv_bwrap,
           }
-          profile kodegpt_unpriv_bwrap flags=(complain) {
-            file,
-            capability,
-            network,
+
+          profile kodegpt_unpriv_bwrap flags=(attach_disconnected) {
+            allow file rwlkm /{**,},
+            allow network,
+            allow unix,
+            allow ptrace,
+            allow signal,
+            allow mqueue,
+            allow io_uring,
+            allow userns,
+            allow mount,
+            allow umount,
+            allow pivot_root,
+            allow dbus,
+
+            allow pix /** -> &kodegpt_unpriv_bwrap,
+
+            audit deny capability,
           }
           EOF
           sudo test -f /etc/apparmor.d/bwrap-userns-restrict
@@ -72,8 +101,11 @@ jobs:
           test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.11.2"
           test "$(stat -c '%u:%g:%a' /usr/bin/bwrap)" = "0:0:755"
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          sudo aa-status | grep -q 'kodegpt_bwrap (enforce)'
+          sudo aa-status | grep -q 'kodegpt_unpriv_bwrap (enforce)'
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/tmp/kodegpt-userns-restrict 2>/dev/null; then
             test "$(cat /tmp/kodegpt-userns-restrict)" = "1"
+            ! unshare -Ur true 2>/dev/null
           fi
 
       - name: Frozen dependency install

@@ -22,6 +22,14 @@ describe("release CI contract", () => {
     expect(source).toContain("stat -c '%u:%g:%a' /usr/bin/bwrap");
     expect(source).not.toMatch(/apparmor_restrict_unprivileged_userns\s*=\s*0/);
     expect(source).not.toMatch(/sysctl[^\n]*apparmor_restrict_unprivileged_userns[^\n]*0/);
+    expect(source).not.toContain("flags=(complain)");
+    expect(source).not.toContain("flags=(unconfined)");
+    expect(source).not.toMatch(/profile\s+kodegpt_unpriv_bwrap[^{]*\{[^}]*\bcapability,/);
+    expect(source).toContain("audit deny capability");
+    expect(source).toContain("aa-status");
+    expect(source).toContain("kodegpt_bwrap (enforce)");
+    expect(source).toContain("kodegpt_unpriv_bwrap (enforce)");
+    expect(source).toContain("! unshare -Ur true");
     expect(source).not.toContain("/usr/local/bin/bwrap");
     expect(source).not.toContain("actions/checkout@v4");
     expect(source).not.toContain("actions/setup-node@v4");
