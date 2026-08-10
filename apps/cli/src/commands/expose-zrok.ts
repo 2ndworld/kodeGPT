@@ -1,7 +1,6 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import {
   ConnectorCredentialStore,
@@ -21,7 +20,7 @@ const DEFAULT_STATE_ROOT = join(homedir(), ".kodegpt");
 const ZROK_READINESS_ATTEMPTS = 120;
 const ZROK_READINESS_POLL_MS = 250;
 const QUERY_CREDENTIAL_PARAM = ["kodegpt", "token"].join("_");
-const execFileAsync = promisify(execFile);
+const MAX_ZROK_JSON_BYTES = 2 * 1024 * 1024;
 
 export interface ExposeZrokOptions {
   runtimePath: string;
@@ -76,20 +75,49 @@ export interface ExposedZrokKodegpt {
   close(): Promise<void>;
 }
 
+function runZrokJsonProcess(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("zrok2", args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let settled = false;
+
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("zrok2 command failed"));
+    };
+
+    child.once("error", fail);
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      totalBytes += chunk.byteLength;
+      if (totalBytes > MAX_ZROK_JSON_BYTES) {
+        child.kill("SIGTERM");
+        fail();
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    child.once("exit", (code) => {
+      if (settled) return;
+      if (code !== 0) {
+        fail();
+        return;
+      }
+      settled = true;
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+  });
+}
+
 const defaultExposeZrokDependencies: ExposeZrokDependencies = {
   createCredentialStore: (stateRoot) => new ConnectorCredentialStore(stateRoot),
   startKodegpt,
-  runZrokJson: async (args) => {
-    try {
-      const result = await execFileAsync("zrok2", args, {
-        encoding: "utf8",
-        maxBuffer: 2 * 1024 * 1024
-      });
-      return result.stdout;
-    } catch {
-      throw new Error("zrok2 command failed");
-    }
-  },
+  runZrokJson: runZrokJsonProcess,
   spawnZrok: (command, args, options) =>
     spawn(command, args, options) as unknown as SpawnedZrokProcess,
   delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
