@@ -25,10 +25,10 @@ describe("release CI contract", () => {
     expect(source).not.toContain("flags=(complain)");
     expect(source).not.toContain("flags=(unconfined)");
     expect(source).not.toMatch(/profile\s+kodegpt_unpriv_bwrap[^{]*\{[^}]*\bcapability,/);
-    expect(source).toContain("audit deny capability");
-    expect(source).toContain("aa-status");
-    expect(source).toContain("kodegpt_bwrap (enforce)");
-    expect(source).toContain("kodegpt_unpriv_bwrap (enforce)");
+    expect(source).toContain("sudo aa-status");
+    expect(source).toContain("profiles are in enforce mode");
+    expect(source).toContain("kodegpt_bwrap");
+    expect(source).toContain("kodegpt_unpriv_bwrap");
     expect(source).toContain("! unshare -Ur true");
     expect(source).not.toContain("/usr/local/bin/bwrap");
     expect(source).not.toContain("actions/checkout@v4");

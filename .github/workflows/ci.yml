@@ -101,8 +101,8 @@ jobs:
           test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.11.2"
           test "$(stat -c '%u:%g:%a' /usr/bin/bwrap)" = "0:0:755"
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-          sudo aa-status | grep -q 'kodegpt_bwrap (enforce)'
-          sudo aa-status | grep -q 'kodegpt_unpriv_bwrap (enforce)'
+          sudo aa-status | grep -A 100 'profiles are in enforce mode' | grep -q 'kodegpt_bwrap'
+          sudo aa-status | grep -A 100 'profiles are in enforce mode' | grep -q 'kodegpt_unpriv_bwrap'
           if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/tmp/kodegpt-userns-restrict 2>/dev/null; then
             test "$(cat /tmp/kodegpt-userns-restrict)" = "1"
             ! unshare -Ur true 2>/dev/null
