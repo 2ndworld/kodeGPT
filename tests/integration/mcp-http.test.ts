@@ -16,6 +16,8 @@ const toolContext: KodegptToolContext = {
     close: async () => undefined,
     info: async ({ workspaceId }) => ({ id: workspaceId }),
     readFile: async () => ({ contents: "hello", bytesRead: 5, eof: true }),
+    writeFile: async () => ({ bytesWritten: 5, created: true }),
+    editFile: async () => ({ bytesWritten: 5, replacements: 1 }),
     search: async () => [],
     tree: async () => []
   },
@@ -284,9 +286,11 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([
+        "file.edit",
         "file.read",
         "file.search",
         "file.tree",
+        "file.write",
         "profile.current",
         "profile.inspect",
         "system.capabilities",

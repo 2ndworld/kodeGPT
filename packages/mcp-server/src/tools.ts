@@ -2,15 +2,21 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import {
+  MUTATING_FILE_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
 } from "./annotations.js";
 import type { KodegptToolContext } from "./tool-context.js";
 
 const SURFACE_TOOLS = Object.freeze([
+  {
+    name: "file.edit",
+    required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
+  },
   { name: "file.read", required: ["workspaceId", "path"] },
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
+  { name: "file.write", required: ["workspaceId", "path", "content"] },
   { name: "profile.current", required: ["workspaceId"] },
   { name: "profile.inspect", required: ["name"] },
   { name: "system.capabilities", required: [] },
@@ -70,6 +76,32 @@ export function registerKodegptTools(server: McpServer, context: KodegptToolCont
   );
 
   server.registerTool(
+    "file.edit",
+    {
+      description:
+        "Replace exact UTF-8 text beneath a READY writable workspace when the expected replacement count matches.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        path: z.string().min(1),
+        oldText: z.string().min(1),
+        newText: z.string(),
+        expectedReplacements: z.number().int().nonnegative().safe()
+      },
+      annotations: MUTATING_FILE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, path, oldText, newText, expectedReplacements }) =>
+      toolResult(
+        await context.workspace.editFile({
+          workspaceId,
+          path,
+          oldText,
+          newText,
+          expectedReplacements
+        })
+      )
+  );
+
+  server.registerTool(
     "file.read",
     {
       description: "Read bounded UTF-8 file content beneath a READY workspace retained root.",
@@ -111,6 +143,21 @@ export function registerKodegptTools(server: McpServer, context: KodegptToolCont
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path }) => toolResult(await context.workspace.tree({ workspaceId, path }))
+  );
+
+  server.registerTool(
+    "file.write",
+    {
+      description: "Atomically create or replace UTF-8 file content beneath a READY writable workspace.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        path: z.string().min(1),
+        content: z.string()
+      },
+      annotations: MUTATING_FILE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, path, content }) =>
+      toolResult(await context.workspace.writeFile({ workspaceId, path, content }))
   );
 
   server.registerTool(

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kodegpt_protocol::{
-    FileReadParams, FileSearchParams, FileTreeParams,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, RuntimePolicy,
+    FileEditParams, FileReadParams, FileSearchParams, FileTreeParams, FileWriteParams,
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProfileName, RuntimePolicy,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams,
 };
@@ -417,6 +417,66 @@ async fn dispatch_one(
                 },
             )
         }
+        "file.write" => {
+            let params = match serde_json::from_value::<FileWriteParams>(request.params) {
+                Ok(params) if !params.path.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            let content = params.content;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileWrite,
+                move |registry| {
+                    let result = registry.write_file_with_policy(
+                        &capability_id,
+                        &path,
+                        content.as_bytes(),
+                        mutation_allowed,
+                    )?;
+                    Ok(json!(result))
+                },
+            )
+        }
+        "file.edit" => {
+            let params = match serde_json::from_value::<FileEditParams>(request.params) {
+                Ok(params) if !params.path.is_empty() && !params.old_text.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            let old_text = params.old_text;
+            let new_text = params.new_text;
+            let expected_replacements = params.expected_replacements;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileEdit,
+                move |registry| {
+                    let result = registry.edit_file_with_policy(
+                        &capability_id,
+                        &path,
+                        &old_text,
+                        &new_text,
+                        expected_replacements,
+                        mutation_allowed,
+                    )?;
+                    Ok(json!(result))
+                },
+            )
+        }
         #[cfg(feature = "runtime-test-methods")]
         "test.sleep" if test_methods_enabled => {
             let params = match serde_json::from_value::<SleepParams>(request.params) {
@@ -558,6 +618,10 @@ where
     }
 }
 
+fn mutation_allowed(policy: &RuntimePolicy) -> bool {
+    policy.allow_write && policy.name != ProfileName::Observe
+}
+
 fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'static str) {
     match error {
         WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
@@ -579,6 +643,8 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FileInvalidUtf8 => (-32033, "FILE_INVALID_UTF8"),
         WorkspaceRegistryError::FileLimitExceeded => (-32034, "FILE_LIMIT_EXCEEDED"),
         WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
+        WorkspaceRegistryError::FileWriteConflict => (-32036, "FILE_EDIT_CONFLICT"),
+        WorkspaceRegistryError::FileWriteFailed => (-32037, "FILE_WRITE_FAILED"),
         WorkspaceRegistryError::CapabilityNotFound => {
             (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
         }
@@ -1311,6 +1377,271 @@ mod tests {
         assert!(audit_text.contains("workspace_unregister"));
 
         fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn file_mutations_enforce_policy_boundaries_self_protection_and_audit_order() {
+        use std::os::unix::fs::symlink;
+
+        let (audit, audit_root) = audit_sink("file-mutation-security");
+        let observe_workspace = audit_root.with_extension("observe-workspace");
+        let denied_workspace = audit_root.with_extension("denied-workspace");
+        let writable_workspace = audit_root.with_extension("writable-workspace");
+        let other_workspace = audit_root.with_extension("other-workspace");
+        for workspace in [
+            &observe_workspace,
+            &denied_workspace,
+            &writable_workspace,
+            &other_workspace,
+        ] {
+            fs::create_dir_all(workspace).expect("workspace created");
+        }
+        fs::write(writable_workspace.join("edit.txt"), "alpha beta alpha\n")
+            .expect("edit fixture written");
+        fs::write(other_workspace.join("secret.txt"), "other-secret")
+            .expect("other workspace secret written");
+        fs::write(audit_root.join("state-secret.txt"), "state-secret")
+            .expect("state secret written");
+        symlink(&other_workspace, writable_workspace.join("other-link"))
+            .expect("other workspace symlink created");
+        symlink(&audit_root, writable_workspace.join("state-link"))
+            .expect("state symlink created");
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        async fn register_ready(
+            request_tx: &mpsc::UnboundedSender<Value>,
+            response_rx: &mut mpsc::UnboundedReceiver<Value>,
+            workspace: &std::path::Path,
+            label: &str,
+            policy: Value,
+        ) -> String {
+            let identity = kodegpt_workspace_io::inspect_root(workspace)
+                .expect("workspace inspected")
+                .identity;
+            let registered = next_response(
+                request_tx,
+                response_rx,
+                &format!("req_mutation_register_{label}"),
+                "workspace.register",
+                json!({
+                    "rootPath": workspace.to_string_lossy(),
+                    "expectedIdentity": identity,
+                    "ceiling": policy
+                }),
+            )
+            .await;
+            let capability_id = registered["result"]["capabilityId"]
+                .as_str()
+                .expect("registration returns capability")
+                .to_owned();
+            let activated = next_response(
+                request_tx,
+                response_rx,
+                &format!("req_mutation_activate_{label}"),
+                "workspace.activate",
+                json!({ "capabilityId": capability_id }),
+            )
+            .await;
+            assert_eq!(activated["result"]["ok"], true);
+            capability_id
+        }
+
+        let observe_cap = register_ready(
+            &request_tx,
+            &mut response_rx,
+            &observe_workspace,
+            "observe",
+            json!({
+                "name": "observe",
+                "allowWrite": true,
+                "allowProcess": false,
+                "network": "deny",
+                "allowedExecutableNames": [],
+                "inheritEnv": false,
+                "envAllowlist": []
+            }),
+        )
+        .await;
+        let denied_cap = register_ready(
+            &request_tx,
+            &mut response_rx,
+            &denied_workspace,
+            "denied",
+            develop_policy(false),
+        )
+        .await;
+        let writable_cap = register_ready(
+            &request_tx,
+            &mut response_rx,
+            &writable_workspace,
+            "writable",
+            develop_policy(true),
+        )
+        .await;
+        let _other_cap = register_ready(
+            &request_tx,
+            &mut response_rx,
+            &other_workspace,
+            "other",
+            develop_policy(true),
+        )
+        .await;
+
+        for (label, capability_id) in [("observe", &observe_cap), ("allow-write-false", &denied_cap)] {
+            let denied = next_response(
+                &request_tx,
+                &mut response_rx,
+                &format!("req_mutation_deny_{label}"),
+                "file.write",
+                json!({
+                    "capabilityId": capability_id,
+                    "path": "blocked.txt",
+                    "content": "must-not-write"
+                }),
+            )
+            .await;
+            assert_eq!(denied["error"]["message"], "FILE_ACCESS_DENIED");
+        }
+        assert!(!observe_workspace.join("blocked.txt").exists());
+        assert!(!denied_workspace.join("blocked.txt").exists());
+
+        let created = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_write",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "created.txt",
+                "content": "created safely"
+            }),
+        )
+        .await;
+        assert_eq!(created["result"]["created"], true);
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
+            "created safely"
+        );
+
+        for (label, path) in [
+            ("traversal", "../escape.txt"),
+            ("cross-workspace", "other-link/secret.txt"),
+            ("state", "state-link/state-secret.txt"),
+        ] {
+            let denied = next_response(
+                &request_tx,
+                &mut response_rx,
+                &format!("req_mutation_boundary_{label}"),
+                "file.write",
+                json!({
+                    "capabilityId": writable_cap,
+                    "path": path,
+                    "content": "overwrite"
+                }),
+            )
+            .await;
+            assert_eq!(denied["error"]["message"], "FILE_ACCESS_DENIED");
+        }
+        assert_eq!(
+            fs::read_to_string(other_workspace.join("secret.txt")).unwrap(),
+            "other-secret"
+        );
+        assert_eq!(
+            fs::read_to_string(audit_root.join("state-secret.txt")).unwrap(),
+            "state-secret"
+        );
+
+        let conflict = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_edit_conflict",
+            "file.edit",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "edit.txt",
+                "oldText": "alpha",
+                "newText": "omega",
+                "expectedReplacements": 1
+            }),
+        )
+        .await;
+        assert_eq!(conflict["error"]["message"], "FILE_EDIT_CONFLICT");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("edit.txt")).unwrap(),
+            "alpha beta alpha\n"
+        );
+
+        let edited = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_edit",
+            "file.edit",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "edit.txt",
+                "oldText": "alpha",
+                "newText": "omega",
+                "expectedReplacements": 2
+            }),
+        )
+        .await;
+        assert_eq!(edited["result"]["replacements"], 2);
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("edit.txt")).unwrap(),
+            "omega beta omega\n"
+        );
+
+        audit.inject_faults(AuditFaults {
+            fail_next_decision: true,
+            fail_next_outcome: false,
+        });
+        let audit_blocked = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_audit_blocked",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "audit-blocked.txt",
+                "content": "must-not-exist"
+            }),
+        )
+        .await;
+        assert_eq!(audit_blocked["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!writable_workspace.join("audit-blocked.txt").exists());
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("file_write"));
+        assert!(audit_text.contains("file_edit"));
+        for secret in [
+            "must-not-write",
+            "created safely",
+            "overwrite",
+            "alpha",
+            "omega",
+            "must-not-exist",
+        ] {
+            assert!(!audit_text.contains(secret), "audit must not record mutation content");
+        }
+        for workspace in [
+            observe_workspace,
+            denied_workspace,
+            writable_workspace,
+            other_workspace,
+        ] {
+            fs::remove_dir_all(workspace).expect("workspace removed");
+        }
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 }

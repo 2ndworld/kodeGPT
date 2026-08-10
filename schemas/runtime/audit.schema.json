@@ -44,6 +44,8 @@
         "file_read",
         "file_tree",
         "file_search",
+        "file_write",
+        "file_edit",
         "artifact_spool_create",
         "test_effect"
       ]

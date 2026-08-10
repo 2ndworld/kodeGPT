@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_write",
+  "method": "file.write",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "src/generated.txt",
+    "content": "generated contents\n"
+  }
+}

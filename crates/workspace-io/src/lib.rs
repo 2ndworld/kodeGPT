@@ -6,6 +6,7 @@ mod openat;
 mod profile;
 mod read;
 mod registry;
+mod write;
 
 pub use identity::{FilesystemIdentity, InspectRootError, InspectedRoot, inspect_root};
 pub use openat::{
@@ -18,3 +19,7 @@ pub use read::{
     read_file_beneath, search_utf8_beneath, tree_beneath,
 };
 pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
+pub use write::{
+    EditFileResult, WorkspaceWriteError, WriteFileResult, edit_file_exact_beneath,
+    write_file_atomic_beneath,
+};

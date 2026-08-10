@@ -73,6 +73,10 @@ class FakeKernel implements KernelTransport {
         return this.activateResult as T;
       case "file.read":
         return { contents: "file contents", bytesRead: 13, eof: true } as T;
+      case "file.write":
+        return { bytesWritten: 7, created: true } as T;
+      case "file.edit":
+        return { bytesWritten: 11, replacements: 2 } as T;
       case "file.tree":
         return {
           entries: [
@@ -151,10 +155,14 @@ describe("WorkspaceManager", () => {
 
     const opened = await manager.openWorkspace("/workspace");
     const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
+    const write = await manager.writeFile("ws_files", "created.txt", "created");
+    const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
     const tree = await manager.tree("ws_files", ".");
     const matches = await manager.search("ws_files", "needle", ".");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
+    expect(write).toEqual({ bytesWritten: 7, created: true });
+    expect(edit).toEqual({ bytesWritten: 11, replacements: 2 });
     expect(tree).toEqual([
       { path: "src", kind: "directory" },
       { path: "src/index.ts", kind: "file" }
@@ -163,10 +171,24 @@ describe("WorkspaceManager", () => {
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-3)).toEqual([
+    expect(kernel.calls.slice(-5)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
+      },
+      {
+        method: "file.write",
+        params: { capabilityId: "kc_fixture", path: "created.txt", content: "created" }
+      },
+      {
+        method: "file.edit",
+        params: {
+          capabilityId: "kc_fixture",
+          path: "inside.txt",
+          oldText: "old",
+          newText: "new",
+          expectedReplacements: 2
+        }
       },
       { method: "file.tree", params: { capabilityId: "kc_fixture", path: "." } },
       {

@@ -134,6 +134,24 @@ pub struct FileSearchParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileWriteParams {
+    pub capability_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileEditParams {
+    pub capability_id: String,
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub expected_replacements: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessRunParams {
     pub capability_id: String,
     pub logical_executable: String,
@@ -217,6 +235,18 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: FileSearchParams,
+    },
+    #[serde(rename = "file.write")]
+    FileWrite {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: FileWriteParams,
+    },
+    #[serde(rename = "file.edit")]
+    FileEdit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: FileEditParams,
     },
     #[serde(rename = "process.run")]
     ProcessRun {

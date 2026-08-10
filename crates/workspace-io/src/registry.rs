@@ -16,6 +16,10 @@ use crate::read::{
     SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, TREE_MAX_ENTRIES, ReadFileResult, SearchMatch,
     TreeEntry, WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
 };
+use crate::write::{
+    EditFileResult, WorkspaceWriteError, WriteFileResult, edit_file_exact_beneath,
+    write_file_atomic_beneath,
+};
 
 static NEXT_CAPABILITY_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -60,6 +64,8 @@ pub enum WorkspaceRegistryError {
     FileInvalidUtf8,
     FileLimitExceeded,
     FileReadFailed,
+    FileWriteConflict,
+    FileWriteFailed,
     CapabilityNotFound,
 }
 
@@ -81,6 +87,8 @@ impl fmt::Display for WorkspaceRegistryError {
             Self::FileInvalidUtf8 => formatter.write_str("workspace file is not valid UTF-8"),
             Self::FileLimitExceeded => formatter.write_str("workspace file operation limit was exceeded"),
             Self::FileReadFailed => formatter.write_str("workspace file operation failed"),
+            Self::FileWriteConflict => formatter.write_str("workspace file edit conflicted with expected replacements"),
+            Self::FileWriteFailed => formatter.write_str("workspace file mutation failed"),
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
     }
@@ -285,6 +293,50 @@ impl<P> WorkspaceRegistry<P> {
         .map_err(map_workspace_read_error)
     }
 
+    pub fn write_file_with_policy<F>(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        contents: &[u8],
+        authorize: F,
+    ) -> Result<WriteFileResult, WorkspaceRegistryError>
+    where
+        F: FnOnce(&P) -> bool,
+    {
+        let context = self.ready_context(capability_id)?;
+        if !authorize(&context.effective_policy) {
+            return Err(WorkspaceRegistryError::FileAccessDenied);
+        }
+        write_file_atomic_beneath(&context.root_fd, relative_path, contents)
+            .map_err(map_workspace_write_error)
+    }
+
+    pub fn edit_file_with_policy<F>(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        old_text: &str,
+        new_text: &str,
+        expected_replacements: u64,
+        authorize: F,
+    ) -> Result<EditFileResult, WorkspaceRegistryError>
+    where
+        F: FnOnce(&P) -> bool,
+    {
+        let context = self.ready_context(capability_id)?;
+        if !authorize(&context.effective_policy) {
+            return Err(WorkspaceRegistryError::FileAccessDenied);
+        }
+        edit_file_exact_beneath(
+            &context.root_fd,
+            relative_path,
+            old_text,
+            new_text,
+            expected_replacements,
+        )
+        .map_err(map_workspace_write_error)
+    }
+
     pub fn require_ready(&self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
         self.ready_context(capability_id).map(|_| ())
     }
@@ -381,6 +433,23 @@ fn map_workspace_read_error(error: WorkspaceReadError) -> WorkspaceRegistryError
         WorkspaceReadError::LimitExceeded => WorkspaceRegistryError::FileLimitExceeded,
         WorkspaceReadError::NotRegularFile | WorkspaceReadError::Io(_) => {
             WorkspaceRegistryError::FileReadFailed
+        }
+    }
+}
+
+fn map_workspace_write_error(error: WorkspaceWriteError) -> WorkspaceRegistryError {
+    match error {
+        WorkspaceWriteError::InvalidPath | WorkspaceWriteError::BoundaryViolation => {
+            WorkspaceRegistryError::FileAccessDenied
+        }
+        WorkspaceWriteError::BoundaryUnavailable => {
+            WorkspaceRegistryError::FilesystemBoundaryUnavailable
+        }
+        WorkspaceWriteError::NotFound => WorkspaceRegistryError::FileNotFound,
+        WorkspaceWriteError::InvalidUtf8 => WorkspaceRegistryError::FileInvalidUtf8,
+        WorkspaceWriteError::Conflict => WorkspaceRegistryError::FileWriteConflict,
+        WorkspaceWriteError::NotRegularFile | WorkspaceWriteError::Io(_) => {
+            WorkspaceRegistryError::FileWriteFailed
         }
     }
 }

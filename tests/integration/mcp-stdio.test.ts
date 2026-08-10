@@ -23,6 +23,13 @@ const lifecycleAnnotations = {
   openWorldHint: false
 };
 
+const mutatingFileAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false
+};
+
 const context: KodegptToolContext = {
   workspace: {
     list: async () => [],
@@ -30,6 +37,8 @@ const context: KodegptToolContext = {
     close: async () => ({ ok: true }),
     info: async ({ workspaceId }) => ({ id: workspaceId }),
     readFile: async () => ({ contents: "hello", bytesRead: 5, eof: true }),
+    writeFile: async () => ({ bytesWritten: 5, created: true }),
+    editFile: async () => ({ bytesWritten: 5, replacements: 1 }),
     search: async () => [],
     tree: async () => []
   },
@@ -104,9 +113,11 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([
+        "file.edit",
         "file.read",
         "file.search",
         "file.tree",
+        "file.write",
         "profile.current",
         "profile.inspect",
         "system.capabilities",
@@ -121,6 +132,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       for (const tool of tools) {
         if (tool.name === "workspace.open" || tool.name === "workspace.close") {
           expect(tool.annotations).toEqual(lifecycleAnnotations);
+        } else if (tool.name === "file.write" || tool.name === "file.edit") {
+          expect(tool.annotations).toEqual(mutatingFileAnnotations);
         } else {
           expect(tool.annotations).toEqual(readOnlyAnnotations);
         }
@@ -130,9 +143,11 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         tools.map((tool) => [tool.name, tool.inputSchema.required ?? []])
       );
       expect(required).toEqual({
+        "file.edit": ["workspaceId", "path", "oldText", "newText", "expectedReplacements"],
         "file.read": ["workspaceId", "path"],
         "file.search": ["workspaceId", "query"],
         "file.tree": ["workspaceId"],
+        "file.write": ["workspaceId", "path", "content"],
         "profile.current": ["workspaceId"],
         "profile.inspect": ["name"],
         "system.capabilities": [],

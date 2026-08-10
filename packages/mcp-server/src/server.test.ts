@@ -4,9 +4,11 @@ import { MCP_SURFACE_VERSION } from "./surface-version.js";
 import { createKodegptMcpServer, listSurfaceTools } from "./server.js";
 
 const expectedTools = [
+  "file.edit",
   "file.read",
   "file.search",
   "file.tree",
+  "file.write",
   "profile.current",
   "profile.inspect",
   "system.capabilities",
@@ -21,9 +23,14 @@ describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
     expect(MCP_SURFACE_VERSION).toBe("0.1");
     expect(listSurfaceTools()).toEqual([
+      {
+        name: "file.edit",
+        required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
+      },
       { name: "file.read", required: ["workspaceId", "path"] },
       { name: "file.search", required: ["workspaceId", "query"] },
       { name: "file.tree", required: ["workspaceId"] },
+      { name: "file.write", required: ["workspaceId", "path", "content"] },
       { name: "profile.current", required: ["workspaceId"] },
       { name: "profile.inspect", required: ["name"] },
       { name: "system.capabilities", required: [] },
@@ -43,6 +50,8 @@ describe("KodeGPT MCP semantic surface", () => {
         close: async () => undefined,
         info: async () => ({}),
         readFile: async () => ({}),
+        writeFile: async () => ({}),
+        editFile: async () => ({}),
         search: async () => [],
         tree: async () => []
       },

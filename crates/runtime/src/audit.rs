@@ -24,6 +24,8 @@ pub enum AuditAction {
     FileRead,
     FileTree,
     FileSearch,
+    FileWrite,
+    FileEdit,
     ArtifactSpoolCreate,
     TestEffect,
 }
@@ -371,6 +373,8 @@ impl AuditAction {
             Self::FileRead => "file_read",
             Self::FileTree => "file_tree",
             Self::FileSearch => "file_search",
+            Self::FileWrite => "file_write",
+            Self::FileEdit => "file_edit",
             Self::ArtifactSpoolCreate => "artifact_spool_create",
             Self::TestEffect => "test_effect",
         }

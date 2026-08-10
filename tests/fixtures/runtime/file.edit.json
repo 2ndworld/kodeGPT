@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_edit",
+  "method": "file.edit",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "src/index.ts",
+    "oldText": "const oldValue = 1;",
+    "newText": "const newValue = 2;",
+    "expectedReplacements": 1
+  }
+}

@@ -24,6 +24,8 @@ const FIXTURE_NAMES = [
   "file.read.json",
   "file.tree.json",
   "file.search.json",
+  "file.write.json",
+  "file.edit.json",
   "process.run.json"
 ] as const;
 
@@ -40,6 +42,8 @@ const EXPECTED_METHODS = [
   "file.read",
   "file.tree",
   "file.search",
+  "file.write",
+  "file.edit",
   "process.run"
 ] as const;
 

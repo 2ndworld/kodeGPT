@@ -11,3 +11,10 @@ export const WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS = Object.freeze({
   idempotentHint: false,
   openWorldHint: false
 });
+
+export const MUTATING_FILE_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false
+});

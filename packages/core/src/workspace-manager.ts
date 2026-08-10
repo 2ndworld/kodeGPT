@@ -36,6 +36,16 @@ export interface WorkspaceFileReadResult {
   eof: boolean;
 }
 
+export interface WorkspaceFileWriteResult {
+  bytesWritten: number;
+  created: boolean;
+}
+
+export interface WorkspaceFileEditResult {
+  bytesWritten: number;
+  replacements: number;
+}
+
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface WorkspaceTreeEntry {
@@ -278,6 +288,76 @@ export class WorkspaceManager {
       contents: result.contents,
       bytesRead: result.bytesRead as number,
       eof: result.eof
+    };
+  }
+
+  async writeFile(
+    workspaceId: string,
+    path: string,
+    content: string
+  ): Promise<WorkspaceFileWriteResult> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace file path must not be empty");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.write", {
+      capabilityId: state.capabilityId,
+      path,
+      content
+    });
+    if (
+      !isRecord(result) ||
+      !Number.isSafeInteger(result.bytesWritten) ||
+      (result.bytesWritten as number) < 0 ||
+      typeof result.created !== "boolean"
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.write returned an invalid payload"
+      );
+    }
+    return {
+      bytesWritten: result.bytesWritten as number,
+      created: result.created
+    };
+  }
+
+  async editFile(
+    workspaceId: string,
+    path: string,
+    oldText: string,
+    newText: string,
+    expectedReplacements: number
+  ): Promise<WorkspaceFileEditResult> {
+    if (path.length === 0 || oldText.length === 0) {
+      throw new TypeError("Workspace edit path and oldText must not be empty");
+    }
+    if (!Number.isSafeInteger(expectedReplacements) || expectedReplacements < 0) {
+      throw new RangeError("expectedReplacements must be a non-negative safe integer");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.edit", {
+      capabilityId: state.capabilityId,
+      path,
+      oldText,
+      newText,
+      expectedReplacements
+    });
+    if (
+      !isRecord(result) ||
+      !Number.isSafeInteger(result.bytesWritten) ||
+      (result.bytesWritten as number) < 0 ||
+      !Number.isSafeInteger(result.replacements) ||
+      (result.replacements as number) < 0
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.edit returned an invalid payload"
+      );
+    }
+    return {
+      bytesWritten: result.bytesWritten as number,
+      replacements: result.replacements as number
     };
   }
 

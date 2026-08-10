@@ -13,6 +13,8 @@ export const RUNTIME_METHODS = [
   "file.read",
   "file.tree",
   "file.search",
+  "file.write",
+  "file.edit",
   "process.run"
 ] as const;
 
@@ -97,6 +99,24 @@ const fileSearchParamsSchema = z
   })
   .strict();
 
+const fileWriteParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    path: z.string().min(1),
+    content: z.string()
+  })
+  .strict();
+
+const fileEditParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    path: z.string().min(1),
+    oldText: z.string().min(1),
+    newText: z.string(),
+    expectedReplacements: z.number().int().nonnegative()
+  })
+  .strict();
+
 const processRunParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -132,6 +152,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.read", fileReadParamsSchema),
   requestSchema("file.tree", fileTreeParamsSchema),
   requestSchema("file.search", fileSearchParamsSchema),
+  requestSchema("file.write", fileWriteParamsSchema),
+  requestSchema("file.edit", fileEditParamsSchema),
   requestSchema("process.run", processRunParamsSchema)
 ]);
 

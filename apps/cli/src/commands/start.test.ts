@@ -37,6 +37,8 @@ function dependencies(
     closeWorkspace: async () => undefined,
     requireReady: () => ({ effectivePolicy: {} }),
     readFile: async () => ({}),
+    writeFile: async () => ({}),
+    editFile: async () => ({}),
     search: async () => [],
     tree: async () => []
   };

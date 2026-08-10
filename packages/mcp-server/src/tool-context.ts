@@ -11,6 +11,18 @@ export interface WorkspaceToolContext {
     offset?: number;
     maxBytes?: number;
   }): Promise<unknown> | unknown;
+  writeFile(input: {
+    workspaceId: string;
+    path: string;
+    content: string;
+  }): Promise<unknown> | unknown;
+  editFile(input: {
+    workspaceId: string;
+    path: string;
+    oldText: string;
+    newText: string;
+    expectedReplacements: number;
+  }): Promise<unknown> | unknown;
   search(input: {
     workspaceId: string;
     query: string;
@@ -45,6 +57,14 @@ export interface WorkspaceManagerToolAdapter {
     path: string,
     options?: { offset?: number; maxBytes?: number }
   ): Promise<unknown> | unknown;
+  writeFile(workspaceId: string, path: string, content: string): Promise<unknown> | unknown;
+  editFile(
+    workspaceId: string,
+    path: string,
+    oldText: string,
+    newText: string,
+    expectedReplacements: number
+  ): Promise<unknown> | unknown;
   search(workspaceId: string, query: string, path?: string): Promise<unknown> | unknown;
   tree(workspaceId: string, path?: string): Promise<unknown> | unknown;
 }
@@ -66,6 +86,16 @@ export function createKodegptToolContext(options: {
       info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
+      writeFile: ({ workspaceId, path, content }) =>
+        options.workspaceManager.writeFile(workspaceId, path, content),
+      editFile: ({ workspaceId, path, oldText, newText, expectedReplacements }) =>
+        options.workspaceManager.editFile(
+          workspaceId,
+          path,
+          oldText,
+          newText,
+          expectedReplacements
+        ),
       search: ({ workspaceId, query, path }) =>
         options.workspaceManager.search(workspaceId, query, path),
       tree: ({ workspaceId, path }) => options.workspaceManager.tree(workspaceId, path)
