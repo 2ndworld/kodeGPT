@@ -17,13 +17,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Apply verified dispatcher ownership fix once
+      - name: Apply verified Task 16 structural patches once
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import json, re
+
+          changed = []
+
+          # Preserve dispatcher AuditContext outside spawn_blocking.
           path = Path("crates/runtime/src/dispatcher.rs")
           text = path.read_text()
           pattern = re.compile(
@@ -39,14 +43,224 @@ jobs:
           updated, count = pattern.subn(replacement, text, count=1)
           if count == 1:
               path.write_text(updated)
+              changed.append(str(path))
           elif "manager.run(operation_id, root_fd, policy, params, worker_context)" not in text:
               raise SystemExit("expected dispatcher ownership pattern not found")
+
+          # Add opaque process routing to WorkspaceManager without exposing capability IDs.
+          path = Path("packages/core/src/workspace-manager.ts")
+          text = path.read_text()
+          import_line = 'import type { ProcessRunInput, ProcessStatus, WorkspaceExecutionAdapter } from "./execution-manager.js";\n'
+          if import_line not in text:
+              marker = 'import type {\n  PersistentFilesystemIdentity,\n  TrustedWorkspaceEntry\n} from "@kodegpt/trust";\n'
+              if marker not in text:
+                  raise SystemExit("WorkspaceManager import marker missing")
+              text = text.replace(marker, marker + import_line, 1)
+          text = text.replace(
+              "export class WorkspaceManager {",
+              "export class WorkspaceManager implements WorkspaceExecutionAdapter {",
+              1,
+          )
+          if "async runProcess(" not in text:
+              marker = "  #requireReadyState(workspaceId: string): WorkspaceState {"
+              methods = '''  async runProcess(
+    workspaceId: string,
+    input: Required<ProcessRunInput>
+  ): Promise<ProcessStatus> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("process.run", {
+      capabilityId: state.capabilityId,
+      logicalExecutable: input.logicalExecutable,
+      argv: [...input.argv],
+      cwd: input.cwd,
+      env: { ...input.env },
+      background: input.background
+    });
+    return validateProcessStatus(result, "process.run");
+  }
+
+  async processStatus(workspaceId: string, operationId: string): Promise<ProcessStatus> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("process.status", {
+      capabilityId: state.capabilityId,
+      operationId
+    });
+    return validateProcessStatus(result, "process.status");
+  }
+
+  async cancelProcess(workspaceId: string, operationId: string): Promise<ProcessStatus> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("process.cancel", {
+      capabilityId: state.capabilityId,
+      operationId
+    });
+    return validateProcessStatus(result, "process.cancel");
+  }
+
+'''
+              if marker not in text:
+                  raise SystemExit("WorkspaceManager method marker missing")
+              text = text.replace(marker, methods + marker, 1)
+          if "function validateProcessStatus(" not in text:
+              marker = "function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {"
+              helper = '''function validateProcessStatus(value: unknown, method: string): ProcessStatus {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.operationId !== "string" ||
+    !value.operationId.startsWith("op_") ||
+    !isProcessState(value.state) ||
+    (value.exitCode !== undefined && !Number.isSafeInteger(value.exitCode)) ||
+    (value.stdoutPreview !== undefined && typeof value.stdoutPreview !== "string") ||
+    (value.stderrPreview !== undefined && typeof value.stderrPreview !== "string") ||
+    (value.stdoutTruncated !== undefined && typeof value.stdoutTruncated !== "boolean") ||
+    (value.stderrTruncated !== undefined && typeof value.stderrTruncated !== "boolean")
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      `${method} returned an invalid payload`
+    );
+  }
+  let artifact: ProcessStatus["artifact"];
+  if (value.artifact !== undefined) {
+    if (
+      !isRecord(value.artifact) ||
+      value.artifact.schemaVersion !== 1 ||
+      typeof value.artifact.artifactId !== "string" ||
+      !value.artifact.artifactId.startsWith("ka_") ||
+      typeof value.artifact.mediaType !== "string" ||
+      !Number.isSafeInteger(value.artifact.bytesWritten) ||
+      (value.artifact.bytesWritten as number) < 0 ||
+      typeof value.artifact.sourceTruncated !== "boolean"
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        `${method} returned invalid artifact metadata`
+      );
+    }
+    artifact = {
+      schemaVersion: 1,
+      artifactId: value.artifact.artifactId,
+      mediaType: value.artifact.mediaType,
+      bytesWritten: value.artifact.bytesWritten as number,
+      sourceTruncated: value.artifact.sourceTruncated
+    };
+  }
+  return {
+    schemaVersion: 1,
+    operationId: value.operationId,
+    state: value.state,
+    ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode as number }),
+    ...(value.stdoutPreview === undefined ? {} : { stdoutPreview: value.stdoutPreview }),
+    ...(value.stderrPreview === undefined ? {} : { stderrPreview: value.stderrPreview }),
+    ...(value.stdoutTruncated === undefined ? {} : { stdoutTruncated: value.stdoutTruncated }),
+    ...(value.stderrTruncated === undefined ? {} : { stderrTruncated: value.stderrTruncated }),
+    ...(artifact === undefined ? {} : { artifact })
+  };
+}
+
+function isProcessState(value: unknown): value is ProcessStatus["state"] {
+  return value === "running" || value === "exited" || value === "cancelled" || value === "failed";
+}
+
+'''
+              if marker not in text:
+                  raise SystemExit("WorkspaceManager validator marker missing")
+              text = text.replace(marker, helper + marker, 1)
+          path.write_text(text)
+          changed.append(str(path))
+
+          # Keep Cargo.lock explicit runtime dependency aligned with Cargo.toml.
+          path = Path("Cargo.lock")
+          text = path.read_text()
+          runtime_start = text.index('name = "kodegpt-runtime"')
+          runtime_end = text.index("\n[[package]]", runtime_start)
+          block = text[runtime_start:runtime_end]
+          if ' "rustix",' not in block:
+              block = block.replace(' "kodegpt-workspace-io",\n', ' "kodegpt-workspace-io",\n "rustix",\n', 1)
+              text = text[:runtime_start] + block + text[runtime_end:]
+              path.write_text(text)
+              changed.append(str(path))
+
+          # Extend closed JSON request schema programmatically.
+          path = Path("schemas/runtime/request.schema.json")
+          schema = json.loads(path.read_text())
+          methods = {entry["properties"]["method"].get("const") for entry in schema["oneOf"]}
+          for method in ["process.status", "process.cancel"]:
+              if method not in methods:
+                  schema["oneOf"].append({
+                      "type": "object",
+                      "additionalProperties": False,
+                      "required": ["jsonrpc", "id", "method", "params"],
+                      "properties": {
+                          "jsonrpc": {"const": "2.0"},
+                          "id": {"type": "string", "minLength": 1},
+                          "method": {"const": method},
+                          "params": {
+                              "type": "object",
+                              "additionalProperties": False,
+                              "required": ["capabilityId", "operationId"],
+                              "properties": {
+                                  "capabilityId": {"type": "string", "minLength": 1},
+                                  "operationId": {"type": "string", "pattern": "^op_[A-Za-z0-9_-]+$", "maxLength": 96},
+                              },
+                          },
+                      },
+                  })
+          path.write_text(json.dumps(schema, indent=2) + "\n")
+          changed.append(str(path))
+
+          # Add shared protocol fixtures.
+          fixtures = {
+              "tests/fixtures/runtime/process.status.json": {
+                  "jsonrpc": "2.0", "id": "req_process_status_fixture", "method": "process.status",
+                  "params": {"capabilityId": "kc_fixture", "operationId": "op_fixture"},
+              },
+              "tests/fixtures/runtime/process.cancel.json": {
+                  "jsonrpc": "2.0", "id": "req_process_cancel_fixture", "method": "process.cancel",
+                  "params": {"capabilityId": "kc_fixture", "operationId": "op_fixture"},
+              },
+          }
+          for filename, value in fixtures.items():
+              target = Path(filename)
+              if not target.exists():
+                  target.write_text(json.dumps(value, indent=2) + "\n")
+                  changed.append(filename)
+
+          # Extend fixture lists in TS and Rust parity tests.
+          path = Path("tests/protocol/framing-parity.test.ts")
+          text = path.read_text()
+          if '"process.status.json"' not in text:
+              text = text.replace(
+                  '  "process.run.json"\n] as const;',
+                  '  "process.run.json",\n  "process.status.json",\n  "process.cancel.json"\n] as const;',
+                  1,
+              )
+          if '"process.status",' not in text:
+              text = text.replace(
+                  '  "process.run"\n] as const;',
+                  '  "process.run",\n  "process.status",\n  "process.cancel"\n] as const;',
+                  1,
+              )
+          path.write_text(text)
+          changed.append(str(path))
+
+          path = Path("crates/protocol/tests/protocol_contract.rs")
+          text = path.read_text()
+          if '"process.status.json"' not in text:
+              text = text.replace(
+                  '        "process.run.json",\n',
+                  '        "process.run.json",\n        "process.status.json",\n        "process.cancel.json",\n',
+                  1,
+              )
+          path.write_text(text)
+          changed.append(str(path))
           PY
-          if ! git diff --quiet -- crates/runtime/src/dispatcher.rs; then
+          if ! git diff --quiet || git ls-files --others --exclude-standard | grep -q .; then
             git config user.name "kodegpt-task16-verifier"
             git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
-            git add crates/runtime/src/dispatcher.rs
-            git commit -m "fix(process): preserve audit context across worker spawn"
+            git add Cargo.lock crates/runtime/src/dispatcher.rs packages/core/src/workspace-manager.ts schemas/runtime/request.schema.json tests/fixtures/runtime tests/protocol/framing-parity.test.ts crates/protocol/tests/protocol_contract.rs
+            git commit -m "feat(process): wire opaque control-plane runtime contracts"
             git push origin "HEAD:${HEAD_BRANCH}"
           fi
 
@@ -90,6 +304,14 @@ jobs:
 
       - name: Compile process integration
         run: cargo test -p kodegpt-runtime process --no-run
+
+      - name: Typecheck process control plane
+        run: pnpm typecheck
+
+      - name: Verify protocol parity
+        run: |
+          cargo test -p kodegpt-protocol
+          pnpm test:protocol
 
       - name: Run process source RED regression
         run: pnpm exec vitest run tests/security/process-policy.test.ts
