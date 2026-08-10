@@ -1,0 +1,152 @@
+name: Task 16 workspace cancellation hardening
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Ensure workspace close drains every private execution
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("crates/runtime/src/process.rs")
+          text = path.read_text()
+          old = '''    pub fn cancel_workspace(&self, capability_id: &str) -> Result<(), ProcessError> {
+        let operation_ids = {
+            let operations = self
+                .operations
+                .lock()
+                .map_err(|_| ProcessError::RegistryUnavailable)?;
+            operations
+                .values()
+                .filter(|operation| operation.workspace_capability == capability_id)
+                .map(|operation| operation.operation_id.clone())
+                .collect::<Vec<_>>()
+        };
+        for operation_id in operation_ids {
+            let _ = self.cancel(capability_id, &operation_id)?;
+        }
+        Ok(())
+    }
+'''
+          new = '''    pub fn cancel_workspace(&self, capability_id: &str) -> Result<(), ProcessError> {
+        let operation_ids = {
+            let operations = self
+                .operations
+                .lock()
+                .map_err(|_| ProcessError::RegistryUnavailable)?;
+            operations
+                .values()
+                .filter(|operation| operation.workspace_capability == capability_id)
+                .map(|operation| operation.operation_id.clone())
+                .collect::<Vec<_>>()
+        };
+        for operation_id in operation_ids {
+            let _ = self.cancel(capability_id, &operation_id)?;
+        }
+
+        // Git and future sandboxed execution kinds share the same private registry. Workspace close
+        // must not unregister the retained root while any of those process groups remain alive.
+        signal_remaining_workspace_groups(
+            &self.executions,
+            capability_id,
+            Signal::TERM,
+        )?;
+        if wait_workspace_executions_empty(
+            &self.executions,
+            capability_id,
+            CANCEL_GRACE,
+        )? {
+            return Ok(());
+        }
+        signal_remaining_workspace_groups(
+            &self.executions,
+            capability_id,
+            Signal::KILL,
+        )?;
+        if wait_workspace_executions_empty(
+            &self.executions,
+            capability_id,
+            CANCEL_KILL_WAIT,
+        )? {
+            Ok(())
+        } else {
+            Err(ProcessError::CancellationTimeout)
+        }
+    }
+'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif "signal_remaining_workspace_groups(" not in text:
+              raise SystemExit("cancel_workspace block not found")
+
+          if "fn signal_remaining_workspace_groups(" not in text:
+              marker = "fn signal_group(process_group: i32, signal: Signal) -> Result<(), ProcessError> {"
+              helpers = '''fn signal_remaining_workspace_groups(
+    executions: &Mutex<ExecutionRegistry>,
+    capability_id: &str,
+    signal: Signal,
+) -> Result<(), ProcessError> {
+    let process_groups = {
+        let registry = executions
+            .lock()
+            .map_err(|_| ProcessError::RegistryUnavailable)?;
+        registry
+            .ids_for_workspace(capability_id)
+            .into_iter()
+            .filter_map(|execution_id| registry.get(&execution_id).map(|record| record.process_group))
+            .collect::<Vec<_>>()
+    };
+    for process_group in process_groups {
+        signal_group(process_group, signal)?;
+    }
+    Ok(())
+}
+
+fn wait_workspace_executions_empty(
+    executions: &Mutex<ExecutionRegistry>,
+    capability_id: &str,
+    timeout: Duration,
+) -> Result<bool, ProcessError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let empty = executions
+            .lock()
+            .map_err(|_| ProcessError::RegistryUnavailable)?
+            .ids_for_workspace(capability_id)
+            .is_empty();
+        if empty {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+'''
+              if marker not in text:
+                  raise SystemExit("signal_group marker missing")
+              text = text.replace(marker, helpers + marker, 1)
+          path.write_text(text)
+          PY
+          if ! git diff --quiet -- crates/runtime/src/process.rs; then
+            git config user.name "kodegpt-task16-verifier"
+            git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+            git add crates/runtime/src/process.rs
+            git commit -m "fix(process): drain all workspace execution groups on close"
+            git push origin "HEAD:${HEAD_BRANCH}"
+          fi
