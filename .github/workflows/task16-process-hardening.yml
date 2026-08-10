@@ -1,0 +1,115 @@
+name: Task 16 process hardening
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Add spawn-failure kill guard and registry cleanup once
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path("crates/runtime/src/process.rs")
+          text = path.read_text()
+
+          # Guard owns a spawned child until the worker thread successfully takes it.
+          if "struct KillOnDropChild" not in text:
+              marker = "pub struct ProcessManager {"
+              guard = '''struct KillOnDropChild(Option<kodegpt_sandbox::SandboxChild>);
+
+impl KillOnDropChild {
+    fn new(child: kodegpt_sandbox::SandboxChild) -> Self {
+        Self(Some(child))
+    }
+
+    fn into_inner(mut self) -> kodegpt_sandbox::SandboxChild {
+        self.0.take().expect("guarded child is present")
+    }
+}
+
+impl Drop for KillOnDropChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            terminate_untracked_child(&mut child);
+        }
+    }
+}
+
+'''
+              if marker not in text:
+                  raise SystemExit("ProcessManager marker missing")
+              text = text.replace(marker, guard + marker, 1)
+
+          old = '''        let executions = Arc::clone(&self.executions);
+        let audit = Arc::clone(&self.audit);
+        let worker_operation = Arc::clone(&operation);
+        thread::Builder::new()
+            .name(format!("kodegpt-process-{operation_id}"))
+            .spawn(move || {
+                run_capture_worker(
+                    child,
+                    writer,
+                    worker_operation,
+                    executions,
+                    execution_id,
+                    audit,
+                    audit_context,
+                );
+            })
+            .map_err(|_| ProcessError::CaptureFailed)?;
+
+        if params.background {'''
+          new = '''        let executions = Arc::clone(&self.executions);
+        let audit = Arc::clone(&self.audit);
+        let worker_operation = Arc::clone(&operation);
+        let guarded_child = KillOnDropChild::new(child);
+        let worker_execution_id = execution_id.clone();
+        let spawn_result = thread::Builder::new()
+            .name(format!("kodegpt-process-{operation_id}"))
+            .spawn(move || {
+                run_capture_worker(
+                    guarded_child.into_inner(),
+                    writer,
+                    worker_operation,
+                    executions,
+                    worker_execution_id,
+                    audit,
+                    audit_context,
+                );
+            });
+        if spawn_result.is_err() {
+            remove_execution(&self.executions, &execution_id);
+            if let Ok(mut operations) = self.operations.lock() {
+                operations.remove(&operation_id);
+            }
+            return Err(ProcessError::CaptureFailed);
+        }
+
+        if params.background {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif "let guarded_child = KillOnDropChild::new(child);" not in text:
+              raise SystemExit("worker spawn block not found")
+
+          path.write_text(text)
+          PY
+          if ! git diff --quiet -- crates/runtime/src/process.rs; then
+            git config user.name "kodegpt-task16-verifier"
+            git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+            git add crates/runtime/src/process.rs
+            git commit -m "fix(process): kill child when worker spawn fails"
+            git push origin "HEAD:${HEAD_BRANCH}"
+          fi
