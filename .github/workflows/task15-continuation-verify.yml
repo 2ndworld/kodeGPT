@@ -86,3 +86,12 @@ jobs:
           pnpm --filter @kodegpt/core test
           pnpm --filter @kodegpt/mcp-server test
           pnpm exec vitest run tests/integration/mcp-stdio.test.ts tests/integration/mcp-http.test.ts
+
+      - name: Build all TypeScript workspaces
+        run: pnpm build
+
+      - name: Run complete TypeScript suite
+        run: pnpm test
+
+      - name: Run complete Rust workspace suite
+        run: cargo test --workspace
