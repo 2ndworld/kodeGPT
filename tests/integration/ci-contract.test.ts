@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const CI_PATH = fileURLToPath(new URL("../../.github/workflows/ci.yml", import.meta.url));
+const VITEST_CONFIG_PATH = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
 
 describe("release CI contract", () => {
   it("pins modern Node-24 actions and the exact toolchain floors", async () => {
@@ -59,5 +60,11 @@ describe("release CI contract", () => {
       expect(index, `${command} is missing from CI`).toBeGreaterThan(previous);
       previous = index;
     }
+  });
+
+  it("keeps Cargo-heavy root tests deterministic on cold runners", async () => {
+    const source = await readFile(VITEST_CONFIG_PATH, "utf8");
+    expect(source).toMatch(/projects:\s*\[[\s\S]*?extends:\s*true[\s\S]*?name:\s*"root-tests"/);
+    expect(source).toMatch(/name:\s*"root-tests"[\s\S]*?fileParallelism:\s*false/);
   });
 });

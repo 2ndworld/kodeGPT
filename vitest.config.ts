@@ -7,10 +7,12 @@ export default defineConfig({
       "apps/*/vitest.config.ts",
       "packages/*/vitest.config.ts",
       {
+        extends: true,
         test: {
           name: "root-tests",
           environment: "node",
-          include: ["tests/**/*.test.ts"]
+          include: ["tests/**/*.test.ts"],
+          fileParallelism: false
         }
       }
     ]
