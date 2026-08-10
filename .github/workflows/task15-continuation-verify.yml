@@ -44,6 +44,13 @@ jobs:
           /usr/local/bin/bwrap --version
           stat -c '%u:%g %a %n' /usr/local/bin/bwrap
 
+      - name: Install trusted Git fixture
+        run: |
+          GIT_CANONICAL="$(readlink -f /usr/bin/git)"
+          sudo install -o root -g root -m 0755 "$GIT_CANONICAL" /usr/local/bin/git
+          /usr/local/bin/git --version
+          stat -c '%u:%g %a %n' /usr/local/bin/git
+
       - name: Allow unprivileged user namespaces on ephemeral CI runner
         run: |
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
