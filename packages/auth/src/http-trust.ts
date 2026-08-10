@@ -77,9 +77,17 @@ export function enforceHttpRequestTrust(
   }
 
   if (request.origin !== undefined) {
-    const originHost = parseOriginHost(request.origin);
+    const origin = parseOrigin(request.origin);
+    const originHost = origin.host.toLowerCase();
     if (!config.allowedOriginHosts.includes(originHost)) {
       throw new HttpTrustError("HTTP_ORIGIN_REJECTED", 403, "Origin is not allowed");
+    }
+    if (config.publicUrl !== undefined) {
+      const publicOrigin = new URL(config.publicUrl).origin.toLowerCase();
+      const publicHost = new URL(config.publicUrl).host.toLowerCase();
+      if (originHost === publicHost && origin.origin.toLowerCase() !== publicOrigin) {
+        throw new HttpTrustError("HTTP_ORIGIN_REJECTED", 403, "Public origin must match the HTTPS exposure origin");
+      }
     }
   }
 
@@ -139,21 +147,21 @@ function parsePublicUrl(value: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new TypeError("publicUrl must be an absolute HTTP(S) URL");
+    throw new TypeError("publicUrl must be an absolute HTTPS URL");
   }
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.protocol !== "https:" ||
     url.username.length !== 0 ||
     url.password.length !== 0 ||
     url.host.length === 0 ||
     url.hash.length !== 0
   ) {
-    throw new TypeError("publicUrl must be a credential-free absolute HTTP(S) URL");
+    throw new TypeError("publicUrl must be a credential-free absolute HTTPS URL");
   }
   return url;
 }
 
-function parseOriginHost(value: string): string {
+function parseOrigin(value: string): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -172,7 +180,7 @@ function parseOriginHost(value: string): string {
   ) {
     throw new HttpTrustError("HTTP_ORIGIN_REJECTED", 403, "Origin is invalid");
   }
-  return url.host.toLowerCase();
+  return url;
 }
 
 function isJsonContentType(value: string | undefined): boolean {

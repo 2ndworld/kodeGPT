@@ -131,8 +131,12 @@ fn parse_device(value: &str) -> Result<(u32, u32), MountInfoError> {
     if major.is_empty() || minor.is_empty() || minor.contains(':') {
         return Err(MountInfoError::Malformed);
     }
-    let major = major.parse::<u32>().map_err(|_| MountInfoError::Malformed)?;
-    let minor = minor.parse::<u32>().map_err(|_| MountInfoError::Malformed)?;
+    let major = major
+        .parse::<u32>()
+        .map_err(|_| MountInfoError::Malformed)?;
+    let minor = minor
+        .parse::<u32>()
+        .map_err(|_| MountInfoError::Malformed)?;
     Ok((major, minor))
 }
 
@@ -228,10 +232,8 @@ mod tests {
     #[test]
     fn mountinfo_rejects_out_of_range_octal_escape_without_panicking() {
         assert!(
-            parse_mountinfo(
-                "301 42 8:1 /bad\\777root /mnt/work rw,relatime - ext4 /dev/sda1 rw\n"
-            )
-            .is_err()
+            parse_mountinfo("301 42 8:1 /bad\\777root /mnt/work rw,relatime - ext4 /dev/sda1 rw\n")
+                .is_err()
         );
     }
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
+import { toPublicArtifactMetadata, type ArtifactMetadata } from "@kodegpt/artifacts";
 import {
   getProfilePreset,
   profilePolicySchema,
@@ -55,6 +56,32 @@ export interface WorkspaceGitInspectionResult {
   stderrTruncated: boolean;
   sourceTruncated: boolean;
   bytesSpooled: number;
+  artifact: ArtifactMetadata;
+}
+
+export type ProcessOperationState = "running" | "completed" | "failed" | "cancelled";
+
+export interface WorkspaceProcessOperationResult {
+  schemaVersion: number;
+  operationId: string;
+  state: ProcessOperationState;
+  exitCode?: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  sourceTruncated: boolean;
+  bytesSpooled: number;
+  artifact: ArtifactMetadata;
+}
+
+export interface WorkspaceProcessRunInput {
+  workspaceId: string;
+  logicalExecutable: string;
+  argv: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  background?: boolean;
 }
 
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -380,6 +407,36 @@ export class WorkspaceManager {
     return this.#gitInspection(workspaceId, "git.diff");
   }
 
+  async runProcess(input: WorkspaceProcessRunInput): Promise<WorkspaceProcessOperationResult> {
+    if (input.logicalExecutable.length === 0) {
+      throw new TypeError("Process logical executable must not be empty");
+    }
+    const state = this.#requireReadyState(input.workspaceId);
+    const result = await this.#kernel.request<unknown>("process.run", {
+      capabilityId: state.capabilityId,
+      logicalExecutable: input.logicalExecutable,
+      argv: input.argv,
+      cwd: input.cwd ?? ".",
+      env: input.env ?? {},
+      background: input.background ?? false
+    });
+    return validateProcessOperation(result, "process.run");
+  }
+
+  async processStatus(
+    workspaceId: string,
+    operationId: string
+  ): Promise<WorkspaceProcessOperationResult> {
+    return this.#processOperation(workspaceId, operationId, "process.status");
+  }
+
+  async processCancel(
+    workspaceId: string,
+    operationId: string
+  ): Promise<WorkspaceProcessOperationResult> {
+    return this.#processOperation(workspaceId, operationId, "process.cancel");
+  }
+
   async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
     if (path.length === 0) {
       throw new TypeError("Workspace tree path must not be empty");
@@ -421,6 +478,22 @@ export class WorkspaceManager {
     return result.matches.map(validateSearchMatch);
   }
 
+  async #processOperation(
+    workspaceId: string,
+    operationId: string,
+    method: "process.status" | "process.cancel"
+  ): Promise<WorkspaceProcessOperationResult> {
+    if (!operationId.startsWith("op_")) {
+      throw new TypeError("Process operation ID must start with op_");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>(method, {
+      capabilityId: state.capabilityId,
+      operationId
+    });
+    return validateProcessOperation(result, method);
+  }
+
   async #gitInspection(
     workspaceId: string,
     method: "git.status" | "git.diff"
@@ -440,7 +513,7 @@ export class WorkspaceManager {
       typeof result.sourceTruncated !== "boolean" ||
       !Number.isSafeInteger(result.bytesSpooled) ||
       (result.bytesSpooled as number) < 0 ||
-      "artifact" in result ||
+      !isRecord(result.artifact) ||
       "artifactId" in result ||
       "processGroup" in result ||
       "pid" in result
@@ -458,7 +531,8 @@ export class WorkspaceManager {
       stdoutTruncated: result.stdoutTruncated,
       stderrTruncated: result.stderrTruncated,
       sourceTruncated: result.sourceTruncated,
-      bytesSpooled: result.bytesSpooled as number
+      bytesSpooled: result.bytesSpooled as number,
+      artifact: validateArtifactMetadata(result.artifact, method)
     };
   }
 
@@ -602,6 +676,66 @@ function validateSearchMatch(value: unknown): WorkspaceSearchMatch {
     line: value.line as number,
     lineText: value.lineText
   };
+}
+
+function validateProcessOperation(
+  value: unknown,
+  method: "process.run" | "process.status" | "process.cancel"
+): WorkspaceProcessOperationResult {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.operationId !== "string" ||
+    !value.operationId.startsWith("op_") ||
+    !isProcessOperationState(value.state) ||
+    (value.exitCode !== undefined && !Number.isSafeInteger(value.exitCode)) ||
+    typeof value.stdoutPreview !== "string" ||
+    typeof value.stderrPreview !== "string" ||
+    typeof value.stdoutTruncated !== "boolean" ||
+    typeof value.stderrTruncated !== "boolean" ||
+    typeof value.sourceTruncated !== "boolean" ||
+    !Number.isSafeInteger(value.bytesSpooled) ||
+    (value.bytesSpooled as number) < 0 ||
+    "executionId" in value ||
+    "processGroup" in value ||
+    "pid" in value ||
+    !isRecord(value.artifact) ||
+    "artifactId" in value
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      `${method} returned an invalid payload`
+    );
+  }
+  return {
+    schemaVersion: 1,
+    operationId: value.operationId,
+    state: value.state,
+    ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode as number }),
+    stdoutPreview: value.stdoutPreview,
+    stderrPreview: value.stderrPreview,
+    stdoutTruncated: value.stdoutTruncated,
+    stderrTruncated: value.stderrTruncated,
+    sourceTruncated: value.sourceTruncated,
+    bytesSpooled: value.bytesSpooled as number,
+    artifact: validateArtifactMetadata(value.artifact, method)
+  };
+}
+
+function validateArtifactMetadata(value: unknown, method: string): ArtifactMetadata {
+  try {
+    return toPublicArtifactMetadata(value);
+  } catch (error) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      `${method} returned invalid artifact metadata`,
+      { cause: error }
+    );
+  }
+}
+
+function isProcessOperationState(value: unknown): value is ProcessOperationState {
+  return value === "running" || value === "completed" || value === "failed" || value === "cancelled";
 }
 
 function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {

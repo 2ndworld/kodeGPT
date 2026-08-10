@@ -5,5 +5,8 @@
   "type": "module",
   "os": ["linux"],
   "cpu": ["x64"],
+  "bin": {
+    "kodegpt-runtime": "bin/kodegpt-runtime"
+  },
   "files": ["bin/kodegpt-runtime"]
 }

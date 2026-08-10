@@ -371,6 +371,64 @@
           }
         }
       }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "process.status" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "operationId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operationId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "process.cancel" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "operationId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operationId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "artifact.read" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifactId", "offset", "maxBytes"],
+          "properties": {
+            "artifactId": { "type": "string", "pattern": "^ka_[A-Za-z0-9_-]{1,93}$" },
+            "offset": { "type": "integer", "minimum": 0 },
+            "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+          }
+        }
+      }
     }
   ]
 }

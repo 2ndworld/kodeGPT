@@ -3,12 +3,12 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::Read;
 use std::os::fd::OwnedFd;
-use std::sync::{mpsc, Mutex};
+use std::sync::{Mutex, mpsc};
 use std::thread;
 
 use kodegpt_sandbox::{
-    resolve_trusted_executable, BubblewrapProvider, SandboxError, SandboxLaunchSpec,
-    SandboxNetworkMode, WorkspaceAccess,
+    BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
+    resolve_trusted_executable,
 };
 use serde::Serialize;
 
@@ -35,6 +35,7 @@ pub struct GitInspectionResult {
     pub stderr_truncated: bool,
     pub source_truncated: bool,
     pub bytes_spooled: u64,
+    pub artifact: RawSpoolMetadata,
 }
 
 #[derive(Debug)]
@@ -118,6 +119,7 @@ pub fn run_git_inspection(
         stderr_truncated: command.stderr_truncated,
         source_truncated: command.artifact.source_truncated,
         bytes_spooled: command.artifact.bytes_written,
+        artifact: command.artifact,
     })
 }
 
@@ -136,13 +138,15 @@ fn run_git_command(
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
     let execution_id = match executions.lock() {
-        Ok(mut registry) => registry
-            .register(
-                workspace_capability.to_owned(),
-                process_group,
-                ExecutionKind::Git,
-            )
-            .execution_id,
+        Ok(mut registry) => {
+            registry
+                .register(
+                    workspace_capability.to_owned(),
+                    process_group,
+                    ExecutionKind::Git,
+                )
+                .execution_id
+        }
         Err(_) => {
             terminate_untracked_child(&mut child);
             return Err(GitInspectionError::RegistryUnavailable);
@@ -237,8 +241,8 @@ fn hardened_git_args(operation: GitOperation, filter_overrides: &[OsString]) -> 
                     "--untracked-files=all",
                     "--ignore-submodules=all",
                 ]
-                    .into_iter()
-                    .map(OsString::from),
+                .into_iter()
+                .map(OsString::from),
             );
         }
         GitOperation::Diff => {
@@ -311,9 +315,12 @@ fn discover_filter_overrides(
 
 fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionError> {
     let mut drivers = BTreeSet::new();
-    for raw_key in config_keys.split(|byte| *byte == 0).filter(|key| !key.is_empty()) {
-        let key = std::str::from_utf8(raw_key)
-            .map_err(|_| GitInspectionError::UnsafeRepositoryConfig)?;
+    for raw_key in config_keys
+        .split(|byte| *byte == 0)
+        .filter(|key| !key.is_empty())
+    {
+        let key =
+            std::str::from_utf8(raw_key).map_err(|_| GitInspectionError::UnsafeRepositoryConfig)?;
         let Some(rest) = key.strip_prefix("filter.") else {
             continue;
         };
@@ -343,7 +350,9 @@ fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionEr
             ("required", "false"),
         ] {
             args.push(OsString::from("-c"));
-            args.push(OsString::from(format!("filter.{driver}.{property}={value}")));
+            args.push(OsString::from(format!(
+                "filter.{driver}.{property}={value}"
+            )));
         }
     }
     Ok(args)
@@ -409,16 +418,12 @@ fn capture_child(
             Ok(StreamMessage::Data(kind, bytes)) => {
                 writer.write_source(&bytes)?;
                 match kind {
-                    StreamKind::Stdout => append_preview(
-                        &mut stdout_preview,
-                        &mut stdout_truncated,
-                        &bytes,
-                    ),
-                    StreamKind::Stderr => append_preview(
-                        &mut stderr_preview,
-                        &mut stderr_truncated,
-                        &bytes,
-                    ),
+                    StreamKind::Stdout => {
+                        append_preview(&mut stdout_preview, &mut stdout_truncated, &bytes)
+                    }
+                    StreamKind::Stderr => {
+                        append_preview(&mut stderr_preview, &mut stderr_truncated, &bytes)
+                    }
                 }
             }
             Ok(StreamMessage::Done(result)) => {
@@ -512,7 +517,7 @@ mod tests {
     use crate::execution::ExecutionRegistry;
     use crate::spool::RawSpoolStore;
 
-    use super::{run_git_inspection, GitOperation};
+    use super::{GitOperation, run_git_inspection};
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -601,14 +606,30 @@ mod tests {
         )
         .expect("helper fixture");
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).expect("helper executable");
-        git(&workspace, &["config", "core.fsmonitor", "/workspace/evil-helper.sh"]);
-        git(&workspace, &["config", "diff.external", "/workspace/evil-helper.sh"]);
-        git(&workspace, &["config", "diff.evil.textconv", "/workspace/evil-helper.sh"]);
         git(
             &workspace,
-            &["config", "filter.evilfilter.clean", "/workspace/evil-helper.sh"],
+            &["config", "core.fsmonitor", "/workspace/evil-helper.sh"],
         );
-        git(&workspace, &["config", "filter.evilfilter.required", "true"]);
+        git(
+            &workspace,
+            &["config", "diff.external", "/workspace/evil-helper.sh"],
+        );
+        git(
+            &workspace,
+            &["config", "diff.evil.textconv", "/workspace/evil-helper.sh"],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "filter.evilfilter.clean",
+                "/workspace/evil-helper.sh",
+            ],
+        );
+        git(
+            &workspace,
+            &["config", "filter.evilfilter.required", "true"],
+        );
         fs::write(workspace.join("tracked.txt"), "after\n").expect("working tree modification");
         fs::write(workspace.join("tracked.flt"), "filter-after\n")
             .expect("filtered working tree modification");
@@ -650,7 +671,13 @@ mod tests {
         assert!(!diff.stdout_preview.contains("HELPER_EXECUTED"));
         assert!(!diff.stderr_preview.contains("HELPER_EXECUTED"));
         assert_eq!(fingerprint(&workspace), before_repository);
-        assert!(executions.lock().expect("registry").ids_for_workspace("kc_git_fixture").is_empty());
+        assert!(
+            executions
+                .lock()
+                .expect("registry")
+                .ids_for_workspace("kc_git_fixture")
+                .is_empty()
+        );
 
         fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");

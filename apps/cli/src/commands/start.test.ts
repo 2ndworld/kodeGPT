@@ -41,6 +41,62 @@ function dependencies(
     editFile: async () => ({}),
     gitStatus: async () => ({}),
     gitDiff: async () => ({}),
+    runProcess: async () => ({
+      schemaVersion: 1,
+      operationId: "op_test",
+      state: "completed" as const,
+      exitCode: 0,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_test" as const,
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 0,
+        sourceTruncated: false
+      }
+    }),
+    processStatus: async () => ({
+      schemaVersion: 1,
+      operationId: "op_test",
+      state: "completed" as const,
+      exitCode: 0,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_test" as const,
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 0,
+        sourceTruncated: false
+      }
+    }),
+    processCancel: async () => ({
+      schemaVersion: 1,
+      operationId: "op_test",
+      state: "cancelled" as const,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_test" as const,
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 0,
+        sourceTruncated: false
+      }
+    }),
     search: async () => [],
     tree: async () => []
   };
@@ -55,6 +111,10 @@ function dependencies(
     prepareConnectorAuth: async () => {
       events.push("connector-verifier");
       return { authenticate: async () => true };
+    },
+    prepareExtensionRegistry: async () => {
+      events.push("extensions");
+      return { listEnabled: () => [] };
     },
     startKernel: async () => {
       events.push("kernel.start");
@@ -105,6 +165,7 @@ describe("kodegpt start orchestration", () => {
       "state-root",
       "audit",
       "connector-verifier",
+      "extensions",
       "kernel.start",
       "kernel.hello",
       "trust-profile",

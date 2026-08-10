@@ -12,10 +12,12 @@ name = "kodegpt-runtime"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 kodegpt-policy = { path = "../policy" }
 kodegpt-protocol = { path = "../protocol" }
 kodegpt-sandbox = { path = "../sandbox" }
 kodegpt-workspace-io = { path = "../workspace-io" }
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }

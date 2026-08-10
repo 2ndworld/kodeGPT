@@ -2,14 +2,17 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::time::Duration;
 
-use rustix::io::{fcntl_setfd, FdFlags};
+use rustix::io::{FdFlags, fcntl_setfd};
 
-use crate::executable::{resolve_bubblewrap, TrustedExecutable, TrustedExecutableError};
 use crate::PROCESS_SPAWN_LOCK;
+use crate::executable::{TrustedExecutable, TrustedExecutableError, resolve_bubblewrap};
 
 const CHILD_HOME: &str = "/home/kodegpt";
 const CHILD_WORKSPACE: &str = "/workspace";
@@ -96,6 +99,7 @@ impl From<TrustedExecutableError> for SandboxError {
 pub struct SandboxChild {
     child: Child,
     process_group: i32,
+    _status_reader: UnixStream,
 }
 
 impl SandboxChild {
@@ -144,19 +148,33 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let (status_reader, status_writer) = UnixStream::pair()?;
+        status_reader.set_read_timeout(Some(Duration::from_secs(3)))?;
+        fcntl_setfd(&status_writer, FdFlags::empty())
+            .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
 
-        let mut command = self.build_command(inherited_workspace_fd.as_raw_fd(), spec)?;
+        let mut command = self.build_command(
+            inherited_workspace_fd.as_raw_fd(),
+            Some(status_writer.as_raw_fd()),
+            spec,
+        )?;
         self.executable.revalidate()?;
         spec.program.revalidate()?;
-        let child = command.spawn()?;
-        // --new-session performs setsid() inside Bubblewrap; do not pre-create a process group,
-        // because a process-group leader cannot become a session leader. On successful setup the
-        // spawned Bubblewrap PID is the session/process-group leader for later cancellation.
-        let process_group = child.id() as i32;
+        let mut child = command.spawn()?;
+        drop(status_writer);
         drop(inherited_workspace_fd);
+        let process_group = match read_child_pid(&status_reader) {
+            Ok(process_group) => process_group,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
         Ok(SandboxChild {
             child,
             process_group,
+            _status_reader: status_reader,
         })
     }
 
@@ -173,6 +191,7 @@ impl BubblewrapProvider {
     fn build_command(
         &self,
         workspace_fd: i32,
+        status_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
         if matches!(
@@ -205,6 +224,10 @@ impl BubblewrapProvider {
                 "--cap-drop",
                 "ALL",
             ]);
+
+        if let Some(status_fd) = status_fd {
+            command.arg("--json-status-fd").arg(status_fd.to_string());
+        }
 
         if spec.network == SandboxNetworkMode::Deny {
             command.arg("--unshare-net");
@@ -247,6 +270,34 @@ impl BubblewrapProvider {
     }
 }
 
+fn read_child_pid(status_reader: &UnixStream) -> Result<i32, SandboxError> {
+    let mut reader = BufReader::new(status_reader.try_clone()?);
+    let mut total_bytes = 0_usize;
+    for _ in 0..8 {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(bytes);
+        if total_bytes > 64 * 1024 {
+            break;
+        }
+        let value: serde_json::Value = serde_json::from_str(&line).map_err(|_| {
+            SandboxError::SandboxUnavailable("invalid Bubblewrap status channel".to_owned())
+        })?;
+        if let Some(pid) = value.get("child-pid").and_then(serde_json::Value::as_i64)
+            && pid > 0
+            && pid <= i32::MAX as i64
+        {
+            return Ok(pid as i32);
+        }
+    }
+    Err(SandboxError::SandboxUnavailable(
+        "Bubblewrap did not publish a host child PID".to_owned(),
+    ))
+}
+
 fn validate_spec(spec: &SandboxLaunchSpec) -> Result<(), SandboxError> {
     if !cwd_is_beneath_workspace(&spec.cwd) {
         return Err(SandboxError::InvalidCwd);
@@ -276,8 +327,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        cwd_is_beneath_workspace, BubblewrapProvider, SandboxError, SandboxLaunchSpec,
-        SandboxNetworkMode, WorkspaceAccess,
+        BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
+        cwd_is_beneath_workspace,
     };
     use crate::resolve_trusted_executable;
 
@@ -313,7 +364,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, &spec),
+                provider.build_command(3, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

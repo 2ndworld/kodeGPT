@@ -2,7 +2,10 @@ node_modules/
 dist/
 coverage/
 target/
+apps/cli/bin/
+packages/runtime-linux-x64/bin/
 .env
 .env.*
 tests/isolation/guard-manifest.local.json
 .worktrees/
+.ai-bridge/

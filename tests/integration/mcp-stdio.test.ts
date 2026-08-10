@@ -30,6 +30,20 @@ const mutatingFileAnnotations = {
   openWorldHint: false
 };
 
+const processRunAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+};
+
+const processCancelAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: false
+};
+
 const context: KodegptToolContext = {
   workspace: {
     list: async () => [],
@@ -62,6 +76,43 @@ const context: KodegptToolContext = {
       stderrTruncated: false,
       sourceTruncated: false,
       bytesSpooled: 40
+    })
+  },
+  process: {
+    run: async () => ({
+      schemaVersion: 1,
+      operationId: "op_stdio",
+      state: "completed",
+      exitCode: 0,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0
+    }),
+    status: async () => ({
+      schemaVersion: 1,
+      operationId: "op_stdio",
+      state: "completed",
+      exitCode: 0,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0
+    }),
+    cancel: async () => ({
+      schemaVersion: 1,
+      operationId: "op_stdio",
+      state: "cancelled",
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0
     })
   },
   profile: {
@@ -135,6 +186,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([
+        "artifact.read",
+        "console.state",
+        "extension.list",
         "file.edit",
         "file.read",
         "file.search",
@@ -142,6 +196,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.write",
         "git.diff",
         "git.status",
+        "process.cancel",
+        "process.run",
+        "process.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",
@@ -158,6 +215,10 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(lifecycleAnnotations);
         } else if (tool.name === "file.write" || tool.name === "file.edit") {
           expect(tool.annotations).toEqual(mutatingFileAnnotations);
+        } else if (tool.name === "process.run") {
+          expect(tool.annotations).toEqual(processRunAnnotations);
+        } else if (tool.name === "process.cancel") {
+          expect(tool.annotations).toEqual(processCancelAnnotations);
         } else {
           expect(tool.annotations).toEqual(readOnlyAnnotations);
         }
@@ -167,6 +228,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         tools.map((tool) => [tool.name, tool.inputSchema.required ?? []])
       );
       expect(required).toEqual({
+        "artifact.read": ["uri"],
+        "console.state": [],
+        "extension.list": [],
         "file.edit": ["workspaceId", "path", "oldText", "newText", "expectedReplacements"],
         "file.read": ["workspaceId", "path"],
         "file.search": ["workspaceId", "query"],
@@ -174,6 +238,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "file.write": ["workspaceId", "path", "content"],
         "git.diff": ["workspaceId"],
         "git.status": ["workspaceId"],
+        "process.cancel": ["workspaceId", "operationId"],
+        "process.run": ["workspaceId", "logicalExecutable", "argv"],
+        "process.status": ["workspaceId", "operationId"],
         "profile.current": ["workspaceId"],
         "profile.inspect": ["name"],
         "system.capabilities": [],

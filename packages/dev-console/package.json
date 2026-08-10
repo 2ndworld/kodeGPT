@@ -3,9 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build:app": "node scripts/build-app.mjs",
+    "build": "pnpm run build:app && tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
   }
 }

@@ -48,7 +48,12 @@
         "file_edit",
         "git_status",
         "git_diff",
+        "process_run",
+        "process_status",
+        "process_cancel",
         "artifact_spool_create",
+        "artifact_read",
+        "artifact_cleanup",
         "test_effect"
       ]
     },

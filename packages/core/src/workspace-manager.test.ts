@@ -86,7 +86,14 @@ class FakeKernel implements KernelTransport {
           stdoutTruncated: false,
           stderrTruncated: false,
           sourceTruncated: false,
-          bytesSpooled: 15
+          bytesSpooled: 15,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_status_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 15,
+            sourceTruncated: false
+          }
         } as T;
       case "git.diff":
         return {
@@ -97,7 +104,14 @@ class FakeKernel implements KernelTransport {
           stdoutTruncated: false,
           stderrTruncated: false,
           sourceTruncated: false,
-          bytesSpooled: 40
+          bytesSpooled: 40,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_diff_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 40,
+            sourceTruncated: false
+          }
         } as T;
       case "file.tree":
         return {
@@ -195,7 +209,14 @@ describe("WorkspaceManager", () => {
       stdoutTruncated: false,
       stderrTruncated: false,
       sourceTruncated: false,
-      bytesSpooled: 15
+      bytesSpooled: 15,
+      artifact: {
+        schemaVersion: 1,
+        uri: "artifact://ka_status_fixture",
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 15,
+        sourceTruncated: false
+      }
     });
     expect(gitDiff).toEqual({
       schemaVersion: 1,
@@ -205,9 +226,18 @@ describe("WorkspaceManager", () => {
       stdoutTruncated: false,
       stderrTruncated: false,
       sourceTruncated: false,
-      bytesSpooled: 40
+      bytesSpooled: 40,
+      artifact: {
+        schemaVersion: 1,
+        uri: "artifact://ka_diff_fixture",
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 40,
+        sourceTruncated: false
+      }
     });
-    expect(JSON.stringify({ gitStatus, gitDiff })).not.toContain("ka_");
+    expect(JSON.stringify({ gitStatus, gitDiff })).toContain("artifact://ka_");
+    expect(JSON.stringify({ gitStatus, gitDiff })).not.toContain("artifactId");
+    expect(JSON.stringify({ gitStatus, gitDiff })).not.toContain("/home/");
     expect(tree).toEqual([
       { path: "src", kind: "directory" },
       { path: "src/index.ts", kind: "file" }

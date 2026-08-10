@@ -2,6 +2,7 @@ mod audit;
 mod dispatcher;
 mod execution;
 mod git;
+mod process;
 mod rpc;
 mod spool;
 
@@ -11,9 +12,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::thread;
 
-use audit::AuditSink;
 #[cfg(feature = "runtime-test-methods")]
 use audit::AuditFaults;
+use audit::AuditSink;
 use kodegpt_protocol::{read_frame, write_frame};
 use tokio::runtime::Builder;
 use tokio::sync::mpsc;

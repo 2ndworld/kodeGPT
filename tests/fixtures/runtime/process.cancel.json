@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_process_cancel",
+  "method": "process.cancel",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "operationId": "op_fixture_1"
+  }
+}

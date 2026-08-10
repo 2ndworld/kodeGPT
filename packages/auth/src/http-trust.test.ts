@@ -111,6 +111,27 @@ describe("HTTP trust guard", () => {
     ).not.toThrow();
   });
 
+  it("requires HTTPS public exposure and exact HTTPS origin for the public host", () => {
+    expect(() =>
+      createHttpTrustConfig({
+        allowedHosts: ["127.0.0.1:43121"],
+        allowedOriginHosts: ["127.0.0.1:43121"],
+        publicUrl: "http://kodegpt.example.test/connector",
+        maxRequestBodyBytes: 1024
+      })
+    ).toThrow(/HTTPS/);
+
+    expect(() =>
+      enforceHttpRequestTrust(config, {
+        host: "kodegpt.example.test",
+        origin: "http://kodegpt.example.test",
+        contentType: "application/json",
+        contentLength: "2",
+        actualBodyBytes: 2
+      })
+    ).toThrowError(expect.objectContaining({ code: "HTTP_ORIGIN_REJECTED", status: 403 }));
+  });
+
   it("rejects malformed length and actual bytes above the configured ceiling", () => {
     expect(() =>
       enforceHttpRequestTrust(config, {

@@ -1,0 +1,103 @@
+name: KodeGPT CI
+
+on:
+  push:
+    branches: [main, master, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Deterministic v0.1 gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Setup pnpm 10.15.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          test "$(pnpm --version)" = "10.15.0"
+
+      - name: Setup Rust stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Build trusted Bubblewrap 0.11.2 with targeted AppArmor policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apparmor apparmor-profiles bubblewrap meson ninja-build pkg-config libcap-dev libselinux1-dev
+          sudo test -f /etc/apparmor.d/bwrap-userns-restrict
+          rm -rf /tmp/kodegpt-bubblewrap
+          git clone --depth 1 --branch v0.11.2 https://github.com/containers/bubblewrap.git /tmp/kodegpt-bubblewrap
+          test "$(git -C /tmp/kodegpt-bubblewrap rev-parse HEAD)" = "1b80120ef26a28e065e67f89bfef873f13bdd317"
+          meson setup /tmp/kodegpt-bubblewrap/_build /tmp/kodegpt-bubblewrap -Dtests=false -Dsupport_setuid=false
+          meson compile -C /tmp/kodegpt-bubblewrap/_build
+          sudo install -o root -g root -m 0755 /tmp/kodegpt-bubblewrap/_build/bwrap /usr/bin/bwrap
+          test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.11.2"
+          test "$(stat -c '%u:%g:%a' /usr/bin/bwrap)" = "0:0:755"
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/tmp/kodegpt-userns-restrict 2>/dev/null; then
+            test "$(cat /tmp/kodegpt-userns-restrict)" = "1"
+          fi
+
+      - name: Frozen dependency install
+        run: pnpm install --frozen-lockfile
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: TypeScript test suite
+        run: pnpm test
+
+      - name: Bubblewrap functional security probes
+        run: cargo test -p kodegpt-sandbox
+
+      - name: Rust workspace tests
+        run: pnpm test:rust
+
+      - name: Protocol parity
+        run: pnpm test:protocol
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Security acceptance
+        run: pnpm test:security
+
+      - name: Isolation tests
+        run: pnpm test:isolation
+
+      - name: Full acceptance
+        run: pnpm test:acceptance
+
+      - name: Forbidden-pattern scan
+        run: pnpm verify:forbidden
+
+      - name: Clean-install package smoke
+        run: pnpm verify:package

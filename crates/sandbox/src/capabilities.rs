@@ -346,7 +346,7 @@ fn require_success(success: bool, stderr: &[u8]) -> Result<(), SandboxError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{probe_sandbox_capabilities, SandboxEnforcement};
+    use super::{SandboxEnforcement, probe_sandbox_capabilities};
     use crate::BubblewrapProvider;
 
     #[test]

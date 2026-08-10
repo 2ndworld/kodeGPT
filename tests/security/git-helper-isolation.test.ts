@@ -42,6 +42,9 @@ describe("hardened read-only Git inspection source regressions", () => {
     expect(production).not.toContain("Command::new");
     expect(production).not.toContain("canonicalize(");
     expect(production).not.toContain("GIT_EXTERNAL_DIFF=");
+    expect(production).not.toContain('b"[stdout]"');
+    expect(production).not.toContain('b"[stderr]"');
+    expect(production).not.toContain("to_be_bytes()");
   });
 
   it("publishes only read-only Git MCP tools on opaque workspace IDs", async () => {

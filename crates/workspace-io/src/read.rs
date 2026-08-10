@@ -38,7 +38,9 @@ impl fmt::Display for WorkspaceReadError {
             Self::BoundaryUnavailable => {
                 formatter.write_str("required filesystem boundary semantics are unavailable")
             }
-            Self::BoundaryViolation => formatter.write_str("workspace filesystem boundary denied access"),
+            Self::BoundaryViolation => {
+                formatter.write_str("workspace filesystem boundary denied access")
+            }
             Self::NotFound => formatter.write_str("workspace path was not found"),
             Self::NotRegularFile => formatter.write_str("workspace path is not a regular file"),
             Self::InvalidUtf8 => formatter.write_str("workspace file contents are not valid UTF-8"),
@@ -90,12 +92,8 @@ pub fn read_file_beneath(
     if max_bytes > INLINE_READ_MAX_BYTES {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let fd = open_existing_beneath(
-        root_fd,
-        relative_path,
-        OFlags::RDONLY | OFlags::NONBLOCK,
-    )
-    .map_err(map_boundary_error)?;
+    let fd = open_existing_beneath(root_fd, relative_path, OFlags::RDONLY | OFlags::NONBLOCK)
+        .map_err(map_boundary_error)?;
     let stat = fstat(&fd).map_err(WorkspaceReadError::Io)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
         return Err(WorkspaceReadError::NotRegularFile);
@@ -151,7 +149,8 @@ pub fn tree_beneath(
             if kind == TreeEntryKind::Directory {
                 match open_directory_beneath(&directory_fd, Path::new(&name)) {
                     Ok(child_fd) => pending.push_back((child_fd, relative)),
-                    Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {}
+                    Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {
+                    }
                     Err(error) => return Err(map_boundary_error(error)),
                 }
             }
@@ -172,14 +171,20 @@ pub fn search_utf8_beneath(
     max_matches: usize,
     max_snippet_bytes: usize,
 ) -> Result<Vec<SearchMatch>, WorkspaceReadError> {
-    if query.is_empty() || max_matches > SEARCH_MAX_MATCHES || max_snippet_bytes > SEARCH_MAX_SNIPPET_BYTES {
+    if query.is_empty()
+        || max_matches > SEARCH_MAX_MATCHES
+        || max_snippet_bytes > SEARCH_MAX_SNIPPET_BYTES
+    {
         return Err(WorkspaceReadError::LimitExceeded);
     }
     let entries = tree_beneath(root_fd, relative_path, TREE_MAX_ENTRIES)?;
     let mut matches = Vec::new();
     let mut snippet_bytes = 0usize;
 
-    for entry in entries.into_iter().filter(|entry| entry.kind == TreeEntryKind::File) {
+    for entry in entries
+        .into_iter()
+        .filter(|entry| entry.kind == TreeEntryKind::File)
+    {
         if matches.len() >= max_matches || snippet_bytes >= max_snippet_bytes {
             break;
         }
@@ -201,9 +206,7 @@ pub fn search_utf8_beneath(
             continue;
         }
         let mut bytes = Vec::with_capacity(stat.st_size as usize);
-        File::from(fd)
-            .read_to_end(&mut bytes)
-            .map_err(io_error)?;
+        File::from(fd).read_to_end(&mut bytes).map_err(io_error)?;
         if bytes.contains(&0) {
             continue;
         }
@@ -220,7 +223,10 @@ pub fn search_utf8_beneath(
                 break;
             }
             let next_bytes = snippet_bytes
-                + file_matches.iter().map(|item: &SearchMatch| item.line_text.len()).sum::<usize>()
+                + file_matches
+                    .iter()
+                    .map(|item: &SearchMatch| item.line_text.len())
+                    .sum::<usize>()
                 + line.len();
             if next_bytes > max_snippet_bytes {
                 break;
@@ -379,14 +385,14 @@ mod tests {
             .expect("outside symlink created");
         let fd = root_fd(&root);
 
-        let result = read_file_beneath(&fd, Path::new("inside.txt"), 6, 4)
-            .expect("inside read succeeds");
+        let result =
+            read_file_beneath(&fd, Path::new("inside.txt"), 6, 4).expect("inside read succeeds");
         assert_eq!(result.contents, "beta");
         assert_eq!(result.bytes_read, 4);
         assert!(!result.eof);
 
-        let tail = read_file_beneath(&fd, Path::new("inside.txt"), 6, 64)
-            .expect("tail read succeeds");
+        let tail =
+            read_file_beneath(&fd, Path::new("inside.txt"), 6, 64).expect("tail read succeeds");
         assert_eq!(tail.contents, "beta\n");
         assert!(tail.eof);
 
@@ -424,9 +430,11 @@ mod tests {
         symlink(&outside, root.join("escape-dir")).expect("escape directory symlink created");
         let fd = root_fd(&root);
 
-        let entries = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES)
-            .expect("tree succeeds");
-        let paths = entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>();
+        let entries = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("tree succeeds");
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
         assert_eq!(paths, vec!["dir", "dir/a.txt", "escape-dir", "z.txt"]);
         assert_eq!(entries[2].kind, TreeEntryKind::Symlink);
         assert!(!paths.iter().any(|path| path.contains("secret.txt")));
@@ -441,10 +449,10 @@ mod tests {
         fs::write(root.join("a.txt"), "a").expect("file written");
         let fd = root_fd(&root);
 
-        let first = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES)
-            .expect("first tree succeeds");
-        let second = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES)
-            .expect("second tree succeeds");
+        let first =
+            tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("first tree succeeds");
+        let second =
+            tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("second tree succeeds");
         assert_eq!(first, second);
         assert_eq!(second.len(), 1);
 
@@ -459,8 +467,8 @@ mod tests {
         }
         let fd = root_fd(&root);
 
-        let entries = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES)
-            .expect("bounded tree succeeds");
+        let entries =
+            tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("bounded tree succeeds");
         assert_eq!(entries.len(), TREE_MAX_ENTRIES);
         assert_eq!(entries.first().expect("first entry").path, "f0000.txt");
         assert_eq!(entries.last().expect("last entry").path, "f1999.txt");
@@ -490,7 +498,10 @@ mod tests {
             SEARCH_MAX_SNIPPET_BYTES,
         )
         .expect("bounded search succeeds");
-        let snippets = matches.iter().map(|item| item.line_text.len()).sum::<usize>();
+        let snippets = matches
+            .iter()
+            .map(|item| item.line_text.len())
+            .sum::<usize>();
         assert!(!matches.is_empty());
         assert!(matches.len() < SEARCH_MAX_MATCHES);
         assert!(snippets <= SEARCH_MAX_SNIPPET_BYTES);
@@ -504,8 +515,7 @@ mod tests {
         fs::create_dir_all(root.join("src")).expect("src created");
         fs::write(root.join("src/a.txt"), "needle one\nno match\nneedle two\n")
             .expect("text written");
-        fs::write(root.join("src/b.bin"), b"needle\0binary")
-            .expect("binary written");
+        fs::write(root.join("src/b.bin"), b"needle\0binary").expect("binary written");
         for index in 0..(SEARCH_MAX_MATCHES + 20) {
             fs::write(root.join(format!("src/m{index:03}.txt")), "needle\n")
                 .expect("match file written");

@@ -59,14 +59,14 @@ fn network_rank(mode: &NetworkMode) -> u8 {
 
 fn is_subset(candidate: &[String], current: &[String]) -> bool {
     let current: HashSet<&str> = current.iter().map(String::as_str).collect();
-    candidate.iter().all(|value| current.contains(value.as_str()))
+    candidate
+        .iter()
+        .all(|value| current.contains(value.as_str()))
 }
 
 #[cfg(test)]
 mod tests {
-    use kodegpt_protocol::{
-        InheritEnvDisabled, NetworkMode, ProfileName, RuntimePolicy,
-    };
+    use kodegpt_protocol::{InheritEnvDisabled, NetworkMode, ProfileName, RuntimePolicy};
 
     use super::{PolicyError, restrict_policy};
 
@@ -83,7 +83,10 @@ mod tests {
             allow_write,
             allow_process,
             network,
-            allowed_executable_names: executables.iter().map(|value| (*value).to_owned()).collect(),
+            allowed_executable_names: executables
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
             inherit_env: InheritEnvDisabled,
             env_allowlist: env.iter().map(|value| (*value).to_owned()).collect(),
         }
@@ -91,7 +94,14 @@ mod tests {
 
     #[test]
     fn observe_ceiling_rejects_trusted_write_process_escalation() {
-        let observe = policy(ProfileName::Observe, false, false, NetworkMode::Deny, &[], &[]);
+        let observe = policy(
+            ProfileName::Observe,
+            false,
+            false,
+            NetworkMode::Deny,
+            &[],
+            &[],
+        );
         let trusted = policy(
             ProfileName::Trusted,
             true,

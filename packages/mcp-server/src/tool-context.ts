@@ -36,6 +36,27 @@ export interface GitToolContext {
   diff(input: { workspaceId: string }): Promise<unknown> | unknown;
 }
 
+export interface ProcessToolContext {
+  run(input: {
+    workspaceId: string;
+    logicalExecutable: string;
+    argv: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    background?: boolean;
+  }): Promise<unknown> | unknown;
+  status(input: { workspaceId: string; operationId: string }): Promise<unknown> | unknown;
+  cancel(input: { workspaceId: string; operationId: string }): Promise<unknown> | unknown;
+}
+
+export interface ArtifactToolContext {
+  read(input: { uri: string; offset?: number; maxBytes?: number }): Promise<unknown> | unknown;
+}
+
+export interface ExtensionToolContext {
+  list(input: { limit?: number }): Promise<unknown> | unknown;
+}
+
 export interface ProfileToolContext {
   current(input: { workspaceId: string }): Promise<unknown> | unknown;
   inspect(input: { name: "observe" | "develop" | "trusted" }): Promise<unknown> | unknown;
@@ -49,6 +70,9 @@ export interface SystemToolContext {
 export interface KodegptToolContext {
   workspace: WorkspaceToolContext;
   git: GitToolContext;
+  process: ProcessToolContext;
+  artifact: ArtifactToolContext;
+  extension: ExtensionToolContext;
   profile: ProfileToolContext;
   system: SystemToolContext;
 }
@@ -77,8 +101,32 @@ export interface WorkspaceManagerToolAdapter {
   tree(workspaceId: string, path?: string): Promise<unknown> | unknown;
 }
 
+export interface ExecutionManagerToolAdapter {
+  run(input: {
+    workspaceId: string;
+    logicalExecutable: string;
+    argv: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+    background?: boolean;
+  }): Promise<unknown> | unknown;
+  status(workspaceId: string, operationId: string): Promise<unknown> | unknown;
+  cancel(workspaceId: string, operationId: string): Promise<unknown> | unknown;
+}
+
+export interface ArtifactStoreToolAdapter {
+  read(uri: string, options?: { offset?: number; maxBytes?: number }): Promise<unknown> | unknown;
+}
+
+export interface ExtensionRegistryToolAdapter {
+  listEnabled(limit?: number): Promise<unknown> | unknown;
+}
+
 export function createKodegptToolContext(options: {
   workspaceManager: WorkspaceManagerToolAdapter;
+  executionManager: ExecutionManagerToolAdapter;
+  artifactStore: ArtifactStoreToolAdapter;
+  extensionRegistry: ExtensionRegistryToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): Promise<unknown> | unknown;
   health(): Promise<unknown> | unknown;
@@ -111,6 +159,19 @@ export function createKodegptToolContext(options: {
     git: {
       status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),
       diff: ({ workspaceId }) => options.workspaceManager.gitDiff(workspaceId)
+    },
+    process: {
+      run: (input) => options.executionManager.run(input),
+      status: ({ workspaceId, operationId }) =>
+        options.executionManager.status(workspaceId, operationId),
+      cancel: ({ workspaceId, operationId }) =>
+        options.executionManager.cancel(workspaceId, operationId)
+    },
+    artifact: {
+      read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
+    },
+    extension: {
+      list: ({ limit }) => options.extensionRegistry.listEnabled(limit)
     },
     profile: {
       current: ({ workspaceId }) => ({

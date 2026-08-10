@@ -17,7 +17,10 @@ export const RUNTIME_METHODS = [
   "file.edit",
   "git.status",
   "git.diff",
-  "process.run"
+  "process.run",
+  "process.status",
+  "process.cancel",
+  "artifact.read"
 ] as const;
 
 export type RuntimeMethod = (typeof RUNTIME_METHODS)[number];
@@ -136,6 +139,21 @@ const processRunParamsSchema = z
   })
   .strict();
 
+const processOperationParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    operationId: z.string().min(1)
+  })
+  .strict();
+
+const artifactReadParamsSchema = z
+  .object({
+    artifactId: z.string().regex(/^ka_[A-Za-z0-9_-]{1,93}$/),
+    offset: z.number().int().nonnegative().safe(),
+    maxBytes: z.number().int().positive().max(1024 * 1024).safe()
+  })
+  .strict();
+
 function requestSchema<M extends RuntimeMethod, P extends z.ZodType>(method: M, params: P) {
   return z
     .object({
@@ -164,7 +182,10 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.edit", fileEditParamsSchema),
   requestSchema("git.status", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
-  requestSchema("process.run", processRunParamsSchema)
+  requestSchema("process.run", processRunParamsSchema),
+  requestSchema("process.status", processOperationParamsSchema),
+  requestSchema("process.cancel", processOperationParamsSchema),
+  requestSchema("artifact.read", artifactReadParamsSchema)
 ]);
 
 export type RuntimeRequest = z.infer<typeof runtimeRequestSchema>;

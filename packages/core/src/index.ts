@@ -5,6 +5,9 @@ export {
 } from "./kernel-client.js";
 export type { KernelHello } from "./kernel-client.js";
 
+export { ExecutionManager } from "./execution-manager.js";
+export type { ProcessRunInput } from "./execution-manager.js";
+
 export {
   ProjectProfileInvalidError,
   WorkspaceCloseIncompleteError,

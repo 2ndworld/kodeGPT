@@ -43,6 +43,17 @@ const toolContext: KodegptToolContext = {
       bytesSpooled: 40
     })
   },
+  process: {
+    run: async () => ({}),
+    status: async () => ({}),
+    cancel: async () => ({})
+  },
+  artifact: {
+    read: async () => ({})
+  },
+  extension: {
+    list: async () => []
+  },
   profile: {
     current: async () => ({ name: "observe" }),
     inspect: async ({ name }) => ({ name })
@@ -308,6 +319,9 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([
+        "artifact.read",
+        "console.state",
+        "extension.list",
         "file.edit",
         "file.read",
         "file.search",
@@ -315,6 +329,9 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
         "file.write",
         "git.diff",
         "git.status",
+        "process.cancel",
+        "process.run",
+        "process.status",
         "profile.current",
         "profile.inspect",
         "system.capabilities",
@@ -325,6 +342,50 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
         "workspace.open"
       ]);
       expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
+    } finally {
+      await handler.close();
+    }
+  });
+
+  it("derives MCP Apps support from each current tools/call request", async () => {
+    const handler = createHandler();
+    try {
+      for (const [id, clientCapabilities, expected] of [
+        ["console-no-ui", {}, false],
+        [
+          "console-with-ui",
+          {
+            extensions: {
+              "io.modelcontextprotocol/ui": {
+                mimeTypes: ["text/html;profile=mcp-app"]
+              }
+            }
+          },
+          true
+        ]
+      ] as const) {
+        const response = await post(
+          handler,
+          {
+            jsonrpc: "2.0",
+            id,
+            method: "tools/call",
+            params: {
+              name: "console.state",
+              arguments: {},
+              _meta: meta({ [CLIENT_CAPABILITIES_META_KEY]: clientCapabilities })
+            }
+          },
+          {
+            authorization: validAuthorization(),
+            mcpMethod: "tools/call",
+            mcpName: "console.state"
+          }
+        );
+        expect(response.status).toBe(200);
+        const payload = (await response.json()) as Record<string, any>;
+        expect(payload.result.structuredContent.host.uiSupported).toBe(expected);
+      }
     } finally {
       await handler.close();
     }

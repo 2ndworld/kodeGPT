@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_artifact_read",
+  "method": "artifact.read",
+  "params": {
+    "artifactId": "ka_fixture_1",
+    "offset": 0,
+    "maxBytes": 1048576
+  }
+}

@@ -4,6 +4,9 @@ import { MCP_SURFACE_VERSION } from "./surface-version.js";
 import { createKodegptMcpServer, listSurfaceTools } from "./server.js";
 
 const expectedTools = [
+  "artifact.read",
+  "console.state",
+  "extension.list",
   "file.edit",
   "file.read",
   "file.search",
@@ -11,6 +14,9 @@ const expectedTools = [
   "file.write",
   "git.diff",
   "git.status",
+  "process.cancel",
+  "process.run",
+  "process.status",
   "profile.current",
   "profile.inspect",
   "system.capabilities",
@@ -25,6 +31,9 @@ describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
     expect(MCP_SURFACE_VERSION).toBe("0.1");
     expect(listSurfaceTools()).toEqual([
+      { name: "artifact.read", required: ["uri"] },
+      { name: "console.state", required: [] },
+      { name: "extension.list", required: [] },
       {
         name: "file.edit",
         required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
@@ -35,6 +44,9 @@ describe("KodeGPT MCP semantic surface", () => {
       { name: "file.write", required: ["workspaceId", "path", "content"] },
       { name: "git.diff", required: ["workspaceId"] },
       { name: "git.status", required: ["workspaceId"] },
+      { name: "process.cancel", required: ["workspaceId", "operationId"] },
+      { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
+      { name: "process.status", required: ["workspaceId", "operationId"] },
       { name: "profile.current", required: ["workspaceId"] },
       { name: "profile.inspect", required: ["name"] },
       { name: "system.capabilities", required: [] },
@@ -62,6 +74,17 @@ describe("KodeGPT MCP semantic surface", () => {
       git: {
         status: async () => ({}),
         diff: async () => ({})
+      },
+      process: {
+        run: async () => ({}),
+        status: async () => ({}),
+        cancel: async () => ({})
+      },
+      artifact: {
+        read: async () => ({})
+      },
+      extension: {
+        list: async () => []
       },
       profile: {
         current: async () => ({}),

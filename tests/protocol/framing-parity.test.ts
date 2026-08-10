@@ -28,7 +28,10 @@ const FIXTURE_NAMES = [
   "file.edit.json",
   "git.status.json",
   "git.diff.json",
-  "process.run.json"
+  "process.run.json",
+  "process.status.json",
+  "process.cancel.json",
+  "artifact.read.json"
 ] as const;
 
 const EXPECTED_METHODS = [
@@ -48,7 +51,10 @@ const EXPECTED_METHODS = [
   "file.edit",
   "git.status",
   "git.diff",
-  "process.run"
+  "process.run",
+  "process.status",
+  "process.cancel",
+  "artifact.read"
 ] as const;
 
 async function fixture(name: (typeof FIXTURE_NAMES)[number]): Promise<unknown> {

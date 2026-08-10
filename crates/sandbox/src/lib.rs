@@ -14,8 +14,8 @@ pub use bubblewrap::{
     BubblewrapProvider, SandboxChild, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
     WorkspaceAccess,
 };
-pub use capabilities::{probe_sandbox_capabilities, SandboxCapabilities, SandboxEnforcement};
+pub use capabilities::{SandboxCapabilities, SandboxEnforcement, probe_sandbox_capabilities};
 pub use executable::{
-    resolve_bubblewrap, resolve_trusted_executable, ExecutableIdentity, ExecutableVersion,
-    TrustedExecutable, TrustedExecutableError, BUBBLEWRAP_MINIMUM_VERSION,
+    BUBBLEWRAP_MINIMUM_VERSION, ExecutableIdentity, ExecutableVersion, TrustedExecutable,
+    TrustedExecutableError, resolve_bubblewrap, resolve_trusted_executable,
 };

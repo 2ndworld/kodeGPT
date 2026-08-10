@@ -21,6 +21,7 @@ export type { KodegptStdioHandle } from "./stdio.js";
 export { MCP_SURFACE_VERSION } from "./surface-version.js";
 export { createKodegptToolContext } from "./tool-context.js";
 export type {
+  ExtensionRegistryToolAdapter,
   KodegptToolContext,
   ProfileToolContext,
   SystemToolContext,

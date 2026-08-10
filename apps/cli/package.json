@@ -3,16 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "kodegpt": "bin/kodegpt.mjs"
+  },
+  "files": [
+    "bin/kodegpt.mjs"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build:cli": "node scripts/build-cli.mjs",
+    "build": "pnpm run build:cli && tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
+  "optionalDependencies": {
+    "@kodegpt/runtime-linux-x64": "workspace:*"
+  },
+  "devDependencies": {
+    "@kodegpt/artifacts": "workspace:*",
+    "@kodegpt/audit": "workspace:*",
     "@kodegpt/auth": "workspace:*",
     "@kodegpt/core": "workspace:*",
+    "@kodegpt/extensions": "workspace:*",
     "@kodegpt/mcp-server": "workspace:*",
     "@kodegpt/profiles": "workspace:*",
-    "@kodegpt/trust": "workspace:*"
+    "@kodegpt/trust": "workspace:*",
+    "esbuild": "0.28.1"
   }
 }

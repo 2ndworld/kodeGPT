@@ -24,7 +24,8 @@ impl fmt::Display for ProjectProfileReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BoundaryUnavailable => formatter.write_str("openat2 boundary is unavailable"),
-            Self::Unsafe => formatter.write_str("project profile is not safely readable beneath the workspace root"),
+            Self::Unsafe => formatter
+                .write_str("project profile is not safely readable beneath the workspace root"),
             Self::TooLarge => formatter.write_str("project profile exceeds the 64 KiB limit"),
             Self::InvalidUtf8 => formatter.write_str("project profile must be UTF-8"),
             Self::Io(error) => write!(formatter, "project profile read failed: {error}"),
@@ -70,7 +71,8 @@ pub(crate) fn read_project_profile(
     }
 
     let file = File::from(fd);
-    let mut bytes = Vec::with_capacity((stat.st_size as usize).min(PROJECT_PROFILE_MAX_BYTES as usize));
+    let mut bytes =
+        Vec::with_capacity((stat.st_size as usize).min(PROJECT_PROFILE_MAX_BYTES as usize));
     file.take(PROJECT_PROFILE_MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(ProjectProfileReadError::Io)?;
@@ -124,12 +126,18 @@ mod tests {
         let root = temporary_root("symlink-root");
         let outside = temporary_root("symlink-outside");
         let root_fd = fs::File::open(&root).expect("root fd opened").into();
-        assert_eq!(read_project_profile(&root_fd).expect("missing profile allowed"), None);
+        assert_eq!(
+            read_project_profile(&root_fd).expect("missing profile allowed"),
+            None
+        );
 
         fs::create_dir(root.join(".kodegpt")).expect("profile directory created");
         fs::write(outside.join("profile.json"), "{}").expect("outside profile written");
-        symlink(outside.join("profile.json"), root.join(".kodegpt/profile.json"))
-            .expect("outside symlink created");
+        symlink(
+            outside.join("profile.json"),
+            root.join(".kodegpt/profile.json"),
+        )
+        .expect("outside symlink created");
         assert!(matches!(
             read_project_profile(&root_fd),
             Err(ProjectProfileReadError::Unsafe)

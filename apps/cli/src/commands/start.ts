@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { ArtifactStore } from "@kodegpt/artifacts";
+import { AuditReader, type PublicAuditEvent } from "@kodegpt/audit";
 import {
   ConnectorBearerAuthenticator,
   ConnectorCredentialStore,
@@ -10,15 +12,18 @@ import {
   type HttpTrustConfig
 } from "@kodegpt/auth";
 import {
+  ExecutionManager,
   KernelClient,
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
+import { ExtensionRegistry } from "@kodegpt/extensions";
 import {
   MCP_SURFACE_VERSION,
   createKodegptNodeHandler,
   createKodegptToolContext,
   type BearerAuthenticator,
+  type ExtensionRegistryToolAdapter,
   type KodegptToolContext,
   type WorkspaceManagerToolAdapter
 } from "@kodegpt/mcp-server";
@@ -44,7 +49,8 @@ export interface TrustProfileBundle {
 }
 
 export interface ManagerBundle {
-  workspaceManager: WorkspaceManagerToolAdapter;
+  workspaceManager: WorkspaceManagerToolAdapter &
+    Pick<WorkspaceManager, "runProcess" | "processStatus" | "processCancel">;
 }
 
 export interface McpNodeHandle {
@@ -62,6 +68,7 @@ export interface StartDependencies {
   prepareStateRoot(stateRoot: string): Promise<void>;
   prepareAudit(stateRoot: string): Promise<void>;
   prepareConnectorAuth(stateRoot: string): Promise<BearerAuthenticator>;
+  prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
   startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
   createManagers(options: {
@@ -138,6 +145,7 @@ export async function startKodegpt(
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
     const bearerAuthenticator = await dependencies.prepareConnectorAuth(stateRoot);
+    const extensionRegistry = await dependencies.prepareExtensionRegistry(stateRoot);
 
     kernel = await dependencies.startKernel({ runtimePath: options.runtimePath, stateRoot });
     const hello = await kernel.hello();
@@ -145,11 +153,18 @@ export async function startKodegpt(
 
     const trustProfile = dependencies.createTrustProfile(stateRoot);
     const managers = dependencies.createManagers({ kernel, trustProfile });
+    const executionManager = new ExecutionManager(managers.workspaceManager);
+    const artifactStore = new ArtifactStore(kernel);
+    const auditReader = new AuditReader(stateRoot);
     const toolContext = createKodegptToolContext({
       workspaceManager: managers.workspaceManager,
+      executionManager,
+      artifactStore,
+      extensionRegistry,
       inspectProfile: trustProfile.inspectProfile,
       capabilities: async () => systemCapabilities(await kernel!.hello()),
-      health: async () => systemHealth(await kernel!.hello())
+      health: async () =>
+        systemHealth(await kernel!.hello(), await auditReader.readRecentAuditEvents(20))
     });
 
     const authority = `${LOOPBACK_HOST}:${port}`;
@@ -204,6 +219,7 @@ const defaultStartDependencies: StartDependencies = {
     }
     return new ConnectorBearerAuthenticator(store);
   },
+  prepareExtensionRegistry: (stateRoot) => ExtensionRegistry.open(stateRoot),
   startKernel: (options) => KernelClient.start(options),
   createTrustProfile: (stateRoot) => ({
     trust: new WorkspaceTrustStore(stateRoot),
@@ -240,12 +256,19 @@ function systemCapabilities(hello: KernelHello): Record<string, unknown> {
   };
 }
 
-function systemHealth(hello: KernelHello): Record<string, unknown> {
+function systemHealth(
+  hello: KernelHello,
+  recentAuditEvents: PublicAuditEvent[] = []
+): Record<string, unknown> {
   return {
     ok: hello.auditHealthy && hello.filesystemBoundaryAvailable && !hello.testMethods,
     auditHealthy: hello.auditHealthy,
     filesystemBoundaryAvailable: hello.filesystemBoundaryAvailable,
-    testMethods: hello.testMethods
+    testMethods: hello.testMethods,
+    diagnostics: {
+      recentAuditEvents,
+      recentAuditEventCount: recentAuditEvents.length
+    }
   };
 }
 

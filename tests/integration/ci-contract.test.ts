@@ -1,0 +1,55 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it } from "vitest";
+
+const CI_PATH = fileURLToPath(new URL("../../.github/workflows/ci.yml", import.meta.url));
+
+describe("release CI contract", () => {
+  it("pins modern Node-24 actions and the exact toolchain floors", async () => {
+    const source = await readFile(CI_PATH, "utf8");
+    expect(source).toContain("actions/checkout@v6");
+    expect(source).toContain("actions/setup-node@v6");
+    expect(source).toContain("node-version: 24");
+    expect(source).toContain("corepack prepare pnpm@10.15.0 --activate");
+    expect(source).toContain("rustup toolchain install stable --profile minimal");
+    expect(source).toContain("1b80120ef26a28e065e67f89bfef873f13bdd317");
+    expect(source).toContain("bubblewrap 0.11.2");
+    expect(source).toContain("apparmor-profiles");
+    expect(source).toContain("/etc/apparmor.d/bwrap-userns-restrict");
+    expect(source).toContain("apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict");
+    expect(source).toContain("/usr/bin/bwrap");
+    expect(source).toContain("stat -c '%u:%g:%a' /usr/bin/bwrap");
+    expect(source).not.toMatch(/apparmor_restrict_unprivileged_userns\s*=\s*0/);
+    expect(source).not.toMatch(/sysctl[^\n]*apparmor_restrict_unprivileged_userns[^\n]*0/);
+    expect(source).not.toContain("/usr/local/bin/bwrap");
+    expect(source).not.toContain("actions/checkout@v4");
+    expect(source).not.toContain("actions/setup-node@v4");
+    expect(source).not.toContain("pnpm/action-setup");
+  });
+
+  it("runs the complete deterministic gate sequence with explicit sandbox probes", async () => {
+    const source = await readFile(CI_PATH, "utf8");
+    const commands = [
+      "pnpm install --frozen-lockfile",
+      "cargo fmt --all -- --check",
+      "pnpm run typecheck",
+      "pnpm test",
+      "cargo test -p kodegpt-sandbox",
+      "pnpm test:rust",
+      "pnpm test:protocol",
+      "pnpm test:integration",
+      "pnpm test:security",
+      "pnpm test:isolation",
+      "pnpm test:acceptance",
+      "pnpm verify:forbidden",
+      "pnpm verify:package"
+    ];
+    let previous = -1;
+    for (const command of commands) {
+      const index = source.indexOf(command);
+      expect(index, `${command} is missing from CI`).toBeGreaterThan(previous);
+      previous = index;
+    }
+  });
+});

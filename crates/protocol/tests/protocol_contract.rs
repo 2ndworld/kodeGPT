@@ -2,9 +2,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use kodegpt_protocol::{
-    MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame,
-};
+use kodegpt_protocol::{MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame};
 use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Value {
@@ -75,6 +73,9 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "file.tree.json",
         "file.search.json",
         "process.run.json",
+        "process.status.json",
+        "process.cancel.json",
+        "artifact.read.json",
     ] {
         let value = fixture(name);
         serde_json::from_value::<RuntimeRequest>(value)
@@ -87,7 +88,8 @@ fn security_sensitive_params_reject_unknown_fields() {
     let mut value = fixture("file.read.json");
     value["params"]["unexpectedPrivilege"] = json!(true);
 
-    let error = serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
+    let error =
+        serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
     assert!(error.to_string().contains("unknown field"));
 }
 
@@ -96,7 +98,8 @@ fn request_envelopes_reject_unknown_top_level_fields() {
     let mut value = fixture("runtime.hello.json");
     value["sessionId"] = json!("legacy");
 
-    let error = serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
+    let error =
+        serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
     assert!(error.to_string().contains("unknown field"));
 }
 

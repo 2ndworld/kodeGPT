@@ -257,8 +257,8 @@ fn parse_bubblewrap_version(value: &str) -> Option<ExecutableVersion> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_bubblewrap_version, read_version, resolve_bubblewrap, resolve_trusted_executable,
-        ExecutableVersion, BUBBLEWRAP_MINIMUM_VERSION,
+        BUBBLEWRAP_MINIMUM_VERSION, ExecutableVersion, parse_bubblewrap_version, read_version,
+        resolve_bubblewrap, resolve_trusted_executable,
     };
 
     #[test]
@@ -286,10 +286,12 @@ mod tests {
 
     #[test]
     fn trusted_logical_symlink_resolves_to_a_safe_canonical_target() {
-        assert!(std::fs::symlink_metadata("/usr/bin/sh")
-            .expect("system sh metadata")
-            .file_type()
-            .is_symlink());
+        assert!(
+            std::fs::symlink_metadata("/usr/bin/sh")
+                .expect("system sh metadata")
+                .file_type()
+                .is_symlink()
+        );
         let executable = resolve_trusted_executable("sh").expect("trusted logical executable");
         executable
             .revalidate()

@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kodegpt_protocol::{
-    FileEditParams, FileReadParams, FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams,
-    GitStatusParams, PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProfileName,
-    RuntimePolicy,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
+    ArtifactReadParams, FileEditParams, FileReadParams, FileSearchParams, FileTreeParams,
+    FileWriteParams, GitDiffParams, GitStatusParams,
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessOperationParams,
+    ProcessRunParams, ProfileName, RuntimePolicy, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };
 use kodegpt_workspace_io::{
     FilesystemIdentity, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
@@ -23,8 +23,12 @@ use crate::audit::{
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{GitOperation, run_git_inspection};
+use crate::process::{
+    ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
+    run_process,
+};
 use crate::rpc::{error_response, parse_request, success_response};
-use crate::spool::RawSpoolStore;
+use crate::spool::{RawSpoolError, RawSpoolStore};
 
 #[cfg(feature = "runtime-test-methods")]
 use std::io::Write as _;
@@ -86,6 +90,7 @@ async fn run_dispatcher_with_boundary_status(
     let mut tasks = JoinSet::new();
     let workspace_registry = Arc::new(Mutex::new(WorkspaceRegistry::<RuntimePolicy>::new()));
     let execution_registry = Arc::new(Mutex::new(ExecutionRegistry::default()));
+    let process_operations = Arc::new(ProcessOperationRegistry::default());
     let raw_spool = RawSpoolStore::open(audit.state_root(), Arc::clone(&audit))
         .ok()
         .map(Arc::new);
@@ -95,6 +100,7 @@ async fn run_dispatcher_with_boundary_status(
         let audit = Arc::clone(&audit);
         let workspace_registry = Arc::clone(&workspace_registry);
         let execution_registry = Arc::clone(&execution_registry);
+        let process_operations = Arc::clone(&process_operations);
         let raw_spool = raw_spool.as_ref().map(Arc::clone);
         tasks.spawn(async move {
             let response = dispatch_one(
@@ -103,6 +109,7 @@ async fn run_dispatcher_with_boundary_status(
                 audit,
                 workspace_registry,
                 execution_registry,
+                process_operations,
                 raw_spool,
                 filesystem_boundary_available,
             )
@@ -120,6 +127,7 @@ async fn dispatch_one(
     audit: Arc<AuditSink>,
     workspace_registry: Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
     execution_registry: Arc<Mutex<ExecutionRegistry>>,
+    process_operations: Arc<ProcessOperationRegistry>,
     raw_spool: Option<Arc<RawSpoolStore>>,
     filesystem_boundary_available: bool,
 ) -> Value {
@@ -130,7 +138,11 @@ async fn dispatch_one(
 
     match request.method.as_str() {
         "runtime.hello" => {
-            if request.params.as_object().is_none_or(|params| !params.is_empty()) {
+            if request
+                .params
+                .as_object()
+                .is_none_or(|params| !params.is_empty())
+            {
                 return error_response(Some(request.id), -32602, "INVALID_PARAMS");
             }
 
@@ -238,7 +250,8 @@ async fn dispatch_one(
                     if !filesystem_boundary_available {
                         return Err(WorkspaceRegistryError::FilesystemBoundaryUnavailable);
                     }
-                    let registration = registry.register(&root_path, &expected_identity, ceiling)?;
+                    let registration =
+                        registry.register(&root_path, &expected_identity, ceiling)?;
                     Ok(json!({ "capabilityId": registration.capability_id }))
                 },
             )
@@ -330,19 +343,14 @@ async fn dispatch_one(
                 Ok(params) => params,
                 Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
-            let capability_id = params.capability_id;
-            let audit_capability_id = capability_id.clone();
-            audited_workspace_operation(
+            dispatch_workspace_cancel_executions(
                 &audit,
                 &workspace_registry,
+                &process_operations,
                 request.id,
-                Some(audit_capability_id),
-                AuditAction::WorkspaceCancelExecutions,
-                move |registry| {
-                    registry.cancel_executions(&capability_id)?;
-                    Ok(json!({ "ok": true }))
-                },
+                params.capability_id,
             )
+            .await
         }
         "workspace.unregister" => {
             let params = match serde_json::from_value::<WorkspaceCapabilityParams>(request.params) {
@@ -494,7 +502,9 @@ async fn dispatch_one(
         "git.status" => {
             let params = match serde_json::from_value::<GitStatusParams>(request.params) {
                 Ok(params) if !params.capability_id.is_empty() => params,
-                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
             };
             dispatch_git_operation(
                 &audit,
@@ -511,7 +521,9 @@ async fn dispatch_one(
         "git.diff" => {
             let params = match serde_json::from_value::<GitDiffParams>(request.params) {
                 Ok(params) if !params.capability_id.is_empty() => params,
-                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
             };
             dispatch_git_operation(
                 &audit,
@@ -524,6 +536,91 @@ async fn dispatch_one(
                 AuditAction::GitDiff,
             )
             .await
+        }
+        "process.run" => {
+            let params = match serde_json::from_value::<ProcessRunParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && !params.logical_executable.is_empty()
+                        && !params.argv.iter().any(|arg| arg.contains('\0')) =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_process_run(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                &process_operations,
+                raw_spool,
+                request.id,
+                params,
+            )
+            .await
+        }
+        "process.status" => {
+            let params = match serde_json::from_value::<ProcessOperationParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && params.operation_id.starts_with("op_") =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_process_operation(
+                &audit,
+                &workspace_registry,
+                &process_operations,
+                request.id,
+                params,
+                AuditAction::ProcessStatus,
+                false,
+            )
+            .await
+        }
+        "process.cancel" => {
+            let params = match serde_json::from_value::<ProcessOperationParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && params.operation_id.starts_with("op_") =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_process_operation(
+                &audit,
+                &workspace_registry,
+                &process_operations,
+                request.id,
+                params,
+                AuditAction::ProcessCancel,
+                true,
+            )
+            .await
+        }
+        "artifact.read" => {
+            let params = match serde_json::from_value::<ArtifactReadParams>(request.params) {
+                Ok(params)
+                    if params.artifact_id.starts_with("ka_")
+                        && params.max_bytes > 0
+                        && params.max_bytes <= 1024 * 1024 =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_artifact_read(raw_spool, request.id, params).await
         }
         #[cfg(feature = "runtime-test-methods")]
         "test.sleep" if test_methods_enabled => {
@@ -550,7 +647,8 @@ async fn dispatch_one(
                 Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
             let marker_path = PathBuf::from(&params.marker_path);
-            if marker_path.parent() != Some(audit.state_root()) || marker_path.file_name().is_none() {
+            if marker_path.parent() != Some(audit.state_root()) || marker_path.file_name().is_none()
+            {
                 return error_response(Some(request.id), -32602, "INVALID_PARAMS");
             }
 
@@ -599,9 +697,7 @@ async fn dispatch_one(
     }
 }
 
-fn filesystem_identity_from_protocol(
-    identity: ProtocolFilesystemIdentity,
-) -> FilesystemIdentity {
+fn filesystem_identity_from_protocol(identity: ProtocolFilesystemIdentity) -> FilesystemIdentity {
     FilesystemIdentity {
         device_major: identity.device_major,
         device_minor: identity.device_minor,
@@ -743,13 +839,7 @@ async fn dispatch_git_operation(
     let result = match result {
         Ok(Ok(result)) => result,
         Ok(Err(_)) | Err(_) => {
-            return audited_failure(
-                audit,
-                &context,
-                request_id,
-                -32039,
-                "GIT_INSPECTION_FAILED",
-            );
+            return audited_failure(audit, &context, request_id, -32039, "GIT_INSPECTION_FAILED");
         }
     };
     let outcome = if result.exit_code == 0 {
@@ -763,6 +853,334 @@ async fn dispatch_git_operation(
     success_response(request_id, json!(result))
 }
 
+async fn dispatch_workspace_cancel_executions(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    operations: &Arc<ProcessOperationRegistry>,
+    request_id: String,
+    capability_id: String,
+) -> Value {
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: format!("op_{operation_suffix}"),
+        capability_id: Some(capability_id.clone()),
+        action: AuditAction::WorkspaceCancelExecutions,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let registry_result = match registry.lock() {
+        Ok(mut registry) => registry.cancel_executions(&capability_id),
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    if let Err(error) = registry_result {
+        let (code, message) = workspace_registry_error_contract(&error);
+        return audited_failure(audit, &context, request_id, code, message);
+    }
+
+    let operations = Arc::clone(operations);
+    let capability_for_cancel = capability_id.clone();
+    let cancelled =
+        tokio::task::spawn_blocking(move || operations.cancel_workspace(&capability_for_cancel))
+            .await;
+    match cancelled {
+        Ok(Ok(())) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, json!({ "ok": true }))
+        }
+        Ok(Err(error)) => {
+            let (code, message) = process_error_contract(&error);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+        Err(_) => audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32045,
+            "PROCESS_REGISTRY_UNAVAILABLE",
+        ),
+    }
+}
+
+async fn dispatch_process_run(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    operations: &Arc<ProcessOperationRegistry>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    params: ProcessRunParams,
+) -> Value {
+    let capability_id = params.capability_id.clone();
+    let operation_id = next_process_operation_id();
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action: AuditAction::ProcessRun,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let (root_fd, policy) = match registry.lock() {
+        Ok(registry) => {
+            let policy = match registry.clone_ready_policy(&capability_id) {
+                Ok(policy) => policy,
+                Err(error) => {
+                    let (code, message) = workspace_registry_error_contract(&error);
+                    return audited_failure(audit, &context, request_id, code, message);
+                }
+            };
+            if !policy.allow_process || policy.name == ProfileName::Observe {
+                return audited_failure(
+                    audit,
+                    &context,
+                    request_id,
+                    -32040,
+                    "PROCESS_POLICY_DENIED",
+                );
+            }
+            let root_fd = match registry.duplicate_ready_root_fd(&capability_id) {
+                Ok(root_fd) => root_fd,
+                Err(error) => {
+                    let (code, message) = workspace_registry_error_contract(&error);
+                    return audited_failure(audit, &context, request_id, code, message);
+                }
+            };
+            (root_fd, policy)
+        }
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32048,
+            "PROCESS_EXECUTION_UNAVAILABLE",
+        );
+    };
+
+    let launch = ProcessLaunchRequest {
+        logical_executable: params.logical_executable,
+        argv: params.argv,
+        cwd: params.cwd,
+        env: params.env,
+        background: params.background,
+    };
+    let executions = Arc::clone(executions);
+    let operations = Arc::clone(operations);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_process(
+            root_fd,
+            capability_for_run,
+            request_for_run,
+            operation_for_run,
+            policy,
+            launch,
+            raw_spool,
+            executions,
+            operations,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(view)) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, json!(view))
+        }
+        Ok(Err(error)) => {
+            let (code, message) = process_error_contract(&error);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+        Err(_) => audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32048,
+            "PROCESS_EXECUTION_FAILED",
+        ),
+    }
+}
+
+async fn dispatch_process_operation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    operations: &Arc<ProcessOperationRegistry>,
+    request_id: String,
+    params: ProcessOperationParams,
+    action: AuditAction,
+    cancel: bool,
+) -> Value {
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: params.operation_id.clone(),
+        capability_id: Some(params.capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    match registry.lock() {
+        Ok(registry) => {
+            if let Err(error) = registry.require_ready(&params.capability_id) {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        }
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    }
+
+    let operation_result = if cancel {
+        let operations = Arc::clone(operations);
+        let capability_id = params.capability_id.clone();
+        let operation_id = params.operation_id.clone();
+        match tokio::task::spawn_blocking(move || operations.cancel(&capability_id, &operation_id))
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ProcessError::RegistryUnavailable),
+        }
+    } else {
+        operations.status(&params.capability_id, &params.operation_id)
+    };
+
+    match operation_result {
+        Ok(view) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, json!(view))
+        }
+        Err(error) => {
+            let (code, message) = process_error_contract(&error);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+    }
+}
+
+async fn dispatch_artifact_read(
+    spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    params: ArtifactReadParams,
+) -> Value {
+    let Some(spool) = spool else {
+        return error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE");
+    };
+    let operation_id = next_process_operation_id();
+    let artifact_id = params.artifact_id;
+    let request_for_read = request_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        spool.read(
+            &request_for_read,
+            &operation_id,
+            &artifact_id,
+            params.offset,
+            params.max_bytes,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(read)) => success_response(request_id, json!(read)),
+        Ok(Err(error)) => {
+            let (code, message) = artifact_error_contract(&error);
+            error_response(Some(request_id), code, message)
+        }
+        Err(_) => error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE"),
+    }
+}
+
+fn artifact_error_contract(error: &RawSpoolError) -> (i64, &'static str) {
+    match error {
+        RawSpoolError::AuditUnavailable => (-32010, "AUDIT_UNAVAILABLE"),
+        RawSpoolError::InvalidArtifactId => (-32051, "ARTIFACT_ID_INVALID"),
+        RawSpoolError::ArtifactNotFound => (-32052, "ARTIFACT_NOT_FOUND"),
+        RawSpoolError::ArtifactNotRegular => (-32053, "ARTIFACT_UNSAFE"),
+        RawSpoolError::ReadLimitExceeded => (-32054, "ARTIFACT_READ_LIMIT_EXCEEDED"),
+        RawSpoolError::QuotaExceeded => (-32055, "ARTIFACT_QUOTA_EXCEEDED"),
+        RawSpoolError::SynchronizationFailed | RawSpoolError::Io(_) => {
+            (-32050, "ARTIFACT_STORE_UNAVAILABLE")
+        }
+        RawSpoolError::DuplicateExecution
+        | RawSpoolError::InvalidExecutionId
+        | RawSpoolError::InvalidMediaType => (-32056, "ARTIFACT_STORE_INVALID_STATE"),
+    }
+}
+
+fn process_error_contract(error: &ProcessError) -> (i64, &'static str) {
+    match error {
+        ProcessError::PolicyDenied => (-32040, "PROCESS_POLICY_DENIED"),
+        ProcessError::ExecutableDenied => (-32041, "PROCESS_EXECUTABLE_DENIED"),
+        ProcessError::EnvironmentDenied => (-32042, "PROCESS_ENVIRONMENT_DENIED"),
+        ProcessError::InvalidCwd => (-32043, "PROCESS_CWD_INVALID"),
+        ProcessError::OperationNotFound => (-32044, "PROCESS_OPERATION_NOT_FOUND"),
+        ProcessError::RegistryUnavailable => (-32045, "PROCESS_REGISTRY_UNAVAILABLE"),
+        ProcessError::CancellationFailed(_) => (-32046, "PROCESS_CANCEL_FAILED"),
+        ProcessError::Sandbox(_) => (-32047, "PROCESS_SANDBOX_UNAVAILABLE"),
+        ProcessError::CaptureFailed | ProcessError::Spool(_) | ProcessError::WaitFailed(_) => {
+            (-32048, "PROCESS_EXECUTION_FAILED")
+        }
+    }
+}
+
 fn mutation_allowed(policy: &RuntimePolicy) -> bool {
     policy.allow_write && policy.name != ProfileName::Observe
 }
@@ -771,9 +1189,7 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
     match error {
         WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
         WorkspaceRegistryError::IdentityChanged => (-32022, "WORKSPACE_IDENTITY_CHANGED"),
-        WorkspaceRegistryError::MountTopologyUnavailable => {
-            (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE")
-        }
+        WorkspaceRegistryError::MountTopologyUnavailable => (-32023, "MOUNT_TOPOLOGY_UNAVAILABLE"),
         WorkspaceRegistryError::RootOverlap => (-32024, "WORKSPACE_ROOT_OVERLAP"),
         WorkspaceRegistryError::PolicyEscalation => (-32027, "WORKSPACE_POLICY_ESCALATION"),
         WorkspaceRegistryError::WorkspaceNotReady => (-32028, "WORKSPACE_NOT_READY"),
@@ -790,9 +1206,7 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
         WorkspaceRegistryError::FileWriteConflict => (-32036, "FILE_EDIT_CONFLICT"),
         WorkspaceRegistryError::FileWriteFailed => (-32037, "FILE_WRITE_FAILED"),
-        WorkspaceRegistryError::CapabilityNotFound => {
-            (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND")
-        }
+        WorkspaceRegistryError::CapabilityNotFound => (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND"),
     }
 }
 
@@ -825,10 +1239,8 @@ mod tests {
     use crate::audit::{AuditFaults, AuditSink};
 
     fn audit_sink(label: &str) -> (Arc<AuditSink>, PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "kodegpt-dispatcher-{label}-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("kodegpt-dispatcher-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let sink = Arc::new(AuditSink::open(&root));
         (sink, root)
@@ -905,7 +1317,11 @@ mod tests {
         let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, true, audit));
 
         request_tx
-            .send(request("req_sleep", "test.sleep", json!({ "delayMs": 500 })))
+            .send(request(
+                "req_sleep",
+                "test.sleep",
+                json!({ "delayMs": 500 }),
+            ))
             .expect("sleep request accepted");
         let started = Instant::now();
         request_tx
@@ -1010,7 +1426,13 @@ mod tests {
 
         let response = inspect_root_once(Arc::clone(&audit), &workspace, "req_inspect_valid").await;
         assert_eq!(response["id"], "req_inspect_valid");
-        assert_eq!(response["result"]["canonicalRoot"], fs::canonicalize(&workspace).unwrap().to_string_lossy().as_ref());
+        assert_eq!(
+            response["result"]["canonicalRoot"],
+            fs::canonicalize(&workspace)
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        );
         assert!(response["result"]["identity"]["inode"].as_str().is_some());
         assert!(response["result"].get("capabilityId").is_none());
 
@@ -1175,7 +1597,8 @@ mod tests {
             .to_owned();
 
         fs::rename(&workspace, &displaced).expect("registered pathname displaced");
-        fs::create_dir_all(workspace.join(".kodegpt")).expect("replacement profile directory created");
+        fs::create_dir_all(workspace.join(".kodegpt"))
+            .expect("replacement profile directory created");
         fs::write(
             workspace.join(".kodegpt/profile.json"),
             r#"{"name":"trusted","allowWrite":true}"#,
@@ -1220,8 +1643,11 @@ mod tests {
         fs::create_dir_all(workspace.join("nested")).expect("workspace tree created");
         fs::write(workspace.join("inside.txt"), "original contents\n")
             .expect("original file written");
-        fs::write(workspace.join("nested/needle.txt"), "alpha\nneedle here\nomega\n")
-            .expect("search file written");
+        fs::write(
+            workspace.join("nested/needle.txt"),
+            "alpha\nneedle here\nomega\n",
+        )
+        .expect("search file written");
         let identity = kodegpt_workspace_io::inspect_root(&workspace)
             .expect("workspace inspected")
             .identity;
@@ -1294,8 +1720,16 @@ mod tests {
         let tree_entries = tree["result"]["entries"]
             .as_array()
             .expect("tree returns entries");
-        assert!(tree_entries.iter().any(|entry| entry["path"] == "inside.txt"));
-        assert!(tree_entries.iter().any(|entry| entry["path"] == "nested/needle.txt"));
+        assert!(
+            tree_entries
+                .iter()
+                .any(|entry| entry["path"] == "inside.txt")
+        );
+        assert!(
+            tree_entries
+                .iter()
+                .any(|entry| entry["path"] == "nested/needle.txt")
+        );
 
         let search = next_response(
             &request_tx,
@@ -1550,8 +1984,7 @@ mod tests {
             .expect("state secret written");
         symlink(&other_workspace, writable_workspace.join("other-link"))
             .expect("other workspace symlink created");
-        symlink(&audit_root, writable_workspace.join("state-link"))
-            .expect("state symlink created");
+        symlink(&audit_root, writable_workspace.join("state-link")).expect("state symlink created");
 
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (response_tx, mut response_rx) = mpsc::unbounded_channel();
@@ -1641,7 +2074,10 @@ mod tests {
         )
         .await;
 
-        for (label, capability_id) in [("observe", &observe_cap), ("allow-write-false", &denied_cap)] {
+        for (label, capability_id) in [
+            ("observe", &observe_cap),
+            ("allow-write-false", &denied_cap),
+        ] {
             let denied = next_response(
                 &request_tx,
                 &mut response_rx,
@@ -1777,7 +2213,10 @@ mod tests {
             "omega",
             "must-not-exist",
         ] {
-            assert!(!audit_text.contains(secret), "audit must not record mutation content");
+            assert!(
+                !audit_text.contains(secret),
+                "audit must not record mutation content"
+            );
         }
         for workspace in [
             observe_workspace,

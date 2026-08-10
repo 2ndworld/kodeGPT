@@ -23,9 +23,13 @@ pub enum OpenatBoundaryError {
 impl fmt::Display for OpenatBoundaryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRelativePath => formatter.write_str("path must be a non-empty relative path beneath the retained root"),
-            Self::BoundaryUnavailable => formatter.write_str("required openat2 filesystem boundary semantics are unavailable"),
-            Self::BoundaryViolation => formatter.write_str("path resolution crossed the retained filesystem boundary"),
+            Self::InvalidRelativePath => formatter
+                .write_str("path must be a non-empty relative path beneath the retained root"),
+            Self::BoundaryUnavailable => formatter
+                .write_str("required openat2 filesystem boundary semantics are unavailable"),
+            Self::BoundaryViolation => {
+                formatter.write_str("path resolution crossed the retained filesystem boundary")
+            }
             Self::NotFound => formatter.write_str("path was not found beneath the retained root"),
             Self::Os(error) => write!(formatter, "openat2 failed: {error}"),
         }
@@ -125,13 +129,14 @@ pub fn open_parent_beneath(
 }
 
 pub fn probe_filesystem_boundary() -> Result<(), OpenatBoundaryError> {
-    let root: OwnedFd = File::open("/").map_err(|error| {
-        error
-            .raw_os_error()
-            .map(|code| OpenatBoundaryError::Os(Errno::from_raw_os_error(code)))
-            .unwrap_or(OpenatBoundaryError::BoundaryUnavailable)
-    })?
-    .into();
+    let root: OwnedFd = File::open("/")
+        .map_err(|error| {
+            error
+                .raw_os_error()
+                .map(|code| OpenatBoundaryError::Os(Errno::from_raw_os_error(code)))
+                .unwrap_or(OpenatBoundaryError::BoundaryUnavailable)
+        })?
+        .into();
 
     match openat2(
         &root,
@@ -193,8 +198,7 @@ mod tests {
     use rustix::fs::OFlags;
 
     use super::{
-        OpenatBoundaryError, open_existing_beneath, open_parent_beneath,
-        probe_filesystem_boundary,
+        OpenatBoundaryError, open_existing_beneath, open_parent_beneath, probe_filesystem_boundary,
     };
 
     fn temporary_root(label: &str) -> PathBuf {

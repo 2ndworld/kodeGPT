@@ -28,7 +28,12 @@ pub enum AuditAction {
     FileEdit,
     GitStatus,
     GitDiff,
+    ProcessRun,
+    ProcessStatus,
+    ProcessCancel,
     ArtifactSpoolCreate,
+    ArtifactRead,
+    ArtifactCleanup,
     TestEffect,
 }
 
@@ -136,7 +141,11 @@ struct AuditRecord {
 
 impl AuditSink {
     pub fn open(state_root: &Path) -> Self {
-        Self::open_internal(state_root, AuditSinkConfig::default(), AuditFaults::default())
+        Self::open_internal(
+            state_root,
+            AuditSinkConfig::default(),
+            AuditFaults::default(),
+        )
     }
 
     #[cfg(any(test, feature = "runtime-test-methods"))]
@@ -180,7 +189,10 @@ impl AuditSink {
     }
 
     pub fn is_healthy(&self) -> bool {
-        self.state.lock().map(|state| state.healthy).unwrap_or(false)
+        self.state
+            .lock()
+            .map(|state| state.healthy)
+            .unwrap_or(false)
     }
 
     #[cfg(test)]
@@ -200,11 +212,7 @@ impl AuditSink {
         self.append(record, AuditPhase::Decision)
     }
 
-    pub fn outcome(
-        &self,
-        context: &AuditContext,
-        outcome: AuditOutcome,
-    ) -> Result<(), AuditError> {
+    pub fn outcome(&self, context: &AuditContext, outcome: AuditOutcome) -> Result<(), AuditError> {
         let record = AuditRecord::outcome(context, outcome);
         self.append(record, AuditPhase::Outcome)
     }
@@ -326,7 +334,13 @@ enum AuditPhase {
 
 impl AuditRecord {
     fn decision(context: &AuditContext, decision: AuditDecision, reason: AuditReason) -> Self {
-        Self::base(context, "decision", Some(decision.as_str()), Some(reason.as_str()), None)
+        Self::base(
+            context,
+            "decision",
+            Some(decision.as_str()),
+            Some(reason.as_str()),
+            None,
+        )
     }
 
     fn outcome(context: &AuditContext, outcome: AuditOutcome) -> Self {
@@ -379,7 +393,12 @@ impl AuditAction {
             Self::FileEdit => "file_edit",
             Self::GitStatus => "git_status",
             Self::GitDiff => "git_diff",
+            Self::ProcessRun => "process_run",
+            Self::ProcessStatus => "process_status",
+            Self::ProcessCancel => "process_cancel",
             Self::ArtifactSpoolCreate => "artifact_spool_create",
+            Self::ArtifactRead => "artifact_read",
+            Self::ArtifactCleanup => "artifact_cleanup",
             Self::TestEffect => "test_effect",
         }
     }
@@ -464,8 +483,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        AuditAction, AuditContext, AuditDecision, AuditFaults, AuditOutcome, AuditReason, AuditSink,
-        AuditSinkConfig, DEFAULT_AUDIT_ROTATION_BYTES, DEFAULT_AUDIT_ROTATIONS,
+        AuditAction, AuditContext, AuditDecision, AuditFaults, AuditOutcome, AuditReason,
+        AuditSink, AuditSinkConfig, DEFAULT_AUDIT_ROTATION_BYTES, DEFAULT_AUDIT_ROTATIONS,
     };
 
     fn temporary_root(label: &str) -> PathBuf {

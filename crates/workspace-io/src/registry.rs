@@ -13,7 +13,7 @@ use crate::mountinfo::{
 };
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
-    SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, TREE_MAX_ENTRIES, ReadFileResult, SearchMatch,
+    ReadFileResult, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, SearchMatch, TREE_MAX_ENTRIES,
     TreeEntry, WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
 };
 use crate::write::{
@@ -78,16 +78,28 @@ impl fmt::Display for WorkspaceRegistryError {
                 formatter.write_str("workspace mount topology is unavailable")
             }
             Self::RootOverlap => formatter.write_str("workspace root overlaps an existing root"),
-            Self::PolicyEscalation => formatter.write_str("workspace policy restriction would escalate authority"),
-            Self::WorkspaceNotReady => formatter.write_str("workspace is not in the required lifecycle phase"),
-            Self::FilesystemBoundaryUnavailable => formatter.write_str("filesystem boundary semantics are unavailable"),
-            Self::ProjectProfileReadFailed => formatter.write_str("project profile could not be read safely"),
+            Self::PolicyEscalation => {
+                formatter.write_str("workspace policy restriction would escalate authority")
+            }
+            Self::WorkspaceNotReady => {
+                formatter.write_str("workspace is not in the required lifecycle phase")
+            }
+            Self::FilesystemBoundaryUnavailable => {
+                formatter.write_str("filesystem boundary semantics are unavailable")
+            }
+            Self::ProjectProfileReadFailed => {
+                formatter.write_str("project profile could not be read safely")
+            }
             Self::FileAccessDenied => formatter.write_str("workspace file access was denied"),
             Self::FileNotFound => formatter.write_str("workspace file path was not found"),
             Self::FileInvalidUtf8 => formatter.write_str("workspace file is not valid UTF-8"),
-            Self::FileLimitExceeded => formatter.write_str("workspace file operation limit was exceeded"),
+            Self::FileLimitExceeded => {
+                formatter.write_str("workspace file operation limit was exceeded")
+            }
             Self::FileReadFailed => formatter.write_str("workspace file operation failed"),
-            Self::FileWriteConflict => formatter.write_str("workspace file edit conflicted with expected replacements"),
+            Self::FileWriteConflict => {
+                formatter.write_str("workspace file edit conflicted with expected replacements")
+            }
             Self::FileWriteFailed => formatter.write_str("workspace file mutation failed"),
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
@@ -352,6 +364,14 @@ impl<P> WorkspaceRegistry<P> {
             .map_err(|_| WorkspaceRegistryError::FileReadFailed)
     }
 
+    pub fn clone_ready_policy(&self, capability_id: &str) -> Result<P, WorkspaceRegistryError>
+    where
+        P: Clone,
+    {
+        self.ready_context(capability_id)
+            .map(|context| context.effective_policy.clone())
+    }
+
     fn ready_context(
         &self,
         capability_id: &str,
@@ -509,7 +529,12 @@ mod tests {
         root
     }
 
-    fn mount_line(id: u64, identity: &FilesystemIdentity, root: &str, mount_point: &Path) -> String {
+    fn mount_line(
+        id: u64,
+        identity: &FilesystemIdentity,
+        root: &str,
+        mount_point: &Path,
+    ) -> String {
         format!(
             "{id} 1 {}:{} {root} {} rw,relatime - ext4 /dev/test rw\n",
             identity.device_major,
@@ -552,8 +577,12 @@ mod tests {
     fn registry_rejects_backing_ancestor_and_descendant_in_both_orders() {
         let parent_visible = temporary_root("backing-parent");
         let child_visible = temporary_root("backing-child");
-        let parent_identity = inspect_root(&parent_visible).expect("parent inspected").identity;
-        let child_identity = inspect_root(&child_visible).expect("child inspected").identity;
+        let parent_identity = inspect_root(&parent_visible)
+            .expect("parent inspected")
+            .identity;
+        let child_identity = inspect_root(&child_visible)
+            .expect("child inspected")
+            .identity;
         let mountinfo = format!(
             "{}{}",
             mount_line(201, &parent_identity, "/srv/repos", &parent_visible),
@@ -659,8 +688,12 @@ mod tests {
         registry
             .restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(()))
             .expect("opening policy restriction accepted");
-        registry.activate(&capability_id).expect("workspace activates");
-        registry.require_ready(&capability_id).expect("ready accepted");
+        registry
+            .activate(&capability_id)
+            .expect("workspace activates");
+        registry
+            .require_ready(&capability_id)
+            .expect("ready accepted");
         let duplicated = registry
             .duplicate_ready_root_fd(&capability_id)
             .expect("ready root fd duplicates");
@@ -693,7 +726,9 @@ mod tests {
         registry
             .cancel_executions(&capability_id)
             .expect("closing cancellation accepted");
-        registry.unregister(&capability_id).expect("closing unregisters");
+        registry
+            .unregister(&capability_id)
+            .expect("closing unregisters");
         assert_eq!(registry.len(), 0);
 
         fs::remove_dir_all(root).expect("root removed");
