@@ -533,10 +533,11 @@ async fn dispatch_process_request(
                     "PROCESS_UNAVAILABLE",
                 );
             };
-            let result = tokio::task::spawn_blocking(move || {
-                manager.run(operation_id, root_fd, policy, params, context.clone())
-            })
-            .await;
+            let worker_context = context.clone();
+  let result = tokio::task::spawn_blocking(move || {
+      manager.run(operation_id, root_fd, policy, params, worker_context)
+  })
+  .await;
             match result {
                 Ok(Ok(status)) => {
                     if !audit.is_healthy() {
