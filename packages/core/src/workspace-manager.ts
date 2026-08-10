@@ -46,6 +46,24 @@ export interface WorkspaceFileEditResult {
   replacements: number;
 }
 
+export interface WorkspaceArtifactMetadata {
+  schemaVersion: number;
+  artifactId: string;
+  mediaType: string;
+  bytesWritten: number;
+  sourceTruncated: boolean;
+}
+
+export interface WorkspaceGitInspectionResult {
+  schemaVersion: number;
+  exitCode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  artifact: WorkspaceArtifactMetadata;
+}
+
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface WorkspaceTreeEntry {
@@ -402,6 +420,25 @@ export class WorkspaceManager {
     return result.matches.map(validateSearchMatch);
   }
 
+  async gitStatus(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
+    return this.#gitInspect(workspaceId, "git.status");
+  }
+
+  async gitDiff(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
+    return this.#gitInspect(workspaceId, "git.diff");
+  }
+
+  async #gitInspect(
+    workspaceId: string,
+    method: "git.status" | "git.diff"
+  ): Promise<WorkspaceGitInspectionResult> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>(method, {
+      capabilityId: state.capabilityId
+    });
+    return validateGitInspectionResult(result, method);
+  }
+
   #requireReadyState(workspaceId: string): WorkspaceState {
     const state = this.#workspaces.get(workspaceId);
     if (state === undefined) {
@@ -541,6 +578,49 @@ function validateSearchMatch(value: unknown): WorkspaceSearchMatch {
     path: value.path,
     line: value.line as number,
     lineText: value.lineText
+  };
+}
+
+function validateGitInspectionResult(
+  value: unknown,
+  method: "git.status" | "git.diff"
+): WorkspaceGitInspectionResult {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !Number.isSafeInteger(value.exitCode) ||
+    typeof value.stdoutPreview !== "string" ||
+    typeof value.stderrPreview !== "string" ||
+    typeof value.stdoutTruncated !== "boolean" ||
+    typeof value.stderrTruncated !== "boolean" ||
+    !isRecord(value.artifact) ||
+    value.artifact.schemaVersion !== 1 ||
+    typeof value.artifact.artifactId !== "string" ||
+    !value.artifact.artifactId.startsWith("ka_") ||
+    typeof value.artifact.mediaType !== "string" ||
+    !Number.isSafeInteger(value.artifact.bytesWritten) ||
+    (value.artifact.bytesWritten as number) < 0 ||
+    typeof value.artifact.sourceTruncated !== "boolean"
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      `${method} returned an invalid payload`
+    );
+  }
+  return {
+    schemaVersion: 1,
+    exitCode: value.exitCode as number,
+    stdoutPreview: value.stdoutPreview,
+    stderrPreview: value.stderrPreview,
+    stdoutTruncated: value.stdoutTruncated,
+    stderrTruncated: value.stderrTruncated,
+    artifact: {
+      schemaVersion: 1,
+      artifactId: value.artifact.artifactId,
+      mediaType: value.artifact.mediaType,
+      bytesWritten: value.artifact.bytesWritten as number,
+      sourceTruncated: value.artifact.sourceTruncated
+    }
   };
 }
 
