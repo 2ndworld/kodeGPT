@@ -1,0 +1,81 @@
+name: Task 16 diagnostic marker
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Run targeted suite and persist one-shot diagnostic
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          MARKER=docs/implementation/evidence/.task16-targeted-diagnostic.txt
+          if [ -f "$MARKER" ]; then
+            echo "diagnostic marker already present"
+            exit 0
+          fi
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y meson ninja-build pkg-config libcap-dev libselinux1-dev >/dev/null
+          sudo chown root:root /usr/local/bin
+          sudo chmod 0755 /usr/local/bin
+          curl --fail --location --retry 3 --silent --show-error --output /tmp/bubblewrap.tar.xz https://github.com/containers/bubblewrap/releases/download/v0.11.2/bubblewrap-0.11.2.tar.xz
+          tar -C /tmp -xf /tmp/bubblewrap.tar.xz
+          meson setup /tmp/bubblewrap-0.11.2/_build /tmp/bubblewrap-0.11.2 -Dtests=false >/dev/null
+          meson compile -C /tmp/bubblewrap-0.11.2/_build >/dev/null
+          sudo install -o root -g root -m 0755 /tmp/bubblewrap-0.11.2/_build/bwrap /usr/local/bin/bwrap
+          for name in sh python3 git; do
+            SOURCE="$(readlink -f "$(command -v "$name")")"
+            sudo install -o root -g root -m 0755 "$SOURCE" "/usr/local/bin/$name"
+          done
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null
+          fi
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate >/dev/null
+          pnpm install --frozen-lockfile >/dev/null
+
+          mkdir -p /tmp/task16-diag
+          set +e
+          cargo test -p kodegpt-protocol > /tmp/task16-diag/protocol-rust.log 2>&1; A=$?
+          pnpm test:protocol > /tmp/task16-diag/protocol-ts.log 2>&1; B=$?
+          pnpm typecheck > /tmp/task16-diag/typecheck.log 2>&1; C=$?
+          cargo test -p kodegpt-runtime process -- --nocapture > /tmp/task16-diag/process-rust.log 2>&1; D=$?
+          pnpm exec vitest run tests/security/process-policy.test.ts > /tmp/task16-diag/process-security.log 2>&1; E=$?
+          pnpm --filter @kodegpt/core test > /tmp/task16-diag/core.log 2>&1; F=$?
+          pnpm --filter @kodegpt/mcp-server test > /tmp/task16-diag/mcp.log 2>&1; G=$?
+          pnpm exec vitest run tests/integration/mcp-stdio.test.ts tests/integration/mcp-http.test.ts > /tmp/task16-diag/mcp-integration.log 2>&1; H=$?
+          set -e
+
+          {
+            echo "Task 16 targeted diagnostic"
+            echo "cargo-protocol=$A"
+            echo "ts-protocol=$B"
+            echo "typecheck=$C"
+            echo "process-rust=$D"
+            echo "process-security=$E"
+            echo "core=$F"
+            echo "mcp=$G"
+            echo "mcp-integration=$H"
+            for name in protocol-rust protocol-ts typecheck process-rust process-security core mcp mcp-integration; do
+              echo
+              echo "===== $name tail ====="
+              tail -n 80 "/tmp/task16-diag/$name.log"
+            done
+          } > "$MARKER"
+
+          git config user.name "kodegpt-task16-verifier"
+          git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+          git add "$MARKER"
+          git commit -m "chore(ci): persist temporary Task 16 diagnostic"
+          git push origin "HEAD:${HEAD_BRANCH}"
