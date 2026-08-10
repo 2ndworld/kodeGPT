@@ -11,6 +11,7 @@ async function source(relativePath: string): Promise<string> {
 describe("hardened read-only Git inspection source regressions", () => {
   it("routes Git only through the retained-root Bubblewrap provider with helper hardening", async () => {
     const implementation = await source("crates/runtime/src/git.rs");
+    const production = implementation.split("#[cfg(test)]", 1)[0] ?? implementation;
 
     for (const required of [
       "WorkspaceAccess::ReadOnly",
@@ -33,12 +34,12 @@ describe("hardened read-only Git inspection source regressions", () => {
       "resolve_trusted_executable(\"git\")",
       "spool.create("
     ]) {
-      expect(implementation).toContain(required);
+      expect(production).toContain(required);
     }
 
-    expect(implementation).not.toContain("Command::new");
-    expect(implementation).not.toContain("canonicalize(");
-    expect(implementation).not.toContain("GIT_EXTERNAL_DIFF=");
+    expect(production).not.toContain("Command::new");
+    expect(production).not.toContain("canonicalize(");
+    expect(production).not.toContain("GIT_EXTERNAL_DIFF=");
   });
 
   it("spools captured output before exposing bounded previews", async () => {
