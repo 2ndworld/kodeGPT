@@ -50,6 +50,7 @@ async function startExposure(options: {
   stateRoot: string;
   fakeBinDir: string;
   argsPath: string;
+  zrokStatePath: string;
   port: number;
 }) {
   const child = spawn(
@@ -57,9 +58,9 @@ async function startExposure(options: {
     [
       cliPath,
       "expose",
-      "ngrok",
-      "--hostname",
-      "kodegpt-test.example",
+      "zrok",
+      "--name",
+      "public:kodegpt-dev",
       "--port",
       String(options.port),
       "--state-root",
@@ -70,7 +71,8 @@ async function startExposure(options: {
       env: {
         ...process.env,
         PATH: [options.fakeBinDir, process.env.PATH ?? ""].join(delimiter),
-        KODEGPT_TEST_NGROK_ARGS: options.argsPath
+        KODEGPT_TEST_ZROK_ARGS: options.argsPath,
+        KODEGPT_TEST_ZROK_STATE: options.zrokStatePath
       },
       stdio: ["ignore", "pipe", "pipe"]
     }
@@ -118,70 +120,98 @@ async function freeLoopbackPort(): Promise<number> {
   return port;
 }
 
-describe("CLI managed ngrok exposure", () => {
-  it("runs the packaged expose command with a fake stable ngrok process and reuses credentials", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "kodegpt-cli-expose-"));
+describe("CLI managed zrok exposure", () => {
+  it("runs the packaged expose command with fake zrok2 and reuses credentials", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "kodegpt-cli-zrok-"));
     temporaryRoots.push(tempRoot);
     const stateRoot = join(tempRoot, "state");
     const fakeBinDir = join(tempRoot, "bin");
-    const argsPath = join(tempRoot, "ngrok-args.json");
+    const argsPath = join(tempRoot, "zrok-args.json");
+    const zrokStatePath = join(tempRoot, "zrok-state.json");
     await mkdir(fakeBinDir, { recursive: true });
-    const fakeNgrokPath = join(fakeBinDir, "ngrok");
+    const fakeZrokPath = join(fakeBinDir, "zrok2");
     await writeFile(
-      fakeNgrokPath,
+      fakeZrokPath,
       [
         "#!/usr/bin/env node",
         "const fs = require('node:fs');",
-        "const target = process.env.KODEGPT_TEST_NGROK_ARGS;",
-        "if (!target) process.exit(3);",
-        "fs.writeFileSync(target, JSON.stringify(process.argv.slice(2)));",
-        "const stop = () => process.exit(0);",
-        "process.on('SIGTERM', stop);",
-        "process.on('SIGINT', stop);",
-        "setInterval(() => {}, 1000);",
+        "const args = process.argv.slice(2);",
+        "const statePath = process.env.KODEGPT_TEST_ZROK_STATE;",
+        "const argsPath = process.env.KODEGPT_TEST_ZROK_ARGS;",
+        "if (!statePath || !argsPath) process.exit(3);",
+        "if (args[0] === 'list' && args[1] === 'names') {",
+        "  process.stdout.write(JSON.stringify([{name:'kodegpt-dev',namespaceName:'shares.example.test',namespaceToken:'public',reserved:true}]));",
+        "  process.exit(0);",
+        "}",
+        "if (args[0] === 'share' && args[1] === 'public') {",
+        "  fs.writeFileSync(argsPath, JSON.stringify(args));",
+        "  fs.writeFileSync(statePath, JSON.stringify({ready:true,target:args[2]}));",
+        "  const stop = () => process.exit(0);",
+        "  process.on('SIGTERM', stop);",
+        "  process.on('SIGINT', stop);",
+        "  setInterval(() => {}, 1000);",
+        "  return;",
+        "}",
+        "if (args[0] === 'list' && args[1] === 'shares') {",
+        "  const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : null;",
+        "  process.stdout.write(JSON.stringify({shares:state?.ready?[{target:state.target,shareMode:'public',backendMode:'proxy',frontendEndpoints:['kodegpt-dev.shares.example.test'],extraField:'raw-zrok-field-marker'}]:[]}));",
+        "  process.exit(0);",
+        "}",
+        "process.exit(4);",
         ""
       ].join("\n"),
       "utf8"
     );
-    await chmod(fakeNgrokPath, 0o755);
+    await chmod(fakeZrokPath, 0o755);
 
     const port = await freeLoopbackPort();
-    const first = await startExposure({ stateRoot, fakeBinDir, argsPath, port });
+    const first = await startExposure({ stateRoot, fakeBinDir, argsPath, zrokStatePath, port });
     await vi.waitFor(
-      () => {
-        expect(first.stdout(), first.stderr()).toContain("KodeGPT exposure ready");
-      },
-      { timeout: 15_000 }
+      () => expect(first.stdout(), first.stderr()).toContain("KodeGPT exposure ready"),
+      { timeout: 20_000 }
     );
-    expect(first.stdout()).toContain("Public MCP endpoint: https://kodegpt-test.example/mcp");
+    expect(first.stdout()).toContain("Public MCP endpoint: https://kodegpt-dev.shares.example.test/mcp");
     expect(first.stdout()).toContain("ChatGPT Server URL:");
-    expect(first.stdout()).toContain("kodegpt_token=");
+    expect(first.stdout()).toContain(["kodegpt", "token="].join("_"));
+    expect(first.stdout()).not.toContain("raw-zrok-field-marker");
     await vi.waitFor(() => expect(existsSync(argsPath)).toBe(true), { timeout: 5_000 });
     expect(JSON.parse(await readFile(argsPath, "utf8"))).toEqual([
-      "http",
+      "share",
+      "public",
       `http://127.0.0.1:${port}`,
-      "--url",
-      "https://kodegpt-test.example"
+      "--headless",
+      "--force-local",
+      "--backend-mode",
+      "proxy",
+      "-n",
+      "public:kodegpt-dev"
     ]);
     expect(await stopExposure(first.child)).toBe(0);
 
     await rm(argsPath, { force: true });
-    const second = await startExposure({ stateRoot, fakeBinDir, argsPath, port });
+    await rm(zrokStatePath, { force: true });
+    const second = await startExposure({ stateRoot, fakeBinDir, argsPath, zrokStatePath, port });
     await vi.waitFor(
-      () => {
-        expect(second.stdout(), second.stderr()).toContain("KodeGPT exposure ready");
-      },
-      { timeout: 15_000 }
+      () => expect(second.stdout(), second.stderr()).toContain("KodeGPT exposure ready"),
+      { timeout: 20_000 }
     );
     expect(second.stdout()).toContain("existing connector credential");
-    expect(second.stdout()).not.toContain("kodegpt_token=");
+    expect(second.stdout()).not.toContain(["kodegpt", "token="].join("_"));
     expect(await stopExposure(second.child)).toBe(0);
+
+    const legacy = spawnSync(process.execPath, [cliPath, "expose", "ngrok"], {
+      cwd: root,
+      encoding: "utf8"
+    });
+    expect(legacy.status).not.toBe(0);
+    expect(legacy.stderr).toContain("expose command requires provider: zrok");
 
     const help = spawnSync(process.execPath, [cliPath, "--help"], {
       cwd: root,
       encoding: "utf8"
     });
     expect(help.status, help.stderr).toBe(0);
-    expect(help.stdout).toContain("kodegpt expose ngrok");
+    expect(help.stdout).toContain("kodegpt expose zrok --name");
+    expect(help.stdout).not.toContain("kodegpt expose ngrok");
   }, 60_000);
 });

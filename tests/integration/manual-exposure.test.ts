@@ -58,17 +58,17 @@ describe("manual HTTPS exposure", () => {
     expect(source).toContain("dependencies.bindLoopback({ mcp, port })");
     expect(source).not.toMatch(/from\s+["']node:child_process["']/);
     expect(source).not.toMatch(/\b(?:spawn|exec|fork)\s*\(/);
-    expect(source).not.toMatch(/\b(?:ngrok|cloudflared|localtunnel)\b/i);
+    expect(source).not.toMatch(/\b(?:zrok2|ngrok|cloudflared|localtunnel)\b/i);
   });
 
-  it("keeps ngrok process ownership inside the explicit exposure module", async () => {
+  it("keeps zrok process ownership inside the explicit exposure module", async () => {
     const sourcePath = fileURLToPath(
-      new URL("../../apps/cli/src/commands/expose-ngrok.ts", import.meta.url)
+      new URL("../../apps/cli/src/commands/expose-zrok.ts", import.meta.url)
     );
     const source = await readFile(sourcePath, "utf8");
     expect(source).toMatch(/from\s+["']node:child_process["']/);
     expect(source).toMatch(/\bspawn\b/);
-    expect(source).toMatch(/\bngrok\b/i);
+    expect(source).toMatch(/\bzrok2\b/i);
     expect(source).toContain("127.0.0.1");
     expect(source).not.toContain("0.0.0.0");
   });

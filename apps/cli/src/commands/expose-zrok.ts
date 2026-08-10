@@ -1,10 +1,17 @@
+import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
-import type { ConnectorCredentialStatus, IssuedConnectorCredential } from "@kodegpt/auth";
+import {
+  ConnectorCredentialStore,
+  type ConnectorCredentialStatus,
+  type IssuedConnectorCredential
+} from "@kodegpt/auth";
 
 import {
   DEFAULT_MCP_PORT,
+  startKodegpt,
   type KodegptStartStatus,
   type StartedKodegpt,
   type StartKodegptOptions
@@ -14,6 +21,7 @@ const DEFAULT_STATE_ROOT = join(homedir(), ".kodegpt");
 const ZROK_READINESS_ATTEMPTS = 120;
 const ZROK_READINESS_POLL_MS = 250;
 const QUERY_CREDENTIAL_PARAM = ["kodegpt", "token"].join("_");
+const execFileAsync = promisify(execFile);
 
 export interface ExposeZrokOptions {
   runtimePath: string;
@@ -67,6 +75,25 @@ export interface ExposedZrokKodegpt {
   termination: Promise<never>;
   close(): Promise<void>;
 }
+
+const defaultExposeZrokDependencies: ExposeZrokDependencies = {
+  createCredentialStore: (stateRoot) => new ConnectorCredentialStore(stateRoot),
+  startKodegpt,
+  runZrokJson: async (args) => {
+    try {
+      const result = await execFileAsync("zrok2", args, {
+        encoding: "utf8",
+        maxBuffer: 2 * 1024 * 1024
+      });
+      return result.stdout;
+    } catch {
+      throw new Error("zrok2 command failed");
+    }
+  },
+  spawnZrok: (command, args, options) =>
+    spawn(command, args, options) as unknown as SpawnedZrokProcess,
+  delay: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+};
 
 export function parseExposeZrokArguments(args: string[]): ExposeZrokOptions {
   let runtimePath: string | undefined;
@@ -219,7 +246,7 @@ function isReadyShare(rawJson: string, target: string, hostname: string): boolea
 
 export async function runExposeZrokCommand(
   args: string[],
-  dependencies: ExposeZrokDependencies
+  dependencies: ExposeZrokDependencies = defaultExposeZrokDependencies
 ): Promise<ExposedZrokKodegpt> {
   return exposeZrok(parseExposeZrokArguments(args), dependencies);
 }
