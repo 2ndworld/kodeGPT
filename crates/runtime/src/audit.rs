@@ -28,6 +28,9 @@ pub enum AuditAction {
     FileEdit,
     GitStatus,
     GitDiff,
+    ProcessRun,
+    ProcessStatus,
+    ProcessCancel,
     ArtifactSpoolCreate,
     TestEffect,
 }
@@ -379,6 +382,9 @@ impl AuditAction {
             Self::FileEdit => "file_edit",
             Self::GitStatus => "git_status",
             Self::GitDiff => "git_diff",
+            Self::ProcessRun => "process_run",
+            Self::ProcessStatus => "process_status",
+            Self::ProcessCancel => "process_cancel",
             Self::ArtifactSpoolCreate => "artifact_spool_create",
             Self::TestEffect => "test_effect",
         }
