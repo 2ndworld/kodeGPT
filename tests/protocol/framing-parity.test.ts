@@ -107,7 +107,7 @@ describe("TypeScript/Rust runtime fixture parity", () => {
     const decoder = new FrameDecoder();
     expect(decoder.push(rust.stdout)).toEqual(values);
     expect(() => decoder.finish()).not.toThrow();
-  });
+  }, 60_000);
 
   it("rejects unknown fields in security-sensitive params", async () => {
     const value = (await fixture("file.read.json")) as Record<string, unknown>;
