@@ -70,9 +70,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["path"],
-          "properties": {
-            "path": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "path": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -108,9 +106,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["capabilityId"],
-          "properties": {
-            "capabilityId": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -145,9 +141,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["capabilityId"],
-          "properties": {
-            "capabilityId": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -163,9 +157,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["capabilityId"],
-          "properties": {
-            "capabilityId": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -181,9 +173,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["capabilityId"],
-          "properties": {
-            "capabilityId": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -199,9 +189,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["capabilityId"],
-          "properties": {
-            "capabilityId": { "type": "string", "minLength": 1 }
-          }
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
         }
       }
     },
@@ -314,6 +302,38 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.status" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.diff" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": { "capabilityId": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "process.run" },
         "params": {
           "type": "object",
@@ -322,15 +342,9 @@
           "properties": {
             "capabilityId": { "type": "string", "minLength": 1 },
             "logicalExecutable": { "type": "string", "minLength": 1 },
-            "argv": {
-              "type": "array",
-              "items": { "type": "string" }
-            },
+            "argv": { "type": "array", "items": { "type": "string" } },
             "cwd": { "type": "string" },
-            "env": {
-              "type": "object",
-              "additionalProperties": { "type": "string" }
-            },
+            "env": { "type": "object", "additionalProperties": { "type": "string" } },
             "background": { "type": "boolean" }
           }
         }
