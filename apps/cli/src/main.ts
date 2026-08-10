@@ -2,9 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { ConnectorCredentialStore } from "@kodegpt/auth";
+import { KernelClient } from "@kodegpt/core";
+import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
+import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
 import { resolveRuntimePath, RUNTIME_PACKAGE_LINUX_X64 } from "./runtime-resolver.js";
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -15,6 +18,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "auth":
       await auth(rest);
+      return;
+    case "workspace":
+      await workspace(rest);
       return;
     case "start":
       await start(rest);
@@ -49,6 +55,22 @@ async function auth(args: string[]): Promise<void> {
   const { stateRoot, remaining } = extractStateRoot(args);
   const store = new ConnectorCredentialStore(stateRoot);
   const output = await runAuthCommand(remaining, { store });
+  process.stdout.write(`${output}\n`);
+}
+
+async function workspace(args: string[]): Promise<void> {
+  const { stateRoot, remaining } = extractStateRoot(args);
+  const store = new WorkspaceTrustStore(stateRoot);
+  const inspectRoot = async (path: string): Promise<InspectedWorkspaceRoot> => {
+    const runtimePath = await resolveRuntimePath();
+    const client = await KernelClient.start({ runtimePath, stateRoot });
+    try {
+      return await client.request<InspectedWorkspaceRoot>("system.inspect_root", { path });
+    } finally {
+      await client.stop();
+    }
+  };
+  const output = await runWorkspaceCommand(remaining, { store, inspectRoot });
   process.stdout.write(`${output}\n`);
 }
 
@@ -100,6 +122,9 @@ function helpText(): string {
     "KodeGPT v0.1",
     "  kodegpt doctor [--json]",
     "  kodegpt auth status|rotate [--state-root <path>]",
+    "  kodegpt workspace trust <path> [--ceiling observe|develop|trusted] [--state-root <path>]",
+    "  kodegpt workspace untrust <trust-id> [--state-root <path>]",
+    "  kodegpt workspace list [--state-root <path>]",
     "  kodegpt start [--state-root <path>] [--port <port>] [--public-url <https-url>]",
     ""
   ].join("\n");
