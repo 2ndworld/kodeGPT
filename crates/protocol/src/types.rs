@@ -152,6 +152,18 @@ pub struct FileEditParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitStatusParams {
+    pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitDiffParams {
+    pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessRunParams {
     pub capability_id: String,
     pub logical_executable: String,
@@ -247,6 +259,18 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: FileEditParams,
+    },
+    #[serde(rename = "git.status")]
+    GitStatus {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitStatusParams,
+    },
+    #[serde(rename = "git.diff")]
+    GitDiff {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitDiffParams,
     },
     #[serde(rename = "process.run")]
     ProcessRun {
