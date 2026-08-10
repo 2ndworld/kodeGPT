@@ -49,6 +49,19 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends apparmor apparmor-profiles bubblewrap meson ninja-build pkg-config libcap-dev libselinux1-dev
+          cat <<'EOF' | sudo tee /etc/apparmor.d/bwrap-userns-restrict > /dev/null
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile kodegpt_bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            change_profile -> kodegpt_unpriv_bwrap,
+          }
+          profile kodegpt_unpriv_bwrap flags=(complain) {
+            file,
+            capability,
+            network,
+          }
+          EOF
           sudo test -f /etc/apparmor.d/bwrap-userns-restrict
           rm -rf /tmp/kodegpt-bubblewrap
           git clone --depth 1 --branch v0.11.2 https://github.com/containers/bubblewrap.git /tmp/kodegpt-bubblewrap
