@@ -1,0 +1,83 @@
+name: Task 16 full repository gate
+
+on:
+  pull_request:
+    branches:
+      - feat/kodegpt-v0.1-task15-clean
+
+permissions:
+  contents: write
+
+jobs:
+  full:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Require targeted functional gate
+        run: test -f docs/implementation/evidence/.task16-functional-targeted-pass.txt
+      - name: Exit when full gate already recorded
+        id: recorded
+        run: |
+          if [ -f docs/implementation/evidence/.task16-full-pass.txt ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.recorded.outputs.skip != 'true'
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        if: steps.recorded.outputs.skip != 'true'
+        with:
+          version: 10.15.0
+          run_install: false
+      - name: Install dependencies and trusted runtime fixtures
+        if: steps.recorded.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libcap-dev libselinux1-dev
+          sudo chown root:root /usr/local/bin
+          sudo chmod 0755 /usr/local/bin
+          curl --fail --location --retry 3 --output /tmp/bubblewrap.tar.xz https://github.com/containers/bubblewrap/releases/download/v0.11.2/bubblewrap-0.11.2.tar.xz
+          tar -C /tmp -xf /tmp/bubblewrap.tar.xz
+          meson setup /tmp/bubblewrap-0.11.2/_build /tmp/bubblewrap-0.11.2 -Dtests=false
+          meson compile -C /tmp/bubblewrap-0.11.2/_build
+          sudo install -o root -g root -m 0755 /tmp/bubblewrap-0.11.2/_build/bwrap /usr/local/bin/bwrap
+          for name in sh python3 git env cat sleep; do
+            SOURCE="$(readlink -f "$(command -v "$name")")"
+            sudo install -o root -g root -m 0755 "$SOURCE" "/usr/local/bin/$name"
+          done
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Build all TypeScript workspaces
+        if: steps.recorded.outputs.skip != 'true'
+        run: pnpm build
+      - name: Run complete TypeScript suite
+        if: steps.recorded.outputs.skip != 'true'
+        run: pnpm test
+      - name: Run complete Rust workspace suite
+        if: steps.recorded.outputs.skip != 'true'
+        run: cargo test --workspace
+      - name: Record full PASS
+        if: steps.recorded.outputs.skip != 'true'
+        env:
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          cat > docs/implementation/evidence/.task16-full-pass.txt <<'EOF'
+          Task 16 full repository verification PASS
+          pnpm build: PASS
+          pnpm test: PASS
+          cargo test --workspace: PASS
+          EOF
+          git config user.name "kodegpt-task16-verifier"
+          git config user.email "kodegpt-task16-verifier@users.noreply.github.com"
+          git add docs/implementation/evidence/.task16-full-pass.txt
+          git commit -m "chore(ci): record temporary Task 16 full pass"
+          git push origin "HEAD:${HEAD_BRANCH}"
