@@ -31,6 +31,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y meson ninja-build pkg-config libcap-dev libselinux1-dev
+          sudo chown root:root /usr/local/bin
+          sudo chmod 0755 /usr/local/bin
 
       - name: Build trusted Bubblewrap 0.11.2
         run: |
