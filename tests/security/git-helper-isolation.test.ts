@@ -49,7 +49,7 @@ describe("hardened read-only Git inspection source regressions", () => {
     expect(spoolWrite).toBeGreaterThanOrEqual(0);
     expect(previewAppend).toBeGreaterThan(spoolWrite);
     expect(implementation).toContain("GIT_PREVIEW_MAX_BYTES");
-    expect(implementation).toContain("source_truncated");
+    expect(implementation).toContain("RawSpoolMetadata");
   });
 
   it("publishes only read-only Git MCP tools on opaque workspace IDs", async () => {
