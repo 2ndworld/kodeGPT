@@ -51,6 +51,14 @@ jobs:
           /usr/local/bin/git --version
           stat -c '%u:%g %a %n' /usr/local/bin/git
 
+      - name: Diagnose trusted executable chains
+        run: |
+          for path in / /usr /usr/local /usr/local/bin /usr/bin /usr/local/bin/bwrap /usr/local/bin/git; do
+            printf '%s -> %s\n' "$path" "$(readlink -f "$path")"
+            stat -Lc '%u:%g %a %F %n' "$path"
+          done
+          cargo test -p kodegpt-sandbox current_host_has_trusted_bubblewrap_at_required_floor -- --nocapture
+
       - name: Allow unprivileged user namespaces on ephemeral CI runner
         run: |
           if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
