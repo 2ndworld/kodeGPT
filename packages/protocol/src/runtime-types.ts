@@ -17,7 +17,9 @@ export const RUNTIME_METHODS = [
   "file.edit",
   "git.status",
   "git.diff",
-  "process.run"
+  "process.run",
+  "process.status",
+  "process.cancel"
 ] as const;
 
 export type RuntimeMethod = (typeof RUNTIME_METHODS)[number];
@@ -136,6 +138,13 @@ const processRunParamsSchema = z
   })
   .strict();
 
+const processOperationParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    operationId: z.string().min(1)
+  })
+  .strict();
+
 function requestSchema<M extends RuntimeMethod, P extends z.ZodType>(method: M, params: P) {
   return z
     .object({
@@ -164,7 +173,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.edit", fileEditParamsSchema),
   requestSchema("git.status", gitCapabilityParamsSchema),
   requestSchema("git.diff", gitCapabilityParamsSchema),
-  requestSchema("process.run", processRunParamsSchema)
+  requestSchema("process.run", processRunParamsSchema),
+  requestSchema("process.status", processOperationParamsSchema),
+  requestSchema("process.cancel", processOperationParamsSchema)
 ]);
 
 export type RuntimeRequest = z.infer<typeof runtimeRequestSchema>;
