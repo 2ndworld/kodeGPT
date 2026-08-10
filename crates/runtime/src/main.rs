@@ -2,6 +2,7 @@ mod audit;
 mod dispatcher;
 mod execution;
 mod rpc;
+mod spool;
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

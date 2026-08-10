@@ -41,6 +41,10 @@
         "workspace_begin_close",
         "workspace_cancel_executions",
         "workspace_unregister",
+        "file_read",
+        "file_tree",
+        "file_search",
+        "artifact_spool_create",
         "test_effect"
       ]
     },
