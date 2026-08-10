@@ -2,9 +2,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use kodegpt_protocol::{
-    MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame,
-};
+use kodegpt_protocol::{MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame};
 use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Value {
@@ -74,6 +72,10 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "file.read.json",
         "file.tree.json",
         "file.search.json",
+        "file.write.json",
+        "file.edit.json",
+        "git.status.json",
+        "git.diff.json",
         "process.run.json",
     ] {
         let value = fixture(name);
