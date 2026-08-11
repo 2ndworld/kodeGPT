@@ -7,8 +7,8 @@ use kodegpt_protocol::{
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy, VerifyRunParams,
-    WorkspaceActivateParams,
-    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -403,8 +403,12 @@ async fn dispatch_one(
         }
         "file.tree" => {
             let params = match serde_json::from_value::<FileTreeParams>(request.params) {
-                Ok(params) if params.max_entries > 0 && params.max_entries <= TREE_MAX_ENTRIES => params,
-                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                Ok(params) if params.max_entries > 0 && params.max_entries <= TREE_MAX_ENTRIES => {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
             };
             let max_entries = params.max_entries;
             let capability_id = params.capability_id;
@@ -560,13 +564,16 @@ async fn dispatch_one(
                     content,
                 } if !capability_id.is_empty()
                     && !path.is_empty()
-                    && valid_sha256_hex(&expected_sha256) => (
-                    capability_id,
-                    PathBuf::from(path),
-                    PatchFileAction::Update,
-                    Some(expected_sha256),
-                    Some(content),
-                ),
+                    && valid_sha256_hex(&expected_sha256) =>
+                {
+                    (
+                        capability_id,
+                        PathBuf::from(path),
+                        PatchFileAction::Update,
+                        Some(expected_sha256),
+                        Some(content),
+                    )
+                }
                 FileCommitPatchParams::Delete {
                     capability_id,
                     path,
@@ -574,13 +581,16 @@ async fn dispatch_one(
                     content: (),
                 } if !capability_id.is_empty()
                     && !path.is_empty()
-                    && valid_sha256_hex(&expected_sha256) => (
-                    capability_id,
-                    PathBuf::from(path),
-                    PatchFileAction::Delete,
-                    Some(expected_sha256),
-                    None,
-                ),
+                    && valid_sha256_hex(&expected_sha256) =>
+                {
+                    (
+                        capability_id,
+                        PathBuf::from(path),
+                        PatchFileAction::Delete,
+                        Some(expected_sha256),
+                        None,
+                    )
+                }
                 _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
             let audit_capability_id = capability_id.clone();
@@ -680,24 +690,20 @@ async fn dispatch_one(
             .await
         }
         "process.inspect_executable" => {
-            let params = match serde_json::from_value::<ProcessInspectExecutableParams>(request.params) {
-                Ok(params)
-                    if !params.capability_id.is_empty()
-                        && valid_logical_executable_name(&params.logical_executable) =>
-                {
-                    params
-                }
-                Ok(_) | Err(_) => {
-                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
-                }
-            };
-            dispatch_process_inspect_executable(
-                &audit,
-                &workspace_registry,
-                request.id,
-                params,
-            )
-            .await
+            let params =
+                match serde_json::from_value::<ProcessInspectExecutableParams>(request.params) {
+                    Ok(params)
+                        if !params.capability_id.is_empty()
+                            && valid_logical_executable_name(&params.logical_executable) =>
+                    {
+                        params
+                    }
+                    Ok(_) | Err(_) => {
+                        return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                    }
+                };
+            dispatch_process_inspect_executable(&audit, &workspace_registry, request.id, params)
+                .await
         }
         "process.run" => {
             let params = match serde_json::from_value::<ProcessRunParams>(request.params) {
@@ -1229,11 +1235,7 @@ async fn dispatch_process_inspect_executable(
     let registry_ready = match registry.lock() {
         Ok(registry) => registry.clone_ready_policy(&capability_id),
         Err(_) => {
-            return error_response(
-                Some(request_id),
-                -32026,
-                "WORKSPACE_REGISTRY_UNAVAILABLE",
-            );
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
         }
     };
     if let Err(error) = registry_ready {
@@ -2082,7 +2084,10 @@ mod tests {
             }),
         )
         .await;
-        assert!(response.get("result").is_some(), "verify.run failed: {response}");
+        assert!(
+            response.get("result").is_some(),
+            "verify.run failed: {response}"
+        );
         assert!(response["result"]["operationId"].as_str().is_some());
 
         drop(request_tx);
@@ -2092,9 +2097,7 @@ mod tests {
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .filter(|record| record["requestId"] == "req_verify_audit")
-            .filter(|record| {
-                record["action"] == "verify_run" || record["action"] == "process_run"
-            })
+            .filter(|record| record["action"] == "verify_run" || record["action"] == "process_run")
             .map(|record| {
                 (
                     record["phase"].as_str().unwrap().to_owned(),
@@ -2168,7 +2171,11 @@ mod tests {
             .lines()
             .filter(|line| line.contains("req_verify_audit_fail"))
             .collect::<Vec<_>>();
-        assert!(request_records.iter().all(|line| !line.contains("process_run")));
+        assert!(
+            request_records
+                .iter()
+                .all(|line| !line.contains("process_run"))
+        );
         fs::remove_dir_all(workspace).expect("workspace removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
@@ -2973,7 +2980,10 @@ mod tests {
             updated["result"]["sha256"],
             "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
         );
-        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("target.txt")).unwrap(),
+            "after\n"
+        );
 
         let stale = next_response(
             &request_tx,
@@ -2990,7 +3000,10 @@ mod tests {
         )
         .await;
         assert_eq!(stale["error"]["message"], "PATCH_PRECONDITION_FAILED");
-        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("target.txt")).unwrap(),
+            "after\n"
+        );
 
         let exists = next_response(
             &request_tx,
@@ -3007,7 +3020,10 @@ mod tests {
         )
         .await;
         assert_eq!(exists["error"]["message"], "PATCH_TARGET_EXISTS");
-        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("target.txt")).unwrap(),
+            "after\n"
+        );
 
         let denied = next_response(
             &request_tx,
@@ -3051,7 +3067,12 @@ mod tests {
         dispatcher.await.expect("dispatcher joins");
         let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
         assert!(audit_text.contains("file_commit_patch_file"));
-        for secret in ["after\\n", "must-not-write", "must-not-clobber", "must-not-exist"] {
+        for secret in [
+            "after\\n",
+            "must-not-write",
+            "must-not-clobber",
+            "must-not-exist",
+        ] {
             assert!(!audit_text.contains(secret));
         }
 

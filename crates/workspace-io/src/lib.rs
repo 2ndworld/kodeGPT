@@ -20,8 +20,9 @@ pub use path_identity::{
 };
 pub use read::{
     INLINE_READ_MAX_BYTES, ReadFileResult, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES,
-    SearchMatch, SearchResult, TREE_DEFAULT_MAX_ENTRIES, TREE_MAX_ENTRIES, TreeEntry, TreeEntryKind,
-    TreeResult, WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
+    SearchMatch, SearchResult, TREE_DEFAULT_MAX_ENTRIES, TREE_MAX_ENTRIES, TreeEntry,
+    TreeEntryKind, TreeResult, WorkspaceReadError, read_file_beneath, search_utf8_beneath,
+    tree_beneath,
 };
 pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
 pub use write::{

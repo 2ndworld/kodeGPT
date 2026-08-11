@@ -335,6 +335,37 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(JSON.stringify(verifyList)).not.toContain("/home/");
       expect(JSON.stringify(verifyList)).not.toContain("/usr/");
 
+      const contextBuildResult = await callTool(
+        port,
+        credential.token,
+        "context.build",
+        {
+          workspaceId: openedA.id,
+          intent: "review",
+          target: "src/main.ts",
+          maxBytes: 4_096
+        },
+        "req_full_context_build"
+      );
+      const contextBuild = textJson(contextBuildResult);
+      expect(contextBuildResult.structuredContent).toEqual(contextBuild);
+      expect(contextBuild).toMatchObject({
+        schemaVersion: 1,
+        intent: "review",
+        target: "src/main.ts"
+      });
+      expect(contextBuild.selectedFiles[0]).toEqual({
+        path: "src/main.ts",
+        reason: "exact-target",
+        content: "export function needle() {}\nneedle();\n",
+        truncated: false
+      });
+      expect(contextBuild.selectedFiles).toContainEqual(
+        expect.objectContaining({ path: "package.json", reason: "governing-manifest" })
+      );
+      expect(contextBuild.totalBytes).toBeLessThanOrEqual(4_096);
+      expect(JSON.stringify(contextBuild)).not.toContain(workspaceA);
+
       const gitChangesResult = await callTool(
         port,
         credential.token,
@@ -388,6 +419,44 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         worktreeStatus: "M"
       });
       expect(gitChangesAfterContent.fingerprint).not.toBe(gitChanges.fingerprint);
+
+      const patchText = "--- a/tracked.txt\n+++ b/tracked.txt\n@@ -1 +1 @@\n-after second\n+after patched\n";
+      const patchCheckResult = await callTool(
+        port,
+        credential.token,
+        "file.patch",
+        { workspaceId: openedA.id, patch: patchText },
+        "req_full_patch_check"
+      );
+      const patchCheck = textJson(patchCheckResult);
+      expect(patchCheckResult.structuredContent).toEqual(patchCheck);
+      expect(patchCheck).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: openedA.id,
+        mode: "check",
+        committedPaths: [],
+        files: [{ path: "tracked.txt", action: "update", committed: false }]
+      });
+      expect(await readFile(join(workspaceA, "tracked.txt"), "utf8")).toBe("after second\n");
+
+      const patchApplyResult = await callTool(
+        port,
+        credential.token,
+        "file.patch",
+        { workspaceId: openedA.id, patch: patchText, mode: "apply" },
+        "req_full_patch_apply"
+      );
+      const patchApply = textJson(patchApplyResult);
+      expect(patchApplyResult.structuredContent).toEqual(patchApply);
+      expect(patchApply).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: openedA.id,
+        mode: "apply",
+        committedPaths: ["tracked.txt"],
+        files: [{ path: "tracked.txt", action: "update", committed: true }]
+      });
+      expect(await readFile(join(workspaceA, "tracked.txt"), "utf8")).toBe("after patched\n");
+      expect(JSON.stringify(patchApply)).not.toContain(workspaceA);
 
       const gitStatus = textJson(
         await callTool(

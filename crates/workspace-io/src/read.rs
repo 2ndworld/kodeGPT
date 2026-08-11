@@ -426,10 +426,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        INLINE_READ_MAX_BYTES, SEARCH_FILE_MAX_BYTES, SEARCH_MAX_MATCHES,
-        SEARCH_MAX_SCANNED_BYTES, SEARCH_MAX_SNIPPET_BYTES, SEARCH_TREE_MAX_ENTRIES,
-        TREE_MAX_ENTRIES, SearchTruncationReason, TreeEntryKind, WorkspaceReadError,
-        read_file_beneath, search_utf8_beneath, tree_beneath,
+        INLINE_READ_MAX_BYTES, SEARCH_FILE_MAX_BYTES, SEARCH_MAX_MATCHES, SEARCH_MAX_SCANNED_BYTES,
+        SEARCH_MAX_SNIPPET_BYTES, SEARCH_TREE_MAX_ENTRIES, SearchTruncationReason,
+        TREE_MAX_ENTRIES, TreeEntryKind, WorkspaceReadError, read_file_beneath,
+        search_utf8_beneath, tree_beneath,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -547,7 +547,10 @@ mod tests {
         let result = tree_beneath(&fd, Path::new("."), 2_000).expect("bounded tree succeeds");
         assert_eq!(result.entries.len(), 2_000);
         assert!(!result.truncated);
-        assert_eq!(result.entries.first().expect("first entry").path, "f0000.txt");
+        assert_eq!(
+            result.entries.first().expect("first entry").path,
+            "f0000.txt"
+        );
         assert_eq!(result.entries.last().expect("last entry").path, "f1999.txt");
 
         fs::remove_dir_all(root).expect("root removed");
@@ -564,7 +567,10 @@ mod tests {
         let result = tree_beneath(&fd, Path::new("."), 2_000).expect("bounded tree succeeds");
         assert_eq!(result.entries.len(), 2_000);
         assert!(result.truncated);
-        assert_eq!(result.entries.first().expect("first entry").path, "f0000.txt");
+        assert_eq!(
+            result.entries.first().expect("first entry").path,
+            "f0000.txt"
+        );
         assert_eq!(result.entries.last().expect("last entry").path, "f1999.txt");
 
         fs::remove_dir_all(root).expect("root removed");
@@ -732,18 +738,16 @@ mod tests {
     #[test]
     fn lexical_search_reports_exact_match_limit_without_truncation() {
         let root = temporary_root("search-exact-limit");
-        fs::write(root.join("exact.txt"), "needle one\nneedle two\nneedle three\n")
-            .expect("exact search fixture written");
+        fs::write(
+            root.join("exact.txt"),
+            "needle one\nneedle two\nneedle three\n",
+        )
+        .expect("exact search fixture written");
         let fd = root_fd(&root);
 
-        let result = search_utf8_beneath(
-            &fd,
-            Path::new("."),
-            "needle",
-            3,
-            SEARCH_MAX_SNIPPET_BYTES,
-        )
-        .expect("exact bounded search succeeds");
+        let result =
+            search_utf8_beneath(&fd, Path::new("."), "needle", 3, SEARCH_MAX_SNIPPET_BYTES)
+                .expect("exact bounded search succeeds");
 
         assert_eq!(result.matches.len(), 3);
         assert!(!result.truncated);

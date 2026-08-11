@@ -88,7 +88,7 @@ The existing `WorkspaceManager` remains the low-level trusted-workspace adapter.
 - Consumes: typed low-level workspace/process/artifact adapters.
 - Produces: `NativeCapabilityService`, public input/result types, shared bounded defaults used by all later tasks.
 
-- [ ] **Step 1: Add the package skeleton and failing contract test**
+- [x] **Step 1: Add the package skeleton and failing contract test**
 
 `packages/capabilities/package.json`:
 
@@ -124,7 +124,7 @@ describe("capability contracts", () => {
 });
 ```
 
-- [ ] **Step 2: Run the package test and verify RED**
+- [x] **Step 2: Run the package test and verify RED**
 
 Run:
 
@@ -134,7 +134,7 @@ pnpm --filter @kodegpt/capabilities test
 
 Expected: FAIL because `contracts.ts` exports do not exist.
 
-- [ ] **Step 3: Define the public contracts and bounds**
+- [x] **Step 3: Define the public contracts and bounds**
 
 `contracts.ts` must export exactly these core discriminants/constants and the interfaces approved by the design:
 
@@ -158,7 +158,7 @@ export type VerificationCategory = "test" | "lint" | "typecheck" | "build" | "fo
 
 Define the complete `WorkspaceInspect*`, `CodeSearch*`, `GitChanges*`, `VerificationRecipe`, `VerifyRun*`, `FilePatch*`, and `ContextBuild*` interfaces from the approved design. Every result begins with `schemaVersion: 1`.
 
-- [ ] **Step 4: Define narrow authority-specific adapters rather than depending on concrete managers**
+- [x] **Step 4: Define narrow authority-specific adapters rather than depending on concrete managers**
 
 `adapters.ts` must separate read inspection, search, Git inspection, patch mutation, and execution authority. The Task 3 read-only adapter is intentionally minimal:
 
@@ -205,7 +205,7 @@ export interface CapabilityExecutionAdapter {
 
 A capability receives only the adapter authority it actually uses. Do not expose capability IDs or host FDs through these interfaces.
 
-- [ ] **Step 5: Add the service skeleton**
+- [x] **Step 5: Add the service skeleton**
 
 `NativeCapabilityService` grows adapter dependencies only as capabilities are implemented. After Task 3 the constructor accepts `{ workspaceInspection }`; later tasks extend the options with search/Git/execution/patch adapters only when those authorities become necessary. Add methods with final signatures but throw `CAPABILITY_NOT_IMPLEMENTED` until their tasks land:
 
@@ -219,7 +219,7 @@ patchFile(input: FilePatchInput): Promise<FilePatchResult>
 buildContext(input: ContextBuildInput): Promise<ContextBuildResult>
 ```
 
-- [ ] **Step 6: Run package typecheck/test GREEN**
+- [x] **Step 6: Run package typecheck/test GREEN**
 
 ```bash
 pnpm --filter @kodegpt/capabilities typecheck
@@ -228,7 +228,7 @@ pnpm --filter @kodegpt/capabilities test
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/capabilities
@@ -251,7 +251,7 @@ git commit -m "feat(capabilities): define native capability contracts"
 - Consumes: `@kodegpt/capabilities` public contracts.
 - Produces: `structuredToolResult<T>()`, typed `KodegptToolContext`, placeholders for new capability namespaces.
 
-- [ ] **Step 1: Add a failing structured-result parity test**
+- [x] **Step 1: Add a failing structured-result parity test**
 
 Test one existing deterministic tool such as `workspace.list` and assert both channels contain equivalent data:
 
@@ -262,7 +262,7 @@ expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
 
 Also add a compile-time fixture assigning a real typed workspace result to `WorkspaceToolContext.list` without `unknown` casts.
 
-- [ ] **Step 2: Run MCP tests RED**
+- [x] **Step 2: Run MCP tests RED**
 
 ```bash
 pnpm --filter @kodegpt/mcp-server test
@@ -270,7 +270,7 @@ pnpm --filter @kodegpt/mcp-server test
 
 Expected: structured result test fails because generic tools currently return only `content`.
 
-- [ ] **Step 3: Add the capability dependency and common result helper**
+- [x] **Step 3: Add the capability dependency and common result helper**
 
 Add:
 
@@ -292,7 +292,7 @@ function structuredToolResult<T>(value: T) {
 
 Use it for every deterministic existing tool except where the console tool already constructs an equivalent result.
 
-- [ ] **Step 4: Replace `Promise<unknown>` context signatures with explicit result types**
+- [x] **Step 4: Replace `Promise<unknown>` context signatures with explicit result types**
 
 Use existing public types from `@kodegpt/core`, `@kodegpt/artifacts`, `@kodegpt/extensions`, and the new capabilities package. Preserve manager boundaries; do not weaken validation in `WorkspaceManager`.
 
@@ -310,14 +310,14 @@ context.build(input: ContextBuildInput): Promise<ContextBuildResult>;
 
 The method namespaces may remain backed by explicit `CAPABILITY_NOT_IMPLEMENTED` fallbacks until their implementation task lands. Once a capability is implemented, its production service wiring and integration test must land before that capability is advertised on the public MCP surface. The lifecycle is `implement → production-wire → integration-test → expose`; `workspace.inspect` establishes this rule in Task 3.
 
-- [ ] **Step 5: Run MCP tests/typecheck GREEN**
+- [x] **Step 5: Run MCP tests/typecheck GREEN**
 
 ```bash
 pnpm --filter @kodegpt/mcp-server test
 pnpm --filter @kodegpt/mcp-server typecheck
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/mcp-server packages/capabilities/package.json pnpm-lock.yaml
@@ -351,7 +351,7 @@ git commit -m "refactor(mcp): add typed structured tool results"
 - Internal bounded tree result: `{ entries, truncated }`.
 - Produces: schema-validated `WorkspaceInspectResult` and production-usable MCP tool `workspace.inspect`.
 
-- [ ] **Step 1: Add RED tests for evidence semantics and production usability**
+- [x] **Step 1: Add RED tests for evidence semantics and production usability**
 
 Create tests for:
 
@@ -378,7 +378,7 @@ expect(result.entrypoints).toContainEqual({ path: "package.json", kind: "node-ma
 
 Ordering must be lexical and repeatable. Root `projectTypes` use only manifests at the inspection root; nested manifests may still appear in `manifests[]`.
 
-- [ ] **Step 2: Add RED tests for bounded tree truncation**
+- [x] **Step 2: Add RED tests for bounded tree truncation**
 
 Cover the internal tree primitive before changing production code:
 
@@ -392,7 +392,7 @@ repeated traversal                   → deterministic lexical ordering
 
 Rust owns the hard maximum of `10_000`. Existing ordinary `WorkspaceManager.tree()` keeps a default `2_000` view for callers that do not need a larger bound.
 
-- [ ] **Step 3: Implement explicit bounded tree result through Rust → protocol → core**
+- [x] **Step 3: Implement explicit bounded tree result through Rust → protocol → core**
 
 Do not infer truncation from returned array length. Preserve:
 
@@ -405,7 +405,7 @@ Do not infer truncation from returned array length. Preserve:
 
 Expose an internal `WorkspaceManager.treeBounded(workspaceId, path, maxEntries)` returning `{ entries, truncated }`; keep existing `tree()` backward-compatible at the default bound.
 
-- [ ] **Step 4: Implement bounded evidence-based inspection**
+- [x] **Step 4: Implement bounded evidence-based inspection**
 
 Recognize only explicit evidence:
 
@@ -417,7 +417,7 @@ Recognize only explicit evidence:
 
 Do not recursively read source files. Use bounded reads only for known root manifests when the contents provide deterministic metadata that cannot be obtained from tree evidence alone. Optional malformed/truncated manifest metadata produces bounded warnings rather than guessed architecture.
 
-- [ ] **Step 5: Add shared runtime schemas**
+- [x] **Step 5: Add shared runtime schemas**
 
 `packages/capabilities/src/schemas.ts` owns:
 
@@ -428,7 +428,7 @@ WorkspaceInspectResultSchema
 
 Keep these schemas aligned with the public TypeScript contracts. `workspace.inspect` output must be validated before it becomes MCP `structuredContent`.
 
-- [ ] **Step 6: Production-wire before advertising**
+- [x] **Step 6: Production-wire before advertising**
 
 Instantiate `NativeCapabilityService` inside the existing `createProductionServiceStack` using the already-created `WorkspaceManager`. Do not create another kernel, workspace manager, execution manager, root FD, or trust authority.
 
@@ -443,7 +443,7 @@ implemented
 
 The production integration test must prove `workspace.inspect` succeeds and does not return `CAPABILITY_NOT_IMPLEMENTED`.
 
-- [ ] **Step 7: Register MCP `workspace.inspect` with shared schemas**
+- [x] **Step 7: Register MCP `workspace.inspect` with shared schemas**
 
 Use:
 
@@ -455,13 +455,13 @@ annotations: READ_ONLY_TOOL_ANNOTATIONS
 
 Retain both JSON text fallback and equivalent `structuredContent`.
 
-- [ ] **Step 8: Preserve honest package boundaries and surface tests**
+- [x] **Step 8: Preserve honest package boundaries and surface tests**
 
 `@kodegpt/mcp-server` must declare `@kodegpt/capabilities: workspace:*` and import capability contracts/schemas from the package entrypoint, not another package's `src/` path. Keep one independent literal MCP surface/version contract test; transport tests may share a fixture to prove parity without duplicating the full surface array.
 
 Keep `MCP_SURFACE_VERSION = "0.2"` only because `workspace.inspect` is production-usable after this task. Do not bump the surface version again merely for each later Phase 1 capability.
 
-- [ ] **Step 9: Run focused tests GREEN and commit**
+- [x] **Step 9: Run focused tests GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -820,21 +820,20 @@ git commit -m "feat(capabilities): add safe verification recipes"
 ### Task 7: Add Conditional Per-File Patch Commit to Rust Authority
 
 **Files:**
-- Modify: `packages/protocol/src/types.ts`
-- Modify: `packages/protocol/src/index.ts`
-- Modify: `crates/protocol/src/types.rs`
-- Modify: `crates/workspace-io/src/write.rs`
-- Modify: `crates/workspace-io/src/lib.rs`
-- Modify: `crates/runtime/src/dispatcher.rs`
-- Modify: `packages/core/src/workspace-manager.ts`
-- Modify: `packages/core/src/workspace-manager.test.ts`
+- Modify: `packages/protocol/src/runtime-types.ts`
+- Modify: `schemas/runtime/request.schema.json`
+- Modify: `crates/protocol/src/types.rs`, `lib.rs`, and protocol contract fixtures/tests
+- Modify: `crates/workspace-io/src/write.rs`, `registry.rs`, `lib.rs`
+- Modify: `crates/runtime/src/dispatcher.rs`, `audit.rs`
+- Modify: `packages/core/src/workspace-manager.ts`, `workspace-manager.test.ts`
+- Add: `tests/fixtures/runtime/file.commit_patch_file.json`
 - Add focused Rust tests beside existing write/dispatcher tests.
 
 **Interfaces:**
 - Produces internal RPC `file.commit_patch_file`; it is not an MCP tool.
 - Consumed by Task 8 patch orchestration.
 
-- [ ] **Step 1: Add protocol RED tests for the new method**
+- [x] **Step 1: Add protocol RED tests for the new method**
 
 Add runtime method:
 
@@ -873,7 +872,7 @@ Response:
 }
 ```
 
-- [ ] **Step 2: Run protocol/Rust RED**
+- [x] **Step 2: Run protocol/Rust RED**
 
 ```bash
 pnpm test:protocol
@@ -882,28 +881,19 @@ cargo test -p kodegpt-workspace-io
 cargo test -p kodegpt-runtime
 ```
 
-- [ ] **Step 3: Implement workspace-io compare-and-swap commit**
+- [x] **Step 3: Implement workspace-io compare-and-swap commit**
 
-In `write.rs`, reuse retained-root/openat helpers. Required sequence for update/delete:
+In `write.rs`, reuse retained-root/openat helpers. The final implementation performs a fresh regular-file/UTF-8 read, SHA-256 comparison, and device/inode revalidation before mutation. A stale digest returns `PATCH_PRECONDITION_FAILED` before touching the target.
 
-```text
-open current file beneath retained root
-→ reject non-regular/non-UTF8 where existing file APIs would reject
-→ SHA-256 current bytes
-→ constant-time equality is not required (digest is not secret), exact compare is sufficient
-→ if mismatch return PATCH_PRECONDITION_FAILED before mutation
-→ create temporary sibling using existing safe-write pattern
-→ fsync temp when existing write contract does so
-→ rename atomically for create/update, or unlink for delete after precondition
-```
+For `update`, write the post-image to a temporary sibling, preserve the existing mode, fsync, revalidate the target again, and atomically rename the sibling over the target. For `delete`, revalidate and unlink the matched target without creating a temporary file. For `create`, write a temporary sibling and use kernel no-clobber rename semantics (`RENAME_NOREPLACE`) so a concurrently appearing destination becomes `PATCH_TARGET_EXISTS` rather than being overwritten.
 
-Create must use no-clobber semantics and fail if the destination appears.
+The digest is not secret; exact equality is sufficient. None of these internal checks expose inode values or host paths through the public response.
 
-- [ ] **Step 4: Preserve audit-before-action in runtime dispatcher**
+- [x] **Step 4: Preserve audit-before-action in runtime dispatcher**
 
 Add decision audit before commit and outcome audit after it, following existing `file.write` / `file.edit` patterns. Map stale/missing/existing conflicts to stable non-host-leaking codes.
 
-- [ ] **Step 5: Expose typed `WorkspaceManager.commitPatchFile`**
+- [x] **Step 5: Expose typed `WorkspaceManager.commitPatchFile`**
 
 Signature:
 
@@ -924,7 +914,7 @@ commitPatchFile(input: {
 
 Validate every runtime field before returning.
 
-- [ ] **Step 6: Add stale-content/security tests**
+- [x] **Step 6: Add stale-content/security tests**
 
 Required cases:
 
@@ -937,7 +927,7 @@ traversal/symlink escape => existing workspace boundary rejects
 observe/read-only policy => mutation rejected before OS write
 ```
 
-- [ ] **Step 7: Run GREEN and commit**
+- [x] **Step 7: Run GREEN and commit**
 
 ```bash
 pnpm test:protocol
@@ -955,16 +945,16 @@ git commit -m "feat(runtime): add conditional patch file commit"
 ### Task 8: Implement Unified `file.patch`
 
 **Files:**
-- Create: `packages/capabilities/src/patch.ts`
-- Create: `packages/capabilities/src/patch.test.ts`
-- Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
+- Create: `packages/capabilities/src/patch.ts`, `patch.test.ts`
+- Modify: capability adapters/contracts/schemas/service/index/test-support and public contract tests
+- Modify: `packages/mcp-server/src/tools.ts`, surface/result tests, and shared surface fixture
+- Modify: `apps/cli/src/commands/start.ts` plus production-stack/bridge fixtures
 
 **Interfaces:**
-- Consumes: `readFile` + `commitPatchFile`.
+- Consumes: existing bounded `readFile`, retained-root `pathIdentity`, and conditional `commitPatchFile` authority from the same `WorkspaceManager`.
 - Produces: `file.patch` with `check|apply` modes.
 
-- [ ] **Step 1: Write failing parser tests**
+- [x] **Step 1: Write failing parser tests**
 
 Support standard text unified patches for:
 
@@ -990,27 +980,29 @@ malformed hunk ranges
 hunks whose context/removal text does not match current content
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test -- patch
 ```
 
-- [ ] **Step 3: Implement full preflight**
+- [x] **Step 3: Implement full preflight**
 
 For every file before the first commit:
 
 ```text
 parse path/action
-→ read current content when action != create
+→ inspect retained-root path identity
+→ for create: require the target to be absent
+→ for update/delete: require a regular file and a complete bounded read
 → SHA-256 current bytes
 → apply hunks in memory
 → collect {path, action, expectedSha256, postImage}
 ```
 
-If any precondition fails, return/throw `PATCH_PRECONDITION_FAILED` and perform zero commit calls.
+A truncated/oversized existing-file read, create-existing target, missing/non-file update/delete target, or hunk mismatch fails closed as `PATCH_PRECONDITION_FAILED`. Full preflight completes for all files before the first commit call.
 
-- [ ] **Step 4: Implement `check` and `apply`**
+- [x] **Step 4: Implement `check` and `apply`**
 
 `check` returns planned file summaries and never calls `commitPatchFile`.
 
@@ -1025,7 +1017,7 @@ throw new CapabilityError("PATCH_COMMIT_INCOMPLETE", ..., {
 
 Do not attempt to hide partial commit state or claim rollback.
 
-- [ ] **Step 5: Register MCP `file.patch`**
+- [x] **Step 5: Register MCP `file.patch`**
 
 Schema:
 
@@ -1037,9 +1029,9 @@ Schema:
 }
 ```
 
-Use mutating-file annotations because callers may omit mode and default is `apply` only if the spec/test explicitly chooses that. Prefer safer default `check`; require explicit `mode: "apply"` for mutation.
+Use mutating-file annotations because the tool can mutate when explicitly requested. The final v1 behavior defaults omitted `mode` to `check`; mutation requires explicit `mode: "apply"`.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -1056,16 +1048,16 @@ git commit -m "feat(capabilities): add bounded unified file patches"
 ### Task 9: Implement Deterministic `context.build`
 
 **Files:**
-- Create: `packages/capabilities/src/context-build.ts`
-- Create: `packages/capabilities/src/context-build.test.ts`
-- Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
+- Create: `packages/capabilities/src/context-build.ts`, `context-build.test.ts`
+- Modify: capability service/schemas/index/contracts tests
+- Modify: `packages/mcp-server/src/tools.ts`, surface/result tests, and shared surface fixture
+- Modify: `apps/cli/src/commands/start.test.ts` for production-stack wiring evidence
 
 **Interfaces:**
-- Consumes: already implemented inspect/search/git/verify/read capabilities.
-- Produces: bounded context bundle without inference.
+- Consumes: already implemented inspect/search/git/verify/read capabilities through the existing `NativeCapabilityService`/workspace adapter.
+- Produces: bounded deterministic context bundle without inference, prompts, filesystem authority, or model calls.
 
-- [ ] **Step 1: Write failing selection/budget tests**
+- [x] **Step 1: Write failing selection/budget tests**
 
 For target `packages/core/src/workspace-manager.ts`, assert deterministic priority:
 
@@ -1079,13 +1071,13 @@ For target `packages/core/src/workspace-manager.ts`, assert deterministic priori
 
 Assert `totalBytes <= maxBytes` and later candidates are omitted with `truncated: true` when the budget is exhausted.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test -- context-build
 ```
 
-- [ ] **Step 3: Implement intent-specific deterministic rules**
+- [x] **Step 3: Implement intent-specific deterministic rules**
 
 Rules must be explicit tables, not model prompts. Example:
 
@@ -1099,9 +1091,9 @@ const INTENT_WEIGHTS = {
 } as const;
 ```
 
-Stable tie-breaker: lexical path order.
+The final composer keeps the Step 1 priority tiers as the primary ordering and applies intent weights as a deterministic secondary score; search evidence has its own explicit bounded secondary weight. This prevents a high review/test weight from displacing the exact target tier while still keeping intent rules explicit and inspectable. Stable tie-breaker: lexical path order.
 
-- [ ] **Step 4: Register MCP `context.build`**
+- [x] **Step 4: Register MCP `context.build`**
 
 Schema:
 
@@ -1116,7 +1108,7 @@ Schema:
 
 Annotations: read-only.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -1132,16 +1124,16 @@ git commit -m "feat(capabilities): add deterministic context builder"
 ### Task 10: Surface Version, Documentation, and Full Regression Gate
 
 **Files:**
-- Modify: `packages/mcp-server/src/index.ts`
-- Modify: MCP surface tests
-- Modify: `docs/compatibility/chatgpt.md`
+- Verify: `packages/mcp-server/src/surface-version.ts`, `index.ts`, and locked surface tests/fixtures
+- Modify: `docs/compatibility/chatgpt.md`, `docs/release/v0.1-checklist.md`, and this execution plan
 - Modify: `tests/security/security-invariants.test.ts`
-- Modify/add integration tests under `tests/integration/`
+- Modify: `tests/integration/full-stack.test.ts`
+- Normalize: canonical `cargo fmt` output across Rust files touched by the hardening series
 
 **Interfaces:**
 - Produces: stable released native capability surface.
 
-- [ ] **Step 1: Add failing surface-security assertions**
+- [x] **Step 1: Add failing surface-security assertions**
 
 Assert the public tool inventory contains:
 
@@ -1165,13 +1157,15 @@ codex.exec
 skill.run
 ```
 
-- [ ] **Step 2: Advance MCP surface version once**
+- [x] **Step 2: Advance MCP surface version once**
 
 Change the v0.1 public surface constant to the next explicit version (recommended `0.2`) and update tests that pin the prior value.
 
 Do not change MCP protocol version solely for tool-surface additions.
 
-- [ ] **Step 3: Document capability semantics**
+> **Execution reconciliation (2026-08-12):** the public surface had already been advanced to `0.2` while Tasks 4–9 were incrementally advertised and all transport/surface tests pin that value. Task 10 therefore preserves `MCP_SURFACE_VERSION = "0.2"`; bumping again to `0.3` would misrepresent the intended single Phase 1 surface-version advance. The MCP protocol version remains unchanged.
+
+- [x] **Step 3: Document capability semantics**
 
 `docs/compatibility/chatgpt.md` must explain:
 
@@ -1181,7 +1175,7 @@ Do not change MCP protocol version solely for tool-surface additions.
 - `verify.run` uses named recipes, not arbitrary shell;
 - `file.patch` performs full preflight + per-file conditional commit and may report partial commit if a commit-phase host failure occurs.
 
-- [ ] **Step 4: Run the complete project verification**
+- [x] **Step 4: Run the complete project verification**
 
 Run in this order:
 
@@ -1201,7 +1195,7 @@ pnpm verify:package
 
 Every command must exit 0. A host-only mandatory sandbox/AppArmor gate must be run in the same environment used for existing release-candidate validation when the generic CI/container environment cannot represent it.
 
-- [ ] **Step 5: Inspect the final diff for invariant violations**
+- [x] **Step 5: Inspect the final diff for invariant violations**
 
 Run:
 
@@ -1212,7 +1206,7 @@ git grep -nE 'codex exec|spawn\([^)]*codex|exec\([^)]*codex|shell:[[:space:]]*tr
 
 Expected: no new runtime Codex execution and no shell enablement.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages apps crates tests docs pnpm-lock.yaml Cargo.lock

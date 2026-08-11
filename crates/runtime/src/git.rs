@@ -115,7 +115,9 @@ impl fmt::Display for GitInspectionError {
             Self::UnsafeRepositoryConfig => {
                 formatter.write_str("Git repository helper configuration could not be neutralized")
             }
-            Self::InvalidCheckpointStatus => formatter.write_str("Git checkpoint status is invalid"),
+            Self::InvalidCheckpointStatus => {
+                formatter.write_str("Git checkpoint status is invalid")
+            }
             Self::CommandFailed => formatter.write_str("Git command failed"),
             Self::CheckpointIdentityUnavailable => {
                 formatter.write_str("Git checkpoint path identity is unavailable")
@@ -253,13 +255,13 @@ pub fn run_git_checkpoint_patch(
         executions,
     )?;
 
-    let staged_spec = hardened_git_spec(program.clone(), checkpoint_patch_args(true, &filter_overrides));
+    let staged_spec = hardened_git_spec(
+        program.clone(),
+        checkpoint_patch_args(true, &filter_overrides),
+    );
     let mut staged_child = provider.spawn(workspace_root, &staged_spec)?;
-    let staged_execution_id = register_git_execution(
-        executions,
-        workspace_capability,
-        &mut staged_child,
-    )?;
+    let staged_execution_id =
+        register_git_execution(executions, workspace_capability, &mut staged_child)?;
     let mut writer = match spool.create(
         request_id,
         operation_id,
@@ -289,15 +291,15 @@ pub fn run_git_checkpoint_patch(
     }
 
     writer.write_source(WORKTREE_PATCH_HEADER)?;
-    let worktree_spec =
-        hardened_git_spec(program.clone(), checkpoint_patch_args(false, &filter_overrides));
+    let worktree_spec = hardened_git_spec(
+        program.clone(),
+        checkpoint_patch_args(false, &filter_overrides),
+    );
     let mut worktree_child = provider.spawn(workspace_root, &worktree_spec)?;
-    let worktree_execution_id = register_git_execution(
-        executions,
-        workspace_capability,
-        &mut worktree_child,
-    )?;
-    let worktree_capture = match capture_child(&mut worktree_child, &mut writer, PREVIEW_MAX_BYTES) {
+    let worktree_execution_id =
+        register_git_execution(executions, workspace_capability, &mut worktree_child)?;
+    let worktree_capture = match capture_child(&mut worktree_child, &mut writer, PREVIEW_MAX_BYTES)
+    {
         Ok(capture) => capture,
         Err(error) => {
             terminate_untracked_child(&mut worktree_child);
@@ -613,7 +615,10 @@ fn attach_current_identities(
             truncated = true;
             continue;
         }
-        if !matches!(metadata.kind, Some(PathIdentityKind::File | PathIdentityKind::Symlink)) {
+        if !matches!(
+            metadata.kind,
+            Some(PathIdentityKind::File | PathIdentityKind::Symlink)
+        ) {
             record.current_identity = Some(metadata);
             truncated = true;
             continue;
@@ -1152,7 +1157,10 @@ mod tests {
         assert_eq!(records[0].worktree_status, None);
         assert_eq!(records[1].record_type, GitCheckpointRecordType::Rename);
         assert_eq!(records[1].path, "renamed -> \"tab\t文.txt");
-        assert_eq!(records[1].original_path.as_deref(), Some("original name.txt"));
+        assert_eq!(
+            records[1].original_path.as_deref(),
+            Some("original name.txt")
+        );
         assert_eq!(records[2].record_type, GitCheckpointRecordType::Unmerged);
         assert_eq!(records[2].path, "conflict file.txt");
         assert_eq!(records[2].stage1_oid.as_deref(), Some(oid_a.as_str()));
@@ -1208,7 +1216,13 @@ mod tests {
             .find(|record| record.path == "tracked.txt")
             .expect("tracked record");
         assert_eq!(tracked.worktree_status.as_deref(), Some("M"));
-        assert!(tracked.current_identity.as_ref().and_then(|identity| identity.sha256.as_ref()).is_some());
+        assert!(
+            tracked
+                .current_identity
+                .as_ref()
+                .and_then(|identity| identity.sha256.as_ref())
+                .is_some()
+        );
         let staged = checkpoint
             .records
             .iter()
@@ -1223,7 +1237,13 @@ mod tests {
             .find(|record| record.path == "untracked.txt")
             .expect("untracked record");
         assert_eq!(untracked.record_type, GitCheckpointRecordType::Untracked);
-        assert!(untracked.current_identity.as_ref().and_then(|identity| identity.sha256.as_ref()).is_some());
+        assert!(
+            untracked
+                .current_identity
+                .as_ref()
+                .and_then(|identity| identity.sha256.as_ref())
+                .is_some()
+        );
 
         let patch = run_git_checkpoint_patch(
             &root_fd,
@@ -1237,7 +1257,11 @@ mod tests {
         assert_eq!(patch.exit_code, 0);
         assert!(patch.stdout_preview.contains("=== KODEGPT STAGED DIFF ==="));
         assert!(patch.stdout_preview.contains("staged.txt"));
-        assert!(patch.stdout_preview.contains("=== KODEGPT WORKTREE DIFF ==="));
+        assert!(
+            patch
+                .stdout_preview
+                .contains("=== KODEGPT WORKTREE DIFF ===")
+        );
         assert!(patch.stdout_preview.contains("tracked.txt"));
         assert!(patch.artifact.bytes_written > patch.stdout_preview.len() as u64 / 2);
 

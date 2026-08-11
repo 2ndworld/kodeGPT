@@ -30,6 +30,20 @@ The compatibility claim is therefore scoped to observed evidence:
 - MCP Apps rendering must be recorded separately from text fallback behavior.
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
 
+## Native capability hub semantics
+
+KodeGPT's released Phase 1 native capability hub is the `0.2` MCP tool surface. GPT Web remains the reasoning actor: KodeGPT provides bounded, typed, policy-checked desktop/repository capabilities and does not introduce an autonomous coding agent, a Codex execution path, or a general shell shortcut.
+
+The higher-level tools reduce repeated primitive round trips without replacing lower-level authority:
+
+- `workspace.inspect` assembles bounded evidence about project types, languages, manifests, entrypoints, and areas from retained-root inspection. `context.build` composes existing inspect/Git/search/verification/read capabilities using deterministic rules and a byte budget; it performs no model inference.
+- `code.search` reports its precision (`exact`, `lexical`, or `heuristic`) and explicit truncation reasons. Heuristic symbol/definition/reference matches are never described as compiler-precise.
+- `git.changes` provides a content-sensitive deterministic checkpoint. Untracked content participates in fingerprint identity, while v1 unified patch coverage is explicitly limited to staged and worktree tracked diffs.
+- `verify.list` discovers only named deterministic recipes. `verify.run` selects and re-resolves one of those recipes through the existing process sandbox; it does not accept an arbitrary replacement executable/argv or shell command.
+- `file.patch` defaults to `check`. It parses a bounded text-only unified patch, performs full preflight for all affected files before the first mutation, then in `apply` mode uses per-file conditional retained-root commits. It is **not** a globally atomic multi-file transaction: a host/runtime failure during commit may leave already committed earlier paths in place, and KodeGPT reports `committedPaths` plus `failedPath` rather than claiming rollback.
+
+Workspace trust remains local-only and is deliberately absent from the MCP tool inventory. The public surface also contains no `shell.run`, `codex.run`, `codex.exec`, or `skill.run` execution tools.
+
 ## Required manual host evidence matrix
 
 Before claiming ChatGPT compatibility for a release candidate, capture a local-only evidence record containing at least:

@@ -63,8 +63,12 @@ impl fmt::Display for PathIdentityError {
         match self {
             Self::InvalidPath => formatter.write_str("workspace path is invalid"),
             Self::BoundaryUnavailable => formatter.write_str("filesystem boundary is unavailable"),
-            Self::BoundaryViolation => formatter.write_str("workspace filesystem boundary denied access"),
-            Self::ChangedDuringInspection => formatter.write_str("workspace path changed during inspection"),
+            Self::BoundaryViolation => {
+                formatter.write_str("workspace filesystem boundary denied access")
+            }
+            Self::ChangedDuringInspection => {
+                formatter.write_str("workspace path changed during inspection")
+            }
             Self::Io(error) => write!(formatter, "workspace path identity failed: {error}"),
         }
     }
@@ -77,15 +81,12 @@ pub fn path_identity_beneath(
     relative_path: &Path,
     include_sha256: bool,
 ) -> Result<PathIdentityResult, PathIdentityError> {
-    let metadata_fd = match open_existing_beneath(
-        root_fd,
-        relative_path,
-        OFlags::PATH | OFlags::NOFOLLOW,
-    ) {
-        Ok(fd) => fd,
-        Err(OpenatBoundaryError::NotFound) => return Ok(PathIdentityResult::missing()),
-        Err(error) => return Err(map_boundary_error(error)),
-    };
+    let metadata_fd =
+        match open_existing_beneath(root_fd, relative_path, OFlags::PATH | OFlags::NOFOLLOW) {
+            Ok(fd) => fd,
+            Err(OpenatBoundaryError::NotFound) => return Ok(PathIdentityResult::missing()),
+            Err(error) => return Err(map_boundary_error(error)),
+        };
     let stat = fstat(&metadata_fd).map_err(PathIdentityError::Io)?;
     let kind = kind_from_mode(stat.st_mode);
     let size_bytes = nonnegative_size(stat.st_size)?;
@@ -230,7 +231,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{PATH_IDENTITY_MAX_HASH_BYTES, PathIdentityError, PathIdentityKind, path_identity_beneath};
+    use super::{
+        PATH_IDENTITY_MAX_HASH_BYTES, PathIdentityError, PathIdentityKind, path_identity_beneath,
+    };
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -298,13 +301,16 @@ mod tests {
         symlink(outside.join("secret.txt"), root.join("link")).expect("symlink created");
         let fd = root_fd(&root);
 
-        let identity = path_identity_beneath(&fd, Path::new("link"), true)
-            .expect("symlink identity succeeds");
+        let identity =
+            path_identity_beneath(&fd, Path::new("link"), true).expect("symlink identity succeeds");
         assert_eq!(identity.kind, Some(PathIdentityKind::Symlink));
         let expected_target = outside.join("secret.txt");
         let expected = sha256_hex(expected_target.as_os_str().as_encoded_bytes());
         assert_eq!(identity.sha256.as_deref(), Some(expected.as_str()));
-        assert_ne!(identity.sha256.as_deref(), Some(sha256_hex(b"outside secret").as_str()));
+        assert_ne!(
+            identity.sha256.as_deref(),
+            Some(sha256_hex(b"outside secret").as_str())
+        );
 
         fs::remove_dir_all(root).expect("root removed");
         fs::remove_dir_all(outside).expect("outside removed");

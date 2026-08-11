@@ -48,7 +48,9 @@ impl fmt::Display for WorkspaceWriteError {
             Self::InvalidUtf8 => formatter.write_str("workspace edit target is not valid UTF-8"),
             Self::Conflict => formatter.write_str("workspace edit replacement count conflict"),
             Self::PreconditionFailed => formatter.write_str("workspace patch precondition failed"),
-            Self::TargetExists => formatter.write_str("workspace patch create target already exists"),
+            Self::TargetExists => {
+                formatter.write_str("workspace patch create target already exists")
+            }
             Self::Io(error) => write!(formatter, "workspace mutation failed: {error}"),
         }
     }
@@ -173,7 +175,11 @@ pub fn commit_patch_file_beneath(
             if expected_sha256.is_some() || content.is_none() {
                 return Err(WorkspaceWriteError::PreconditionFailed);
             }
-            commit_patch_create(root_fd, relative_path, content.expect("validated create content"))
+            commit_patch_create(
+                root_fd,
+                relative_path,
+                content.expect("validated create content"),
+            )
         }
         PatchFileAction::Update => {
             let expected = expected_sha256.ok_or(WorkspaceWriteError::PreconditionFailed)?;
@@ -281,10 +287,12 @@ fn commit_patch_delete(
 ) -> Result<PatchFileCommitResult, WorkspaceWriteError> {
     let parent = open_parent_beneath(root_fd, relative_path).map_err(map_boundary_error)?;
     verify_patch_target(parent.parent_fd(), parent.leaf_name(), expected_sha256)?;
-    unlinkat(parent.parent_fd(), parent.leaf_name(), AtFlags::empty()).map_err(|error| match error {
-        Errno::NOENT => WorkspaceWriteError::PreconditionFailed,
-        error => WorkspaceWriteError::Io(error),
-    })?;
+    unlinkat(parent.parent_fd(), parent.leaf_name(), AtFlags::empty()).map_err(
+        |error| match error {
+            Errno::NOENT => WorkspaceWriteError::PreconditionFailed,
+            error => WorkspaceWriteError::Io(error),
+        },
+    )?;
     fsync(parent.parent_fd()).map_err(WorkspaceWriteError::Io)?;
     Ok(PatchFileCommitResult {
         schema_version: 1,
@@ -321,20 +329,23 @@ fn verify_patch_target(
         return Err(WorkspaceWriteError::PreconditionFailed);
     }
 
-    let current_stat = statat(parent_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
-        if error == Errno::NOENT {
-            WorkspaceWriteError::PreconditionFailed
-        } else {
-            WorkspaceWriteError::Io(error)
-        }
-    })?;
+    let current_stat =
+        statat(parent_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+            if error == Errno::NOENT {
+                WorkspaceWriteError::PreconditionFailed
+            } else {
+                WorkspaceWriteError::Io(error)
+            }
+        })?;
     if FileType::from_raw_mode(current_stat.st_mode) != FileType::RegularFile
         || current_stat.st_dev != opened_stat.st_dev
         || current_stat.st_ino != opened_stat.st_ino
     {
         return Err(WorkspaceWriteError::PreconditionFailed);
     }
-    Ok(Mode::from_bits_truncate((current_stat.st_mode & 0o777) as _))
+    Ok(Mode::from_bits_truncate(
+        (current_stat.st_mode & 0o777) as _,
+    ))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -481,7 +492,10 @@ mod tests {
         .expect("create succeeds");
         assert_eq!(created.action, PatchFileAction::Create);
         assert_eq!(created.bytes_written, 8);
-        assert_eq!(created.sha256.as_deref(), Some(sha256_hex(b"created\n").as_str()));
+        assert_eq!(
+            created.sha256.as_deref(),
+            Some(sha256_hex(b"created\n").as_str())
+        );
         assert_eq!(fs::read(root.join("created.txt")).unwrap(), b"created\n");
 
         let conflict = commit_patch_file_beneath(
@@ -513,7 +527,10 @@ mod tests {
         )
         .expect("matching update succeeds");
         assert_eq!(updated.bytes_written, 6);
-        assert_eq!(updated.sha256.as_deref(), Some(sha256_hex(b"after\n").as_str()));
+        assert_eq!(
+            updated.sha256.as_deref(),
+            Some(sha256_hex(b"after\n").as_str())
+        );
         assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"after\n");
 
         let stale = commit_patch_file_beneath(
@@ -523,7 +540,10 @@ mod tests {
             Some(&before_digest),
             Some(b"must-not-write\n"),
         );
-        assert!(matches!(stale, Err(WorkspaceWriteError::PreconditionFailed)));
+        assert!(matches!(
+            stale,
+            Err(WorkspaceWriteError::PreconditionFailed)
+        ));
         assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"after\n");
 
         fs::remove_dir_all(root).expect("root removed");
@@ -543,7 +563,10 @@ mod tests {
             Some(&"0".repeat(64)),
             None,
         );
-        assert!(matches!(stale, Err(WorkspaceWriteError::PreconditionFailed)));
+        assert!(matches!(
+            stale,
+            Err(WorkspaceWriteError::PreconditionFailed)
+        ));
         assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"delete-me\n");
 
         let deleted = commit_patch_file_beneath(

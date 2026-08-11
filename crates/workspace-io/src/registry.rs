@@ -104,8 +104,12 @@ impl fmt::Display for WorkspaceRegistryError {
                 formatter.write_str("workspace file edit conflicted with expected replacements")
             }
             Self::FileWriteFailed => formatter.write_str("workspace file mutation failed"),
-            Self::PatchPreconditionFailed => formatter.write_str("workspace patch precondition failed"),
-            Self::PatchTargetExists => formatter.write_str("workspace patch create target already exists"),
+            Self::PatchPreconditionFailed => {
+                formatter.write_str("workspace patch precondition failed")
+            }
+            Self::PatchTargetExists => {
+                formatter.write_str("workspace patch create target already exists")
+            }
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
     }
@@ -322,7 +326,8 @@ impl<P> WorkspaceRegistry<P> {
             .root_fd
             .try_clone()
             .map_err(|_| WorkspaceRegistryError::FileReadFailed)?;
-        path_identity_beneath(&root_fd, relative_path, include_sha256).map_err(map_path_identity_error)
+        path_identity_beneath(&root_fd, relative_path, include_sha256)
+            .map_err(map_path_identity_error)
     }
 
     pub fn write_file_with_policy<F>(

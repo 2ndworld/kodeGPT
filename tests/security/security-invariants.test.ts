@@ -10,6 +10,8 @@ import {
   KernelClient,
   RuntimeUnavailableError
 } from "../../packages/core/src/kernel-client.js";
+import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
+import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/surface-version.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const TARGET = join(REPOSITORY_ROOT, "target", "task22-security");
@@ -113,5 +115,30 @@ describe("full security acceptance invariants", () => {
     expect(facadeSource).not.toContain('from "node:child_process');
     expect(facadeSource).not.toMatch(/\b(?:spawn|exec|execFile|fork)\s*\(/);
     expect(facadeSource).toContain("kernel.request");
+  });
+
+  it("ships the native capability hub surface without trust, shell, Codex, or skill execution tools", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.2");
+    const names = listSurfaceTools().map(({ name }) => name);
+    for (const required of [
+      "workspace.inspect",
+      "code.search",
+      "git.changes",
+      "verify.list",
+      "verify.run",
+      "file.patch",
+      "context.build"
+    ]) {
+      expect(names).toContain(required);
+    }
+    for (const forbidden of [
+      "workspace.trust",
+      "shell.run",
+      "codex.run",
+      "codex.exec",
+      "skill.run"
+    ]) {
+      expect(names).not.toContain(forbidden);
+    }
   });
 });
