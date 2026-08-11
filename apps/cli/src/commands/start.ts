@@ -11,6 +11,7 @@ import {
   createHttpTrustConfig,
   type HttpTrustConfig
 } from "@kodegpt/auth";
+import { NativeCapabilityService } from "@kodegpt/capabilities";
 import {
   ExecutionManager,
   KernelClient,
@@ -50,7 +51,7 @@ export interface TrustProfileBundle {
 
 export interface ManagerBundle {
   workspaceManager: WorkspaceManagerToolAdapter &
-    Pick<WorkspaceManager, "runProcess" | "processStatus" | "processCancel">;
+    Pick<WorkspaceManager, "runProcess" | "processStatus" | "processCancel" | "treeBounded">;
 }
 
 export interface McpNodeHandle {
@@ -178,10 +179,19 @@ export async function createProductionServiceStack(
     const executionManager = new ExecutionManager(managers.workspaceManager);
     const artifactStore = new ArtifactStore(kernel);
     const auditReader = new AuditReader(stateRoot);
+    const nativeCapabilities = new NativeCapabilityService({
+      workspaceInspection: {
+        readFile: (workspaceId, path, readOptions) =>
+          managers.workspaceManager.readFile(workspaceId, path, readOptions),
+        tree: (workspaceId, path, maxEntries) =>
+          managers.workspaceManager.treeBounded(workspaceId, path, maxEntries)
+      }
+    });
     const toolContext = createKodegptToolContext({
       workspaceManager: managers.workspaceManager,
       executionManager,
       artifactStore,
+      nativeCapabilities,
       extensionRegistry,
       inspectProfile: trustProfile.inspectProfile,
       capabilities: async () => systemCapabilities(await kernel!.hello()),

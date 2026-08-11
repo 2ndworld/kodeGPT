@@ -13,6 +13,7 @@ import {
   MAX_SEARCH_MAX_RESULTS
 } from "./contracts.js";
 import { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
+import { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "./schemas.js";
 
 describe("capability contracts", () => {
   it("pins public schema and bounded defaults", () => {
@@ -28,10 +29,33 @@ describe("capability contracts", () => {
     expect(MAX_PATCH_HUNKS).toBe(256);
   });
 
+  it("validates workspace.inspect inputs and structured results at runtime", () => {
+    expect(
+      WorkspaceInspectInputSchema.parse({ workspaceId: "ws_1", path: ".", maxEntries: 10_000 })
+    ).toEqual({ workspaceId: "ws_1", path: ".", maxEntries: 10_000 });
+    expect(() =>
+      WorkspaceInspectInputSchema.parse({ workspaceId: "ws_1", maxEntries: 10_001 })
+    ).toThrow();
+
+    const validResult = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      root: ".",
+      projectTypes: ["node-pnpm"],
+      languages: [{ name: "TypeScript", fileCount: 2 }],
+      entrypoints: [{ path: "package.json", kind: "node-manifest" }],
+      areas: [{ path: "packages/core", kind: "package" as const }],
+      manifests: [{ path: "package.json", kind: "package-json" }],
+      warnings: [],
+      truncated: false
+    };
+    expect(WorkspaceInspectResultSchema.parse(validResult)).toEqual(validResult);
+    expect(() => WorkspaceInspectResultSchema.parse({ ...validResult, truncated: "no" })).toThrow();
+  });
+
   it("keeps unimplemented capability methods explicit and stable", async () => {
     const service = new NativeCapabilityService({
-      workspace: {} as never,
-      execution: {} as never
+      workspaceInspection: {} as never
     });
 
     await expect(service.searchCode({ workspaceId: "ws_1", query: "needle" })).rejects.toEqual(

@@ -1,53 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  CapabilityExecutionAdapter,
-  CapabilityTreeEntry,
-  CapabilityWorkspaceAdapter
-} from "./adapters.js";
+import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
 
 function makeWorkspaceAdapter(
   entries: CapabilityTreeEntry[],
   options: {
     files?: Record<string, string>;
-    onTree?: (path: string | undefined) => void;
+    treeTruncated?: boolean;
+    onTree?: (path: string | undefined, maxEntries: number) => void;
+    onRead?: (path: string, maxBytes: number | undefined) => void;
   } = {}
-): CapabilityWorkspaceAdapter {
+): WorkspaceInspectionAdapter {
   const files = options.files ?? {};
-  const unexpected = async (): Promise<never> => {
-    throw new Error("unexpected adapter call");
-  };
 
   return {
-    info: (workspaceId) => ({
-      id: workspaceId,
-      canonicalRoot: "/home/private/workspace",
-      effectivePolicy: {}
-    }),
-    readFile: async (_workspaceId, path) => ({
-      contents: files[path] ?? "",
-      bytesRead: Buffer.byteLength(files[path] ?? "", "utf8"),
-      eof: true
-    }),
-    tree: async (_workspaceId, path) => {
-      options.onTree?.(path);
-      return entries;
+    readFile: async (_workspaceId, path, readOptions) => {
+      options.onRead?.(path, readOptions?.maxBytes);
+      return {
+        contents: files[path] ?? "",
+        bytesRead: Buffer.byteLength(files[path] ?? "", "utf8"),
+        eof: true
+      };
     },
-    search: unexpected,
-    gitStatus: unexpected,
-    gitDiff: unexpected,
-    commitPatchFile: unexpected
+    tree: async (_workspaceId, path, maxEntries) => {
+      options.onTree?.(path, maxEntries);
+      return { entries, truncated: options.treeTruncated ?? false };
+    }
   };
 }
 
-function makeService(workspace: CapabilityWorkspaceAdapter): NativeCapabilityService {
-  const execution: CapabilityExecutionAdapter = {
-    run: async () => {
-      throw new Error("unexpected execution call");
-    }
-  };
-  return new NativeCapabilityService({ workspace, execution });
+function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCapabilityService {
+  return new NativeCapabilityService({ workspaceInspection });
 }
 
 describe("workspace.inspect", () => {
@@ -178,22 +162,97 @@ describe("workspace.inspect", () => {
     expect(result.warnings).toContain("INSPECT_MAX_ENTRIES_REACHED");
   });
 
-  it("passes the requested workspace-relative path to the trusted workspace adapter", async () => {
+  it("classifies only manifests at the inspection root", async () => {
+    const node = makeService(
+      makeWorkspaceAdapter([
+        { path: "package.json", kind: "file" },
+        { path: "pnpm-workspace.yaml", kind: "file" },
+        { path: "examples/rust-demo/Cargo.toml", kind: "file" }
+      ])
+    );
+    const rust = makeService(
+      makeWorkspaceAdapter([
+        { path: "Cargo.toml", kind: "file" },
+        { path: "examples/node/package.json", kind: "file" }
+      ])
+    );
+
+    expect((await node.inspectWorkspace({ workspaceId: "ws_node_root" })).projectTypes).toEqual([
+      "node-pnpm"
+    ]);
+    expect((await rust.inspectWorkspace({ workspaceId: "ws_rust_root" })).projectTypes).toEqual([
+      "rust-cargo"
+    ]);
+  });
+
+  it("uses the scoped inspection root as project evidence", async () => {
+    const service = makeService(
+      makeWorkspaceAdapter([{ path: "examples/rust-demo/Cargo.toml", kind: "file" }])
+    );
+
+    const result = await service.inspectWorkspace({
+      workspaceId: "ws_scoped_rust",
+      path: "examples/rust-demo"
+    });
+
+    expect(result.projectTypes).toEqual(["rust-cargo"]);
+    expect(result.manifests).toContainEqual({
+      path: "examples/rust-demo/Cargo.toml",
+      kind: "cargo-manifest"
+    });
+  });
+
+  it("uses bounded root manifest reads to add explicit workspace member areas", async () => {
+    const reads: Array<{ path: string; maxBytes: number | undefined }> = [];
+    const service = makeService(
+      makeWorkspaceAdapter(
+        [
+          { path: "package.json", kind: "file" },
+          { path: "services/api", kind: "directory" },
+          { path: "libs/shared", kind: "directory" },
+          { path: "vendor/ignored", kind: "directory" }
+        ],
+        {
+          files: {
+            "package.json": JSON.stringify({ workspaces: ["services/*", "libs/*"] })
+          },
+          onRead: (path, maxBytes) => reads.push({ path, maxBytes })
+        }
+      )
+    );
+
+    const result = await service.inspectWorkspace({ workspaceId: "ws_members" });
+
+    expect(result.areas).toEqual(
+      expect.arrayContaining([
+        { path: "services/api", kind: "package" },
+        { path: "libs/shared", kind: "package" }
+      ])
+    );
+    expect(result.areas).not.toContainEqual({ path: "vendor/ignored", kind: "package" });
+    expect(reads).toEqual([{ path: "package.json", maxBytes: 64 * 1024 }]);
+  });
+
+  it("passes the requested workspace-relative path and bound to the trusted workspace adapter", async () => {
     let requestedPath: string | undefined;
+    let requestedMaxEntries: number | undefined;
     const service = makeService(
       makeWorkspaceAdapter([{ path: "packages/core/package.json", kind: "file" }], {
-        onTree: (path) => {
+        onTree: (path, maxEntries) => {
           requestedPath = path;
+          requestedMaxEntries = maxEntries;
         }
       })
     );
 
     const result = await service.inspectWorkspace({
       workspaceId: "ws_scoped",
-      path: "packages/core"
+      path: "packages/core",
+      maxEntries: 321
     });
 
     expect(requestedPath).toBe("packages/core");
+    expect(requestedMaxEntries).toBe(321);
     expect(result.root).toBe("packages/core");
   });
 });

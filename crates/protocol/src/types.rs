@@ -122,6 +122,7 @@ pub struct FileReadParams {
 pub struct FileTreeParams {
     pub capability_id: String,
     pub path: String,
+    pub max_entries: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

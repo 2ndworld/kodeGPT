@@ -116,6 +116,7 @@ describe("bridge command unit tests", () => {
           editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
           search: async () => [],
           tree: async () => [],
+          treeBounded: async () => ({ entries: [], truncated: false }),
           gitStatus: async () => ({
             schemaVersion: 1,
             exitCode: 0,

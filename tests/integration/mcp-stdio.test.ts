@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { serveKodegptStdio } from "../../packages/mcp-server/src/stdio.js";
 import type { KodegptToolContext } from "../../packages/mcp-server/src/tool-context.js";
+import {
+  EXPECTED_MCP_REQUIRED_BY_NAME,
+  EXPECTED_MCP_TOOL_NAMES
+} from "../fixtures/mcp-surface.js";
 
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 const CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities";
@@ -185,30 +189,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       const payload = await toolsResponse;
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
-      expect(tools.map((tool) => tool.name).sort()).toEqual([
-        "artifact.read",
-        "console.state",
-        "extension.list",
-        "file.edit",
-        "file.read",
-        "file.search",
-        "file.tree",
-        "file.write",
-        "git.diff",
-        "git.status",
-        "process.cancel",
-        "process.run",
-        "process.status",
-        "profile.current",
-        "profile.inspect",
-        "system.capabilities",
-        "system.health",
-        "workspace.close",
-        "workspace.info",
-        "workspace.inspect",
-        "workspace.list",
-        "workspace.open"
-      ]);
+      expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
       expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
 
       for (const tool of tools) {
@@ -228,30 +209,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       const required = Object.fromEntries(
         tools.map((tool) => [tool.name, tool.inputSchema.required ?? []])
       );
-      expect(required).toEqual({
-        "artifact.read": ["uri"],
-        "console.state": [],
-        "extension.list": [],
-        "file.edit": ["workspaceId", "path", "oldText", "newText", "expectedReplacements"],
-        "file.read": ["workspaceId", "path"],
-        "file.search": ["workspaceId", "query"],
-        "file.tree": ["workspaceId"],
-        "file.write": ["workspaceId", "path", "content"],
-        "git.diff": ["workspaceId"],
-        "git.status": ["workspaceId"],
-        "process.cancel": ["workspaceId", "operationId"],
-        "process.run": ["workspaceId", "logicalExecutable", "argv"],
-        "process.status": ["workspaceId", "operationId"],
-        "profile.current": ["workspaceId"],
-        "profile.inspect": ["name"],
-        "system.capabilities": [],
-        "system.health": [],
-        "workspace.close": ["workspaceId"],
-        "workspace.info": ["workspaceId"],
-        "workspace.inspect": ["workspaceId"],
-        "workspace.list": [],
-        "workspace.open": ["rootPath"]
-      });
+      expect(required).toEqual(EXPECTED_MCP_REQUIRED_BY_NAME);
 
       const writeResponse = nextMessage(stdout);
       writeMessage(stdin, {

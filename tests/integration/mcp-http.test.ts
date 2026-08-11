@@ -8,6 +8,7 @@ const SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
 import { createHttpTrustConfig } from "../../packages/auth/src/http-trust.js";
 import { createKodegptHttpHandler } from "../../packages/mcp-server/src/http.js";
 import type { KodegptToolContext } from "../../packages/mcp-server/src/tool-context.js";
+import { EXPECTED_MCP_TOOL_NAMES } from "../fixtures/mcp-surface.js";
 
 const toolContext: KodegptToolContext = {
   workspace: {
@@ -393,30 +394,7 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
       const payload = (await response.json()) as Record<string, any>;
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
-      expect(tools.map((tool) => tool.name).sort()).toEqual([
-        "artifact.read",
-        "console.state",
-        "extension.list",
-        "file.edit",
-        "file.read",
-        "file.search",
-        "file.tree",
-        "file.write",
-        "git.diff",
-        "git.status",
-        "process.cancel",
-        "process.run",
-        "process.status",
-        "profile.current",
-        "profile.inspect",
-        "system.capabilities",
-        "system.health",
-        "workspace.close",
-        "workspace.info",
-        "workspace.inspect",
-        "workspace.list",
-        "workspace.open"
-      ]);
+      expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
       expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
     } finally {
       await handler.close();

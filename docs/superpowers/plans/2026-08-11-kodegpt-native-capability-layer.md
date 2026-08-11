@@ -158,18 +158,37 @@ export type VerificationCategory = "test" | "lint" | "typecheck" | "build" | "fo
 
 Define the complete `WorkspaceInspect*`, `CodeSearch*`, `GitChanges*`, `VerificationRecipe`, `VerifyRun*`, `FilePatch*`, and `ContextBuild*` interfaces from the approved design. Every result begins with `schemaVersion: 1`.
 
-- [ ] **Step 4: Define narrow adapters rather than depending on concrete managers**
+- [ ] **Step 4: Define narrow authority-specific adapters rather than depending on concrete managers**
 
-`adapters.ts` must expose:
+`adapters.ts` must separate read inspection, search, Git inspection, patch mutation, and execution authority. The Task 3 read-only adapter is intentionally minimal:
 
 ```ts
-export interface CapabilityWorkspaceAdapter {
-  info(workspaceId: string): { id: string; canonicalRoot: string; effectivePolicy: unknown };
-  readFile(workspaceId: string, path: string, options?: { offset?: number; maxBytes?: number }): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
-  tree(workspaceId: string, path?: string): Promise<Array<{ path: string; kind: "file" | "directory" | "symlink" | "other" }>>;
+export interface WorkspaceInspectionAdapter {
+  readFile(
+    workspaceId: string,
+    path: string,
+    options?: { offset?: number; maxBytes?: number }
+  ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
+  tree(
+    workspaceId: string,
+    path: string | undefined,
+    maxEntries: number
+  ): Promise<{
+    entries: Array<{ path: string; kind: "file" | "directory" | "symlink" | "other" }>;
+    truncated: boolean;
+  }>;
+}
+
+export interface CodeSearchAdapter {
   search(workspaceId: string, query: string, path?: string): Promise<Array<{ path: string; line: number; lineText: string }>>;
+}
+
+export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface PatchCommitAdapter {
   commitPatchFile(input: PatchCommitAdapterInput): Promise<PatchCommitAdapterResult>;
 }
 
@@ -184,11 +203,11 @@ export interface CapabilityExecutionAdapter {
 }
 ```
 
-Do not expose capability IDs or host FDs through these interfaces.
+A capability receives only the adapter authority it actually uses. Do not expose capability IDs or host FDs through these interfaces.
 
 - [ ] **Step 5: Add the service skeleton**
 
-`NativeCapabilityService` constructor accepts `{ workspace, execution }`. Add methods with final signatures but throw `CAPABILITY_NOT_IMPLEMENTED` until their tasks land:
+`NativeCapabilityService` grows adapter dependencies only as capabilities are implemented. After Task 3 the constructor accepts `{ workspaceInspection }`; later tasks extend the options with search/Git/execution/patch adapters only when those authorities become necessary. Add methods with final signatures but throw `CAPABILITY_NOT_IMPLEMENTED` until their tasks land:
 
 ```ts
 inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>
@@ -289,7 +308,7 @@ verify.run(input: VerifyRunInput): Promise<VerifyRunResult>;
 context.build(input: ContextBuildInput): Promise<ContextBuildResult>;
 ```
 
-The methods can remain unwired until later tasks, but the context factory must accept a `nativeCapabilities` adapter with these signatures.
+The method namespaces may remain backed by explicit `CAPABILITY_NOT_IMPLEMENTED` fallbacks until their implementation task lands. Once a capability is implemented, its production service wiring and integration test must land before that capability is advertised on the public MCP surface. The lifecycle is `implement → production-wire → integration-test → expose`; `workspace.inspect` establishes this rule in Task 3.
 
 - [ ] **Step 5: Run MCP tests/typecheck GREEN**
 
@@ -313,26 +332,41 @@ git commit -m "refactor(mcp): add typed structured tool results"
 **Files:**
 - Create: `packages/capabilities/src/workspace-inspect.ts`
 - Create: `packages/capabilities/src/workspace-inspect.test.ts`
+- Create: `packages/capabilities/src/schemas.ts`
 - Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
-- Modify: MCP surface-list tests
+- Modify: `packages/capabilities/src/adapters.ts`
+- Modify: `packages/protocol/src/runtime-types.ts`
+- Modify: `schemas/runtime/request.schema.json`
+- Modify: `crates/protocol/src/types.rs`
+- Modify: `crates/workspace-io/src/read.rs`, `lib.rs`, `registry.rs`
+- Modify: `crates/runtime/src/dispatcher.rs`
+- Modify: `packages/core/src/workspace-manager.ts`
+- Modify: `packages/mcp-server/package.json`, `tool-context.ts`, `tools.ts`
+- Modify: `apps/cli/package.json`, `apps/cli/src/commands/start.ts`
+- Modify: focused MCP/protocol/core/Rust tests and production full-stack integration test
 
 **Interfaces:**
-- Consumes: `CapabilityWorkspaceAdapter.info/tree/readFile`.
-- Produces: `WorkspaceInspectResult` and MCP tool `workspace.inspect`.
+- Consumes: `WorkspaceInspectionAdapter.readFile/tree` only.
+- Internal bounded tree request: `{ capabilityId, path, maxEntries }`.
+- Internal bounded tree result: `{ entries, truncated }`.
+- Produces: schema-validated `WorkspaceInspectResult` and production-usable MCP tool `workspace.inspect`.
 
-- [ ] **Step 1: Add fixtures and failing detection tests**
+- [ ] **Step 1: Add RED tests for evidence semantics and production usability**
 
 Create tests for:
 
 ```text
-Node: package.json + pnpm-workspace.yaml + apps/ + packages/
-Rust: Cargo.toml + crates/
-Mixed: package.json + Cargo.toml
-Unknown: arbitrary src/ files without known manifests
+Node root: package.json + pnpm-workspace.yaml + apps/ + packages/
+Rust root: Cargo.toml + crates/
+Mixed root: package.json + Cargo.toml
+Unknown root: arbitrary src/ files without known manifests
+Nested Cargo under Node root: nested manifest remains evidence but does not change root projectTypes
+Nested package.json under Cargo root: nested manifest remains evidence but does not change root projectTypes
+Scoped nested inspection: the scoped manifest becomes root project evidence
+Production service stack: trusted/open workspace → MCP workspace.inspect → structured result
 ```
 
-Required assertions:
+Required assertions include:
 
 ```ts
 expect(result.schemaVersion).toBe(1);
@@ -342,62 +376,104 @@ expect(result.areas).toContainEqual({ path: "packages/core", kind: "package" });
 expect(result.entrypoints).toContainEqual({ path: "package.json", kind: "node-manifest" });
 ```
 
-Ordering must be lexical and repeatable.
+Ordering must be lexical and repeatable. Root `projectTypes` use only manifests at the inspection root; nested manifests may still appear in `manifests[]`.
 
-- [ ] **Step 2: Run capability test RED**
+- [ ] **Step 2: Add RED tests for bounded tree truncation**
 
-```bash
-pnpm --filter @kodegpt/capabilities test -- workspace-inspect
+Cover the internal tree primitive before changing production code:
+
+```text
+exactly N entries with limit N       → truncated=false
+N+1 entries with limit N             → truncated=true
+requested limit above 2,000          → may return more than 2,000
+requested limit above 10,000         → rejected by Rust authority
+repeated traversal                   → deterministic lexical ordering
 ```
 
-- [ ] **Step 3: Implement bounded evidence-based inspection**
+Rust owns the hard maximum of `10_000`. Existing ordinary `WorkspaceManager.tree()` keeps a default `2_000` view for callers that do not need a larger bound.
 
-Rules:
+- [ ] **Step 3: Implement explicit bounded tree result through Rust → protocol → core**
 
-```ts
-const LANGUAGE_BY_EXTENSION = new Map([
-  [".ts", "TypeScript"], [".tsx", "TypeScript"], [".js", "JavaScript"],
-  [".rs", "Rust"], [".py", "Python"], [".json", "JSON"], [".md", "Markdown"]
-]);
-```
+Do not infer truncation from returned array length. Preserve:
+
+- retained root FD authority;
+- `openat2` beneath/no-magiclink/no-cross-boundary behavior;
+- symlink non-descent semantics;
+- deterministic lexical ordering;
+- durable audit decision before OS action;
+- no unbounded enumeration.
+
+Expose an internal `WorkspaceManager.treeBounded(workspaceId, path, maxEntries)` returning `{ entries, truncated }`; keep existing `tree()` backward-compatible at the default bound.
+
+- [ ] **Step 4: Implement bounded evidence-based inspection**
 
 Recognize only explicit evidence:
 
-- `package.json` => Node project;
-- `pnpm-workspace.yaml` => pnpm workspace;
-- `Cargo.toml` => Rust/Cargo;
+- root `package.json` => Node project;
+- root `pnpm-workspace.yaml` => pnpm workspace;
+- root `Cargo.toml` => Rust/Cargo;
 - `apps/*`, `packages/*`, `crates/*`, `tests/*`, `docs/*` => conventional areas;
 - known configs (`tsconfig.json`, `vitest.config.*`, `.github/workflows/*`) => config/entrypoint metadata.
 
-Do not recursively read every source file. Use `tree()` for counts and bounded reads only for manifests needed to identify workspace members.
+Do not recursively read source files. Use bounded reads only for known root manifests when the contents provide deterministic metadata that cannot be obtained from tree evidence alone. Optional malformed/truncated manifest metadata produces bounded warnings rather than guessed architecture.
 
-- [ ] **Step 4: Register MCP `workspace.inspect`**
+- [ ] **Step 5: Add shared runtime schemas**
 
-Input schema:
+`packages/capabilities/src/schemas.ts` owns:
 
 ```ts
-{
-  workspaceId: z.string().min(1),
-  path: z.string().min(1).optional(),
-  maxEntries: z.number().int().positive().max(10_000).optional()
-}
+WorkspaceInspectInputSchema
+WorkspaceInspectResultSchema
 ```
 
-Annotations: `READ_ONLY_TOOL_ANNOTATIONS`.
+Keep these schemas aligned with the public TypeScript contracts. `workspace.inspect` output must be validated before it becomes MCP `structuredContent`.
 
-- [ ] **Step 5: Test deterministic truncation and MCP surface**
+- [ ] **Step 6: Production-wire before advertising**
 
-Assert `truncated: true` once `maxEntries` is reached and add `workspace.inspect` to the surface inventory.
+Instantiate `NativeCapabilityService` inside the existing `createProductionServiceStack` using the already-created `WorkspaceManager`. Do not create another kernel, workspace manager, execution manager, root FD, or trust authority.
 
-- [ ] **Step 6: Run tests GREEN and commit**
+The lifecycle is mandatory:
+
+```text
+implemented
+→ production-wired
+→ E2E-tested
+→ advertised
+```
+
+The production integration test must prove `workspace.inspect` succeeds and does not return `CAPABILITY_NOT_IMPLEMENTED`.
+
+- [ ] **Step 7: Register MCP `workspace.inspect` with shared schemas**
+
+Use:
+
+```ts
+inputSchema: WorkspaceInspectInputSchema
+outputSchema: WorkspaceInspectResultSchema
+annotations: READ_ONLY_TOOL_ANNOTATIONS
+```
+
+Retain both JSON text fallback and equivalent `structuredContent`.
+
+- [ ] **Step 8: Preserve honest package boundaries and surface tests**
+
+`@kodegpt/mcp-server` must declare `@kodegpt/capabilities: workspace:*` and import capability contracts/schemas from the package entrypoint, not another package's `src/` path. Keep one independent literal MCP surface/version contract test; transport tests may share a fixture to prove parity without duplicating the full surface array.
+
+Keep `MCP_SURFACE_VERSION = "0.2"` only because `workspace.inspect` is production-usable after this task. Do not bump the surface version again merely for each later Phase 1 capability.
+
+- [ ] **Step 9: Run focused tests GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
 pnpm --filter @kodegpt/mcp-server test
+pnpm --filter kodegpt test
+pnpm exec vitest run tests/integration/full-stack.test.ts --no-file-parallelism
+cargo test -p kodegpt-workspace-io
+cargo test -p kodegpt-runtime
 
-git add packages/capabilities packages/mcp-server
+git add packages/capabilities packages/mcp-server packages/protocol packages/core apps/cli crates schemas tests pnpm-lock.yaml
 
-git commit -m "feat(capabilities): add workspace inspection"
+git commit -m "fix(capabilities): stabilize workspace inspection contracts"
 ```
 
 ---
@@ -620,9 +696,9 @@ Input contains no arbitrary executable or argv override.
 
 `verify.run`: use process-run-equivalent annotations (`readOnlyHint: false`, open-world consistent with process execution).
 
-- [ ] **Step 6: Wire `NativeCapabilityService` into `createProductionServiceStack`**
+- [ ] **Step 6: Extend the existing production capability service for verification authority**
 
-Instantiate the service from the existing workspace/execution managers and pass it into `createKodegptToolContext`. Do not create a second kernel or workspace manager.
+Task 3 already establishes `NativeCapabilityService` production wiring in `createProductionServiceStack` using the existing workspace manager. Extend that same service construction with the verification-specific workspace policy/manifest and `CapabilityExecutionAdapter` dependencies required by Task 6. Do not create a second capability service, kernel, workspace manager, or execution manager, and do not defer production usability until after the MCP tools are advertised.
 
 - [ ] **Step 7: Run GREEN and commit**
 

@@ -91,6 +91,11 @@ export interface WorkspaceTreeEntry {
   kind: WorkspaceTreeEntryKind;
 }
 
+export interface WorkspaceTreeResult {
+  entries: WorkspaceTreeEntry[];
+  truncated: boolean;
+}
+
 export interface WorkspaceSearchMatch {
   path: string;
   line: number;
@@ -438,22 +443,40 @@ export class WorkspaceManager {
   }
 
   async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
+    return (await this.treeBounded(workspaceId, path, 2_000)).entries;
+  }
+
+  async treeBounded(
+    workspaceId: string,
+    path = ".",
+    maxEntries = 2_000
+  ): Promise<WorkspaceTreeResult> {
     if (path.length === 0) {
       throw new TypeError("Workspace tree path must not be empty");
+    }
+    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0 || maxEntries > 10_000) {
+      throw new TypeError("Workspace tree maxEntries must be between 1 and 10000");
     }
     const state = this.#requireReadyState(workspaceId);
     const result = await this.#kernel.request<unknown>("file.tree", {
       capabilityId: state.capabilityId,
-      path
+      path,
+      maxEntries
     });
-    if (!isRecord(result) || !Array.isArray(result.entries)) {
+    if (
+      !isRecord(result) ||
+      !Array.isArray(result.entries) ||
+      typeof result.truncated !== "boolean"
+    ) {
       throw new WorkspaceManagerError(
         "RUNTIME_PROTOCOL_INVALID",
         "file.tree returned an invalid payload"
       );
     }
-    const entries = result.entries.map(validateTreeEntry);
-    return entries;
+    return {
+      entries: result.entries.map(validateTreeEntry),
+      truncated: result.truncated
+    };
   }
 
   async search(workspaceId: string, query: string, path = "."): Promise<WorkspaceSearchMatch[]> {

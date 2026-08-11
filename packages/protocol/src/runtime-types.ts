@@ -92,7 +92,8 @@ const fileReadParamsSchema = z
 const fileTreeParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
-    path: z.string()
+    path: z.string(),
+    maxEntries: z.number().int().positive().max(10_000).safe()
   })
   .strict();
 

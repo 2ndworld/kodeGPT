@@ -1,8 +1,12 @@
+import {
+  WorkspaceInspectInputSchema,
+  WorkspaceInspectResultSchema,
+  type WorkspaceInspectResult
+} from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
-
-import type { WorkspaceInspectResult } from "../../capabilities/src/index.js";
 import type { OpenWorkspace } from "../../core/src/index.js";
+import { READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
 import { registerKodegptTools } from "./tools.js";
 
@@ -121,17 +125,23 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
-  it("keeps workspace.inspect structured content identical to its text fallback", async () => {
+  it("keeps workspace.inspect schemas, annotations, and structured fallback aligned", async () => {
     const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
     const server = {
-      registerTool(name: string, _definition: unknown, handler: CapturedHandler) {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
         handlers.set(name, handler);
       }
     } as unknown as McpServer;
 
     registerKodegptTools(server, makeContext());
     const handler = handlers.get("workspace.inspect");
+    const definition = definitions.get("workspace.inspect");
     expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(WorkspaceInspectInputSchema);
+    expect(definition?.outputSchema).toBe(WorkspaceInspectResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
 
     const result = (await handler!({ workspaceId: "ws_1" } as never)) as {
       content: Array<{ type: string; text: string }>;

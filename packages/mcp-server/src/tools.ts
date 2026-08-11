@@ -1,3 +1,4 @@
+import { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   ConsoleStateStore,
@@ -152,15 +153,16 @@ export function registerKodegptTools(
     "workspace.inspect",
     {
       description: "Build a bounded deterministic evidence-based map of a READY workspace.",
-      inputSchema: {
-        workspaceId: z.string().min(1),
-        path: z.string().min(1).optional(),
-        maxEntries: z.number().int().positive().max(10_000).safe().optional()
-      },
+      inputSchema: WorkspaceInspectInputSchema,
+      outputSchema: WorkspaceInspectResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path, maxEntries }) =>
-      structuredToolResult(await context.workspace.inspect({ workspaceId, path, maxEntries }))
+      structuredToolResult(
+        WorkspaceInspectResultSchema.parse(
+          await context.workspace.inspect({ workspaceId, path, maxEntries })
+        )
+      )
   );
 
   server.registerTool(

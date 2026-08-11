@@ -1,4 +1,4 @@
-import type { CapabilityTreeEntry, CapabilityWorkspaceAdapter } from "./adapters.js";
+import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
 import {
   CAPABILITY_SCHEMA_VERSION,
   DEFAULT_INSPECT_MAX_ENTRIES,
@@ -21,7 +21,7 @@ const LANGUAGE_BY_EXTENSION = new Map<string, string>([
 ]);
 
 export async function inspectWorkspace(
-  workspace: CapabilityWorkspaceAdapter,
+  workspace: WorkspaceInspectionAdapter,
   input: WorkspaceInspectInput
 ): Promise<WorkspaceInspectResult> {
   const maxEntries = input.maxEntries ?? DEFAULT_INSPECT_MAX_ENTRIES;
@@ -30,23 +30,27 @@ export async function inspectWorkspace(
   }
 
   const root = input.path ?? ".";
-  workspace.info(input.workspaceId);
-
-  const tree = [...(await workspace.tree(input.workspaceId, root))].sort(compareTreeEntries);
-  const inspectBoundReached = tree.length > maxEntries;
-  const workspaceTreeBoundReached =
-    tree.length >= DEFAULT_INSPECT_MAX_ENTRIES && maxEntries >= DEFAULT_INSPECT_MAX_ENTRIES;
+  const treeResult = await workspace.tree(input.workspaceId, root, maxEntries);
+  const tree = [...treeResult.entries].sort(compareTreeEntries);
+  const adapterExceededBound = tree.length > maxEntries;
   const entries = tree.slice(0, maxEntries);
 
-  const projectTypes = detectProjectTypes(entries);
+  const warnings: string[] = [];
+  const projectTypes = detectProjectTypes(entries, root);
   const languages = countLanguages(entries);
   const entrypoints = detectEntrypoints(entries);
-  const areas = detectAreas(entries);
+  const workspaceMemberPatterns = await readWorkspaceMemberPatterns(
+    workspace,
+    input.workspaceId,
+    root,
+    entries,
+    warnings
+  );
+  const areas = detectAreas(entries, workspaceMemberPatterns);
   const manifests = detectManifests(entries);
-  const warnings: string[] = [];
+  const truncated = treeResult.truncated || adapterExceededBound;
 
-  if (inspectBoundReached) warnings.push("INSPECT_MAX_ENTRIES_REACHED");
-  if (workspaceTreeBoundReached) warnings.push("WORKSPACE_TREE_LIMIT_REACHED");
+  if (truncated) warnings.push("INSPECT_MAX_ENTRIES_REACHED");
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
@@ -58,15 +62,15 @@ export async function inspectWorkspace(
     areas,
     manifests,
     warnings,
-    truncated: inspectBoundReached || workspaceTreeBoundReached
+    truncated
   };
 }
 
-function detectProjectTypes(entries: CapabilityTreeEntry[]): string[] {
+function detectProjectTypes(entries: CapabilityTreeEntry[], root: string): string[] {
   const filePaths = new Set(entries.filter(isFile).map(({ path }) => path));
-  const hasPackageJson = [...filePaths].some((path) => basename(path) === "package.json");
-  const hasPnpmWorkspace = [...filePaths].some((path) => basename(path) === "pnpm-workspace.yaml");
-  const hasCargoManifest = [...filePaths].some((path) => basename(path) === "Cargo.toml");
+  const hasPackageJson = filePaths.has(rootManifestPath(root, "package.json"));
+  const hasPnpmWorkspace = filePaths.has(rootManifestPath(root, "pnpm-workspace.yaml"));
+  const hasCargoManifest = filePaths.has(rootManifestPath(root, "Cargo.toml"));
   const projectTypes: string[] = [];
 
   if (hasPnpmWorkspace) projectTypes.push("node-pnpm");
@@ -74,6 +78,66 @@ function detectProjectTypes(entries: CapabilityTreeEntry[]): string[] {
   if (hasCargoManifest) projectTypes.push("rust-cargo");
 
   return projectTypes.sort(compareText);
+}
+
+const ROOT_MANIFEST_MAX_BYTES = 64 * 1024;
+
+async function readWorkspaceMemberPatterns(
+  workspace: WorkspaceInspectionAdapter,
+  workspaceId: string,
+  root: string,
+  entries: CapabilityTreeEntry[],
+  warnings: string[]
+): Promise<string[]> {
+  const packageJsonPath = rootManifestPath(root, "package.json");
+  if (!entries.some((entry) => entry.kind === "file" && entry.path === packageJsonPath)) {
+    return [];
+  }
+
+  try {
+    const read = await workspace.readFile(workspaceId, packageJsonPath, {
+      offset: 0,
+      maxBytes: ROOT_MANIFEST_MAX_BYTES
+    });
+    if (!read.eof) {
+      warnings.push("PACKAGE_JSON_METADATA_TRUNCATED");
+      return [];
+    }
+    const parsed = JSON.parse(read.contents) as unknown;
+    if (!isRecord(parsed)) {
+      warnings.push("PACKAGE_JSON_METADATA_INVALID");
+      return [];
+    }
+    const workspaceValue = parsed.workspaces;
+    const rawPatterns = Array.isArray(workspaceValue)
+      ? workspaceValue
+      : isRecord(workspaceValue) && Array.isArray(workspaceValue.packages)
+        ? workspaceValue.packages
+        : [];
+    return rawPatterns
+      .filter((value): value is string => typeof value === "string")
+      .map((pattern) => normalizeWorkspaceMemberPattern(root, pattern))
+      .filter((pattern): pattern is string => pattern !== undefined)
+      .sort(compareText);
+  } catch {
+    warnings.push("PACKAGE_JSON_METADATA_INVALID");
+    return [];
+  }
+}
+
+function normalizeWorkspaceMemberPattern(root: string, pattern: string): string | undefined {
+  const normalized = pattern.replace(/^\.\//, "").replace(/\/$/, "");
+  if (
+    normalized.length === 0 ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("!") ||
+    normalized.split("/").includes("..") ||
+    (normalized.includes("*") && !normalized.endsWith("/*")) ||
+    normalized.slice(0, -2).includes("*")
+  ) {
+    return undefined;
+  }
+  return root === "." ? normalized : `${root.replace(/\/$/, "")}/${normalized}`;
 }
 
 function countLanguages(entries: CapabilityTreeEntry[]): Array<{ name: string; fileCount: number }> {
@@ -110,7 +174,10 @@ function detectManifests(entries: CapabilityTreeEntry[]): WorkspaceInspectManife
   return [...found.values()].sort(comparePathThenKind);
 }
 
-function detectAreas(entries: CapabilityTreeEntry[]): WorkspaceInspectArea[] {
+function detectAreas(
+  entries: CapabilityTreeEntry[],
+  workspaceMemberPatterns: string[]
+): WorkspaceInspectArea[] {
   const areas = new Map<string, WorkspaceInspectArea>();
 
   for (const entry of entries) {
@@ -119,6 +186,10 @@ function detectAreas(entries: CapabilityTreeEntry[]): WorkspaceInspectArea[] {
       const conventional = conventionalArea(segments);
       if (conventional !== undefined) {
         areas.set(conventional.path, conventional);
+        continue;
+      }
+      if (workspaceMemberPatterns.some((pattern) => matchesWorkspaceMember(entry.path, pattern))) {
+        areas.set(entry.path, { path: entry.path, kind: "package" });
         continue;
       }
       if (segments.length === 1 && !["apps", "packages", "crates", "tests", "docs", ".github"].includes(segments[0]!)) {
@@ -172,6 +243,22 @@ function manifestKind(path: string): string | undefined {
   if (name === "pnpm-workspace.yaml") return "pnpm-workspace";
   if (name === "Cargo.toml") return "cargo-manifest";
   return undefined;
+}
+
+function matchesWorkspaceMember(path: string, pattern: string): boolean {
+  if (!pattern.endsWith("/*")) return path === pattern;
+  const prefix = pattern.slice(0, -1);
+  if (!path.startsWith(prefix)) return false;
+  const remainder = path.slice(prefix.length);
+  return remainder.length > 0 && !remainder.includes("/");
+}
+
+function rootManifestPath(root: string, name: string): string {
+  return root === "." ? name : `${root.replace(/\/$/, "")}/${name}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isKnownConfig(path: string): boolean {

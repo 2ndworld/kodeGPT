@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 
+import { MCP_SURFACE_VERSION } from "@kodegpt/mcp-server";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -127,7 +128,7 @@ function makeDependencies(options: {
           host: "127.0.0.1",
           port: startOptions.port ?? 43121,
           protocolVersion: "2026-07-28",
-          surfaceVersion: "0.2",
+          surfaceVersion: MCP_SURFACE_VERSION,
           runtimeVersion: "0.1.0",
           auditHealthy: true,
           filesystemBoundaryAvailable: true
@@ -278,7 +279,7 @@ describe("kodegpt expose zrok", () => {
         host: "127.0.0.1",
         port: 43121,
         protocolVersion: "2026-07-28",
-        surfaceVersion: "0.2",
+        surfaceVersion: MCP_SURFACE_VERSION,
         runtimeVersion: "0.1.0",
         auditHealthy: true,
         filesystemBoundaryAvailable: true

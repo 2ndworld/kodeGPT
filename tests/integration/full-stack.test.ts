@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ConnectorCredentialStore } from "../../packages/auth/src/index.js";
 import { KernelClient } from "../../packages/core/src/kernel-client.js";
+import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/index.js";
 import { WorkspaceTrustStore } from "../../packages/trust/src/index.js";
 import { startKodegpt } from "../../apps/cli/src/commands/start.js";
 
@@ -142,6 +143,8 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     const workspaceB = await tempRoot("kodegpt-task23-b-");
     await mkdir(join(workspaceA, "nested"));
     await writeFile(join(workspaceA, "tracked.txt"), "before\n");
+    await writeFile(join(workspaceA, "package.json"), '{"name":"workspace-a","private":true}\n');
+    await writeFile(join(workspaceA, "pnpm-workspace.yaml"), "packages: []\n");
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
     runGit(workspaceA, ["add", "tracked.txt"]);
@@ -184,7 +187,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       );
       expect(capabilities).toMatchObject({
         mcpProtocolVersion: PROTOCOL_VERSION,
-        mcpSurfaceVersion: "0.2",
+        mcpSurfaceVersion: MCP_SURFACE_VERSION,
         filesystemBoundaryAvailable: true
       });
 
@@ -254,6 +257,23 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         )
       );
       expect(JSON.stringify(tree)).toContain("tracked.txt");
+
+      const inspectResult = await callTool(
+        port,
+        credential.token,
+        "workspace.inspect",
+        { workspaceId: openedA.id },
+        "req_full_workspace_inspect"
+      );
+      const inspect = textJson(inspectResult);
+      expect(inspectResult.structuredContent).toEqual(inspect);
+      expect(inspect).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: openedA.id,
+        root: ".",
+        projectTypes: ["node-pnpm"],
+        truncated: false
+      });
 
       const gitStatus = textJson(
         await callTool(

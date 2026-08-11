@@ -53,11 +53,15 @@ export type {
   CapabilitySearchMatch,
   CapabilityTreeEntry,
   CapabilityTreeEntryKind,
-  CapabilityWorkspaceAdapter,
-  CapabilityWorkspaceInfo,
+  CapabilityTreeResult,
+  CodeSearchAdapter,
+  GitInspectionAdapter,
   GitInspectionAdapterResult,
+  PatchCommitAdapter,
   PatchCommitAdapterInput,
-  PatchCommitAdapterResult
+  PatchCommitAdapterResult,
+  WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
 export type { NativeCapabilityName } from "./native-capability-service.js";
+export { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "./schemas.js";

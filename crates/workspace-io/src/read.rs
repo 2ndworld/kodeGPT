@@ -1,11 +1,12 @@
-use std::collections::VecDeque;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::OwnedFd;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rustix::fs::{AtFlags, FileType, OFlags, RawDir, fstat, statat};
 use rustix::io::Errno;
@@ -14,7 +15,8 @@ use serde::Serialize;
 use crate::openat::{OpenatBoundaryError, open_directory_beneath, open_existing_beneath};
 
 pub const INLINE_READ_MAX_BYTES: u64 = 1024 * 1024;
-pub const TREE_MAX_ENTRIES: usize = 2_000;
+pub const TREE_DEFAULT_MAX_ENTRIES: usize = 2_000;
+pub const TREE_MAX_ENTRIES: usize = 10_000;
 pub const SEARCH_MAX_MATCHES: usize = 200;
 pub const SEARCH_MAX_SNIPPET_BYTES: usize = 256 * 1024;
 const SEARCH_FILE_MAX_BYTES: u64 = 1024 * 1024;
@@ -77,6 +79,13 @@ pub struct TreeEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TreeResult {
+    pub entries: Vec<TreeEntry>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchMatch {
     pub path: String,
     pub line: u64,
@@ -122,46 +131,45 @@ pub fn tree_beneath(
     root_fd: &OwnedFd,
     relative_path: &Path,
     max_entries: usize,
-) -> Result<Vec<TreeEntry>, WorkspaceReadError> {
-    if max_entries > TREE_MAX_ENTRIES {
+) -> Result<TreeResult, WorkspaceReadError> {
+    if max_entries == 0 || max_entries > TREE_MAX_ENTRIES {
         return Err(WorkspaceReadError::LimitExceeded);
     }
     let (start_fd, start_prefix) = open_directory_start(root_fd, relative_path)?;
-    let mut pending = VecDeque::from([(start_fd, start_prefix)]);
-    let mut entries = Vec::new();
+    let start_fd = Arc::new(start_fd);
+    let mut pending = BTreeMap::new();
+    enqueue_directory_entries(&mut pending, start_fd, &start_prefix, max_entries + 1)?;
+    let mut entries = Vec::with_capacity(max_entries.min(pending.len()));
 
-    while let Some((directory_fd, prefix)) = pending.pop_front() {
-        let mut children = directory_entries(&directory_fd)?;
-        children.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
-        for (name, kind) in children {
-            if entries.len() >= max_entries {
-                return Ok(entries);
-            }
-            let relative = if prefix.as_os_str().is_empty() {
-                PathBuf::from(&name)
-            } else {
-                prefix.join(&name)
-            };
-            entries.push(TreeEntry {
-                path: relative.to_string_lossy().into_owned(),
-                kind,
-            });
-            if kind == TreeEntryKind::Directory {
-                match open_directory_beneath(&directory_fd, Path::new(&name)) {
-                    Ok(child_fd) => pending.push_back((child_fd, relative)),
-                    Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {
-                    }
-                    Err(error) => return Err(map_boundary_error(error)),
+    while entries.len() < max_entries {
+        let Some((relative, candidate)) = pending.pop_first() else {
+            break;
+        };
+        entries.push(TreeEntry {
+            path: relative.to_string_lossy().into_owned(),
+            kind: candidate.kind,
+        });
+        if candidate.kind == TreeEntryKind::Directory {
+            match open_directory_beneath(candidate.parent_fd.as_ref(), Path::new(&candidate.name)) {
+                Ok(child_fd) => {
+                    let frontier_limit = max_entries.saturating_sub(entries.len()) + 1;
+                    enqueue_directory_entries(
+                        &mut pending,
+                        Arc::new(child_fd),
+                        &relative,
+                        frontier_limit,
+                    )?;
                 }
+                Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {}
+                Err(error) => return Err(map_boundary_error(error)),
             }
         }
     }
 
-    entries.sort_by(|left, right| left.path.cmp(&right.path));
-    if entries.len() > max_entries {
-        entries.truncate(max_entries);
-    }
-    Ok(entries)
+    Ok(TreeResult {
+        entries,
+        truncated: !pending.is_empty(),
+    })
 }
 
 pub fn search_utf8_beneath(
@@ -177,7 +185,7 @@ pub fn search_utf8_beneath(
     {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let entries = tree_beneath(root_fd, relative_path, TREE_MAX_ENTRIES)?;
+    let entries = tree_beneath(root_fd, relative_path, TREE_DEFAULT_MAX_ENTRIES)?.entries;
     let mut matches = Vec::new();
     let mut snippet_bytes = 0usize;
 
@@ -247,6 +255,38 @@ pub fn search_utf8_beneath(
     Ok(matches)
 }
 
+struct TreeCandidate {
+    parent_fd: Arc<OwnedFd>,
+    name: OsString,
+    kind: TreeEntryKind,
+}
+
+fn enqueue_directory_entries(
+    pending: &mut BTreeMap<PathBuf, TreeCandidate>,
+    directory_fd: Arc<OwnedFd>,
+    prefix: &Path,
+    frontier_limit: usize,
+) -> Result<(), WorkspaceReadError> {
+    visit_directory_entries(directory_fd.as_ref(), |name, kind| {
+        let relative = if prefix.as_os_str().is_empty() {
+            PathBuf::from(&name)
+        } else {
+            prefix.join(&name)
+        };
+        pending.insert(
+            relative,
+            TreeCandidate {
+                parent_fd: Arc::clone(&directory_fd),
+                name,
+                kind,
+            },
+        );
+        if pending.len() > frontier_limit {
+            pending.pop_last();
+        }
+    })
+}
+
 fn open_directory_start(
     root_fd: &OwnedFd,
     relative_path: &Path,
@@ -260,11 +300,11 @@ fn open_directory_start(
     Ok((fd, prefix))
 }
 
-fn directory_entries(
+fn visit_directory_entries(
     directory_fd: &OwnedFd,
-) -> Result<Vec<(OsString, TreeEntryKind)>, WorkspaceReadError> {
+    mut visit: impl FnMut(OsString, TreeEntryKind),
+) -> Result<(), WorkspaceReadError> {
     let mut buffer: Vec<u8> = Vec::with_capacity(8 * 1024);
-    let mut entries = Vec::new();
 
     'read: loop {
         let grow_buffer = {
@@ -278,7 +318,7 @@ fn directory_entries(
                         }
                         let name = OsString::from_vec(name_bytes.to_vec());
                         let kind = entry_kind(directory_fd, &name, entry.file_type())?;
-                        entries.push((name, kind));
+                        visit(name, kind);
                     }
                     Some(Err(Errno::INVAL)) => break true,
                     Some(Err(error)) => return Err(WorkspaceReadError::Io(error)),
@@ -299,7 +339,7 @@ fn directory_entries(
         }
     }
 
-    Ok(entries)
+    Ok(())
 }
 
 fn entry_kind(
@@ -430,13 +470,15 @@ mod tests {
         symlink(&outside, root.join("escape-dir")).expect("escape directory symlink created");
         let fd = root_fd(&root);
 
-        let entries = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("tree succeeds");
-        let paths = entries
+        let result = tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("tree succeeds");
+        let paths = result
+            .entries
             .iter()
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>();
         assert_eq!(paths, vec!["dir", "dir/a.txt", "escape-dir", "z.txt"]);
-        assert_eq!(entries[2].kind, TreeEntryKind::Symlink);
+        assert_eq!(result.entries[2].kind, TreeEntryKind::Symlink);
+        assert!(!result.truncated);
         assert!(!paths.iter().any(|path| path.contains("secret.txt")));
 
         fs::remove_dir_all(root).expect("root removed");
@@ -454,26 +496,59 @@ mod tests {
         let second =
             tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("second tree succeeds");
         assert_eq!(first, second);
-        assert_eq!(second.len(), 1);
+        assert_eq!(second.entries.len(), 1);
+        assert!(!second.truncated);
 
         fs::remove_dir_all(root).expect("root removed");
     }
 
     #[test]
-    fn tree_enforces_the_deterministic_entry_ceiling() {
-        let root = temporary_root("tree-ceiling");
-        for index in (0..(TREE_MAX_ENTRIES + 5)).rev() {
+    fn tree_reports_exact_limit_without_truncation() {
+        let root = temporary_root("tree-exact-limit");
+        for index in (0..2_000).rev() {
             fs::write(root.join(format!("f{index:04}.txt")), "x").expect("fixture file written");
         }
         let fd = root_fd(&root);
 
-        let entries =
-            tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES).expect("bounded tree succeeds");
-        assert_eq!(entries.len(), TREE_MAX_ENTRIES);
-        assert_eq!(entries.first().expect("first entry").path, "f0000.txt");
-        assert_eq!(entries.last().expect("last entry").path, "f1999.txt");
+        let result = tree_beneath(&fd, Path::new("."), 2_000).expect("bounded tree succeeds");
+        assert_eq!(result.entries.len(), 2_000);
+        assert!(!result.truncated);
+        assert_eq!(result.entries.first().expect("first entry").path, "f0000.txt");
+        assert_eq!(result.entries.last().expect("last entry").path, "f1999.txt");
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn tree_reports_truncation_when_an_additional_entry_exists() {
+        let root = temporary_root("tree-truncated");
+        for index in (0..2_001).rev() {
+            fs::write(root.join(format!("f{index:04}.txt")), "x").expect("fixture file written");
+        }
+        let fd = root_fd(&root);
+
+        let result = tree_beneath(&fd, Path::new("."), 2_000).expect("bounded tree succeeds");
+        assert_eq!(result.entries.len(), 2_000);
+        assert!(result.truncated);
+        assert_eq!(result.entries.first().expect("first entry").path, "f0000.txt");
+        assert_eq!(result.entries.last().expect("last entry").path, "f1999.txt");
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn tree_supports_explicit_limits_above_the_default_up_to_the_hard_cap() {
+        let root = temporary_root("tree-expanded-limit");
+        for index in (0..2_001).rev() {
+            fs::write(root.join(format!("f{index:04}.txt")), "x").expect("fixture file written");
+        }
+        let fd = root_fd(&root);
+
+        let result = tree_beneath(&fd, Path::new("."), 10_000).expect("expanded tree succeeds");
+        assert_eq!(result.entries.len(), 2_001);
+        assert!(!result.truncated);
         assert!(matches!(
-            tree_beneath(&fd, Path::new("."), TREE_MAX_ENTRIES + 1),
+            tree_beneath(&fd, Path::new("."), 10_001),
             Err(WorkspaceReadError::LimitExceeded)
         ));
 

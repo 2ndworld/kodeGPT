@@ -4,17 +4,16 @@ import type {
   VerificationOperationResult
 } from "./contracts.js";
 
-export interface CapabilityWorkspaceInfo {
-  id: string;
-  canonicalRoot: string;
-  effectivePolicy: unknown;
-}
-
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface CapabilityTreeEntry {
   path: string;
   kind: CapabilityTreeEntryKind;
+}
+
+export interface CapabilityTreeResult {
+  entries: CapabilityTreeEntry[];
+  truncated: boolean;
 }
 
 export interface CapabilitySearchMatch {
@@ -50,17 +49,29 @@ export interface PatchCommitAdapterResult {
   sha256: string | null;
 }
 
-export interface CapabilityWorkspaceAdapter {
-  info(workspaceId: string): CapabilityWorkspaceInfo;
+export interface WorkspaceInspectionAdapter {
   readFile(
     workspaceId: string,
     path: string,
     options?: { offset?: number; maxBytes?: number }
   ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
-  tree(workspaceId: string, path?: string): Promise<CapabilityTreeEntry[]>;
+  tree(
+    workspaceId: string,
+    path: string | undefined,
+    maxEntries: number
+  ): Promise<CapabilityTreeResult>;
+}
+
+export interface CodeSearchAdapter {
   search(workspaceId: string, query: string, path?: string): Promise<CapabilitySearchMatch[]>;
+}
+
+export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface PatchCommitAdapter {
   commitPatchFile(input: PatchCommitAdapterInput): Promise<PatchCommitAdapterResult>;
 }
 

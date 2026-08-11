@@ -29,6 +29,9 @@ importers:
       '@kodegpt/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@kodegpt/capabilities':
+        specifier: workspace:*
+        version: link:../../packages/capabilities
       '@kodegpt/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -58,7 +61,11 @@ importers:
 
   packages/auth: {}
 
-  packages/capabilities: {}
+  packages/capabilities:
+    dependencies:
+      zod:
+        specifier: 4.3.6
+        version: 4.3.6
 
   packages/core:
     dependencies:
@@ -92,6 +99,9 @@ importers:
       '@kodegpt/auth':
         specifier: workspace:*
         version: link:../auth
+      '@kodegpt/capabilities':
+        specifier: workspace:*
+        version: link:../capabilities
       '@kodegpt/dev-console':
         specifier: workspace:*
         version: link:../dev-console

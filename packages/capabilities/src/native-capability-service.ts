@@ -1,4 +1,4 @@
-import type { CapabilityExecutionAdapter, CapabilityWorkspaceAdapter } from "./adapters.js";
+import type { WorkspaceInspectionAdapter } from "./adapters.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
@@ -38,19 +38,14 @@ export class CapabilityNotImplementedError extends Error {
 }
 
 export class NativeCapabilityService {
-  readonly #workspace: CapabilityWorkspaceAdapter;
-  readonly #execution: CapabilityExecutionAdapter;
+  readonly #workspaceInspection: WorkspaceInspectionAdapter;
 
-  constructor(options: {
-    workspace: CapabilityWorkspaceAdapter;
-    execution: CapabilityExecutionAdapter;
-  }) {
-    this.#workspace = options.workspace;
-    this.#execution = options.execution;
+  constructor(options: { workspaceInspection: WorkspaceInspectionAdapter }) {
+    this.#workspaceInspection = options.workspaceInspection;
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
-    return inspectWorkspace(this.#workspace, input);
+    return inspectWorkspace(this.#workspaceInspection, input);
   }
 
   async searchCode(input: CodeSearchInput): Promise<CodeSearchResult> {
@@ -70,7 +65,6 @@ export class NativeCapabilityService {
 
   async runVerification(input: VerifyRunInput): Promise<VerifyRunResult> {
     void input;
-    void this.#execution;
     throw new CapabilityNotImplementedError("verify.run");
   }
 

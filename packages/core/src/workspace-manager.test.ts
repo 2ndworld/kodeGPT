@@ -118,7 +118,8 @@ class FakeKernel implements KernelTransport {
           entries: [
             { path: "src", kind: "directory" },
             { path: "src/index.ts", kind: "file" }
-          ]
+          ],
+          truncated: false
         } as T;
       case "file.search":
         return {
@@ -196,6 +197,7 @@ describe("WorkspaceManager", () => {
     const gitStatus = await manager.gitStatus("ws_files");
     const gitDiff = await manager.gitDiff("ws_files");
     const tree = await manager.tree("ws_files", ".");
+    const boundedTree = await manager.treeBounded("ws_files", ".", 10_000);
     const matches = await manager.search("ws_files", "needle", ".");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
@@ -242,11 +244,18 @@ describe("WorkspaceManager", () => {
       { path: "src", kind: "directory" },
       { path: "src/index.ts", kind: "file" }
     ]);
+    expect(boundedTree).toEqual({
+      entries: [
+        { path: "src", kind: "directory" },
+        { path: "src/index.ts", kind: "file" }
+      ],
+      truncated: false
+    });
     expect(matches).toEqual([
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-7)).toEqual([
+    expect(kernel.calls.slice(-8)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -267,7 +276,14 @@ describe("WorkspaceManager", () => {
       },
       { method: "git.status", params: { capabilityId: "kc_fixture" } },
       { method: "git.diff", params: { capabilityId: "kc_fixture" } },
-      { method: "file.tree", params: { capabilityId: "kc_fixture", path: "." } },
+      {
+        method: "file.tree",
+        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 2_000 }
+      },
+      {
+        method: "file.tree",
+        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 10_000 }
+      },
       {
         method: "file.search",
         params: { capabilityId: "kc_fixture", path: ".", query: "needle" }

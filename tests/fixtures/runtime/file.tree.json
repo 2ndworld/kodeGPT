@@ -4,6 +4,7 @@
   "method": "file.tree",
   "params": {
     "capabilityId": "kc_fixture_1",
-    "path": "."
+    "path": ".",
+    "maxEntries": 2000
   }
 }

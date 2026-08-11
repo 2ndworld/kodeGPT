@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { bridgeKodegpt } from "../../apps/cli/src/commands/bridge.js";
+import { EXPECTED_MCP_TOOL_NAMES } from "../fixtures/mcp-surface.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const cliPath = join(root, "apps/cli/bin/kodegpt.mjs");
@@ -120,7 +121,7 @@ describe("CLI stdio bridge integration flow", () => {
         version: "0.1.0"
       });
 
-      // 2. Tools list (21 tools)
+      // 2. Tools list
       const toolsPromise = nextMessage(stdout);
       writeMessage(stdin, {
         jsonrpc: "2.0",
@@ -131,32 +132,9 @@ describe("CLI stdio bridge integration flow", () => {
       const toolsRes = await toolsPromise;
       expect(toolsRes.error).toBeUndefined();
       const tools = toolsRes.result.tools as Array<{ name: string; description?: string }>;
-      expect(tools.length).toBe(22);
+      expect(tools.length).toBe(EXPECTED_MCP_TOOL_NAMES.length);
       const toolNames = tools.map((t) => t.name).sort();
-      expect(toolNames).toEqual([
-        "artifact.read",
-        "console.state",
-        "extension.list",
-        "file.edit",
-        "file.read",
-        "file.search",
-        "file.tree",
-        "file.write",
-        "git.diff",
-        "git.status",
-        "process.cancel",
-        "process.run",
-        "process.status",
-        "profile.current",
-        "profile.inspect",
-        "system.capabilities",
-        "system.health",
-        "workspace.close",
-        "workspace.info",
-        "workspace.inspect",
-        "workspace.list",
-        "workspace.open"
-      ]);
+      expect(toolNames).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
       expect(toolNames.some((n) => n.includes("trust"))).toBe(false);
 
       // 3. System health

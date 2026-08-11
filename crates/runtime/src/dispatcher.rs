@@ -10,7 +10,7 @@ use kodegpt_protocol::{
     WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };
 use kodegpt_workspace_io::{
-    FilesystemIdentity, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
+    FilesystemIdentity, TREE_MAX_ENTRIES, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
     probe_filesystem_boundary,
 };
 use serde::Deserialize;
@@ -398,9 +398,10 @@ async fn dispatch_one(
         }
         "file.tree" => {
             let params = match serde_json::from_value::<FileTreeParams>(request.params) {
-                Ok(params) => params,
-                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                Ok(params) if params.max_entries > 0 && params.max_entries <= TREE_MAX_ENTRIES => params,
+                Ok(_) | Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
+            let max_entries = params.max_entries;
             let capability_id = params.capability_id;
             let audit_capability_id = capability_id.clone();
             let path = PathBuf::from(params.path);
@@ -411,8 +412,8 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileTree,
                 move |registry| {
-                    let entries = registry.tree(&capability_id, &path)?;
-                    Ok(json!({ "entries": entries }))
+                    let result = registry.tree(&capability_id, &path, max_entries)?;
+                    Ok(json!(result))
                 },
             )
         }
@@ -1714,12 +1715,13 @@ mod tests {
             &mut response_rx,
             "req_file_tree",
             "file.tree",
-            json!({ "capabilityId": capability_id, "path": "." }),
+            json!({ "capabilityId": capability_id, "path": ".", "maxEntries": 2_000 }),
         )
         .await;
         let tree_entries = tree["result"]["entries"]
             .as_array()
             .expect("tree returns entries");
+        assert_eq!(tree["result"]["truncated"], false);
         assert!(
             tree_entries
                 .iter()

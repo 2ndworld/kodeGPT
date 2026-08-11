@@ -1,3 +1,4 @@
+import { MCP_SURFACE_VERSION } from "@kodegpt/mcp-server";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -90,7 +91,8 @@ function dependencies(
     processStatus: async () => completedProcess,
     processCancel: async () => ({ ...completedProcess, state: "cancelled" as const }),
     search: async () => [],
-    tree: async () => []
+    tree: async () => [],
+    treeBounded: async () => ({ entries: [], truncated: false })
   };
 
   return {
@@ -169,7 +171,7 @@ describe("kodegpt start orchestration", () => {
       host: "127.0.0.1",
       port: 43121,
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.2",
+      surfaceVersion: MCP_SURFACE_VERSION,
       runtimeVersion: "0.1.0",
       auditHealthy: true,
       filesystemBoundaryAvailable: true

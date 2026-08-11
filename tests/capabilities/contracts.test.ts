@@ -2,47 +2,31 @@ import { describe, expect, it } from "vitest";
 
 import {
   CAPABILITY_SCHEMA_VERSION,
-  DEFAULT_CONTEXT_MAX_BYTES,
-  DEFAULT_INSPECT_MAX_ENTRIES,
-  DEFAULT_SEARCH_MAX_RESULTS,
-  MAX_CONTEXT_MAX_BYTES,
-  MAX_INSPECT_MAX_ENTRIES,
-  MAX_PATCH_BYTES,
-  MAX_PATCH_FILES,
-  MAX_PATCH_HUNKS,
-  MAX_SEARCH_MAX_RESULTS
-} from "../../packages/capabilities/src/contracts.js";
-import {
-  CapabilityNotImplementedError,
-  NativeCapabilityService
-} from "../../packages/capabilities/src/native-capability-service.js";
+  NativeCapabilityService,
+  WorkspaceInspectInputSchema,
+  WorkspaceInspectResultSchema
+} from "../../packages/capabilities/src/index.js";
 
-describe("native capability contracts", () => {
-  it("pins public schema and bounded defaults", () => {
+describe("native capability public package boundary", () => {
+  it("exports the Task 1–3 service and workspace.inspect runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
-    expect(DEFAULT_CONTEXT_MAX_BYTES).toBe(256 * 1024);
-    expect(MAX_CONTEXT_MAX_BYTES).toBe(1024 * 1024);
-    expect(DEFAULT_INSPECT_MAX_ENTRIES).toBe(2_000);
-    expect(MAX_INSPECT_MAX_ENTRIES).toBe(10_000);
-    expect(DEFAULT_SEARCH_MAX_RESULTS).toBe(100);
-    expect(MAX_SEARCH_MAX_RESULTS).toBe(500);
-    expect(MAX_PATCH_BYTES).toBe(1024 * 1024);
-    expect(MAX_PATCH_FILES).toBe(64);
-    expect(MAX_PATCH_HUNKS).toBe(256);
-  });
-
-  it("exposes a stable not-implemented error for capability skeleton methods", async () => {
-    const service = new NativeCapabilityService({
-      workspace: {} as never,
-      execution: {} as never
-    });
-
-    await expect(
-      service.searchCode({ workspaceId: "ws_1", query: "needle" })
-    ).rejects.toMatchObject<Partial<CapabilityNotImplementedError>>({
-      name: "CapabilityNotImplementedError",
-      code: "CAPABILITY_NOT_IMPLEMENTED",
-      capability: "code.search"
-    });
+    expect(typeof NativeCapabilityService).toBe("function");
+    expect(
+      WorkspaceInspectInputSchema.parse({ workspaceId: "ws_public", maxEntries: 2_000 })
+    ).toEqual({ workspaceId: "ws_public", maxEntries: 2_000 });
+    expect(
+      WorkspaceInspectResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_public",
+        root: ".",
+        projectTypes: [],
+        languages: [],
+        entrypoints: [],
+        areas: [],
+        manifests: [],
+        warnings: [],
+        truncated: false
+      })
+    ).toMatchObject({ workspaceId: "ws_public", truncated: false });
   });
 });

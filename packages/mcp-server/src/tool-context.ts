@@ -14,7 +14,7 @@ import type {
   VerifyRunResult,
   WorkspaceInspectInput,
   WorkspaceInspectResult
-} from "../../capabilities/src/index.js";
+} from "@kodegpt/capabilities";
 import type {
   ExecutionManager,
   OpenWorkspace,

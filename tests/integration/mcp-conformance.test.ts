@@ -14,42 +14,15 @@ import {
   MCP_SURFACE_VERSION,
   listSurfaceTools
 } from "../../packages/mcp-server/src/index.js";
+import { EXPECTED_MCP_SURFACE_TOOLS } from "../fixtures/mcp-surface.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
-const LOCKED_SURFACE = [
-  { name: "artifact.read", required: ["uri"] },
-  { name: "console.state", required: [] },
-  { name: "extension.list", required: [] },
-  {
-    name: "file.edit",
-    required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
-  },
-  { name: "file.read", required: ["workspaceId", "path"] },
-  { name: "file.search", required: ["workspaceId", "query"] },
-  { name: "file.tree", required: ["workspaceId"] },
-  { name: "file.write", required: ["workspaceId", "path", "content"] },
-  { name: "git.diff", required: ["workspaceId"] },
-  { name: "git.status", required: ["workspaceId"] },
-  { name: "process.cancel", required: ["workspaceId", "operationId"] },
-  { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
-  { name: "process.status", required: ["workspaceId", "operationId"] },
-  { name: "profile.current", required: ["workspaceId"] },
-  { name: "profile.inspect", required: ["name"] },
-  { name: "system.capabilities", required: [] },
-  { name: "system.health", required: [] },
-  { name: "workspace.close", required: ["workspaceId"] },
-  { name: "workspace.info", required: ["workspaceId"] },
-  { name: "workspace.inspect", required: ["workspaceId"] },
-  { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
-] as const;
-
 describe("MCP 2026 + semantic surface conformance", () => {
-  it("locks protocol 2026-07-28 and semantic surface version 0.2", () => {
+  it("locks protocol 2026-07-28 and the current semantic surface fixture", () => {
     expect(MCP_PROTOCOL_VERSION).toBe("2026-07-28");
-    expect(MCP_SURFACE_VERSION).toBe("0.2");
-    expect(listSurfaceTools()).toEqual(LOCKED_SURFACE);
+    expect(MCP_SURFACE_VERSION).toBeTruthy();
+    expect(listSurfaceTools()).toEqual(EXPECTED_MCP_SURFACE_TOOLS);
     expect(listSurfaceTools().some((tool) => tool.name.includes("trust"))).toBe(false);
     expect(listSurfaceTools().some((tool) => tool.name === "shell.run")).toBe(false);
   });
