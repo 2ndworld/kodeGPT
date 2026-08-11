@@ -51,6 +51,20 @@ describe("bridge command unit tests", () => {
     const stdout = new PassThrough();
 
     let kernelStopped = false;
+    const effectivePolicy = {
+      name: "observe" as const,
+      allowWrite: false,
+      allowProcess: false,
+      network: "deny" as const,
+      allowedExecutableNames: [],
+      inheritEnv: false,
+      envAllowlist: []
+    };
+    const readyWorkspace = {
+      id: "ws_1",
+      canonicalRoot: "/tmp",
+      effectivePolicy
+    };
     const processResult = {
       schemaVersion: 1,
       operationId: "op_1",
@@ -64,7 +78,7 @@ describe("bridge command unit tests", () => {
       bytesSpooled: 0,
       artifact: {
         schemaVersion: 1 as const,
-        uri: "artifact://1" as const,
+        uri: "artifact://ka_1" as const,
         mediaType: "text/plain",
         sizeBytes: 0,
         sourceTruncated: false
@@ -74,7 +88,7 @@ describe("bridge command unit tests", () => {
     const dependencies = {
       prepareStateRoot: async () => {},
       prepareAudit: async () => {},
-      prepareExtensionRegistry: async () => ({ listEnabled: async () => [] }),
+      prepareExtensionRegistry: async () => ({ listEnabled: () => [] }),
       startKernel: async () => ({
         request: async <T>() => ({}) as T,
         hello: async () => ({
@@ -93,10 +107,10 @@ describe("bridge command unit tests", () => {
       }),
       createManagers: () => ({
         workspaceManager: {
-          listWorkspaces: async () => [],
-          openWorkspace: async () => ({ id: "ws_1", canonicalRoot: "/tmp" }),
-          closeWorkspace: async () => ({ ok: true }),
-          requireReady: () => ({ effectivePolicy: { name: "observe" } }),
+          listWorkspaces: () => [],
+          openWorkspace: async () => readyWorkspace,
+          closeWorkspace: async () => undefined,
+          requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
           writeFile: async () => ({ bytesWritten: 0, created: true }),
           editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
