@@ -2,6 +2,8 @@ import {
   CapabilityError,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  ContextBuildInputSchema,
+  ContextBuildResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,
@@ -13,6 +15,7 @@ import {
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
   type CodeSearchResult,
+  type ContextBuildResult,
   type FilePatchResult,
   type GitChangesResult,
   type VerifyListResult,
@@ -159,6 +162,27 @@ const typedFilePatchResult: FilePatchResult = {
   committedPaths: []
 };
 
+const typedContextBuildResult: ContextBuildResult = {
+  schemaVersion: 1,
+  intent: "review",
+  target: "src/main.ts",
+  workspace: typedWorkspaceInspectResult,
+  git: typedGitChangesResult,
+  selectedFiles: [
+    {
+      path: "src/main.ts",
+      reason: "exact-target",
+      content: "export const value = 1;\n",
+      truncated: false
+    }
+  ],
+  relevantMatches: typedCodeSearchResult.matches,
+  verifications: typedVerifyListResult.recipes,
+  warnings: [],
+  totalBytes: 24,
+  truncated: false
+};
+
 function makeContext(): KodegptToolContext {
   return {
     workspace: {
@@ -208,7 +232,7 @@ function makeContext(): KodegptToolContext {
       run: async () => typedVerifyRunResult
     },
     context: {
-      build: async () => ({} as never)
+      build: async () => typedContextBuildResult
     }
   };
 }
@@ -290,6 +314,36 @@ describe("structured MCP tool results", () => {
     };
 
     expect(result.structuredContent).toEqual(typedCodeSearchResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps context.build schemas, read-only annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("context.build");
+    const definition = definitions.get("context.build");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(ContextBuildInputSchema);
+    expect(definition?.outputSchema).toBe(ContextBuildResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      intent: "review",
+      target: "src/main.ts"
+    } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(result.structuredContent).toEqual(typedContextBuildResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 

@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 import {
+  MAX_CONTEXT_MAX_BYTES,
   MAX_INSPECT_MAX_ENTRIES,
   MAX_PATCH_BYTES,
   MAX_SEARCH_MAX_RESULTS,
   type CodeSearchInput,
   type CodeSearchResult,
+  type ContextBuildInput,
+  type ContextBuildResult,
   type FilePatchInput,
   type FilePatchResult,
   type GitChangesInput,
@@ -280,5 +283,49 @@ export const VerifyRunResultSchema: z.ZodType<VerifyRunResult> = z
     workspaceId: z.string().min(1),
     recipe: verificationRecipeSchema,
     operation: verificationOperationSchema
+  })
+  .strict();
+
+export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
+    target: z.string().min(1).optional(),
+    maxBytes: z.number().int().positive().max(MAX_CONTEXT_MAX_BYTES).safe().optional()
+  })
+  .strict();
+
+export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
+    target: z.string().min(1).optional(),
+    workspace: WorkspaceInspectResultSchema,
+    git: GitChangesResultSchema,
+    selectedFiles: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          reason: z.string().min(1),
+          content: z.string().optional(),
+          truncated: z.boolean()
+        })
+        .strict()
+    ),
+    relevantMatches: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          line: z.number().int().positive().safe().optional(),
+          column: z.number().int().positive().safe().optional(),
+          kind: codeSearchModeSchema,
+          preview: z.string().optional()
+        })
+        .strict()
+    ),
+    verifications: z.array(verificationRecipeSchema),
+    warnings: z.array(z.string()),
+    totalBytes: z.number().int().nonnegative().max(MAX_CONTEXT_MAX_BYTES).safe(),
+    truncated: z.boolean()
   })
   .strict();

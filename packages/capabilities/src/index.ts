@@ -79,6 +79,8 @@ export type { NativeCapabilityDependencies, NativeCapabilityName } from "./nativ
 export {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  ContextBuildInputSchema,
+  ContextBuildResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,

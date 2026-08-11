@@ -428,6 +428,64 @@ describe("kodegpt start orchestration", () => {
     }
   });
 
+  it("production-wires context.build through the existing capability service and workspace manager", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    deps.createManagers = (options) => {
+      const managers = originalCreateManagers(options);
+      Object.assign(managers.workspaceManager, {
+        treeBounded: async () => ({ entries: [], truncated: false }),
+        searchBounded: async () => ({ matches: [], truncated: false, truncationReasons: [] }),
+        gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+        pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
+        readFile: async (_workspaceId: string, path: string) => ({
+          contents: path === "src/main.ts" ? "export const value = 1;\n" : "",
+          bytesRead: path === "src/main.ts" ? 24 : 0,
+          eof: true
+        })
+      });
+      return managers;
+    };
+
+    const originalCreateMcp = deps.createMcp;
+    let toolContext: Parameters<StartDependencies["createMcp"]>[0]["toolContext"] | undefined;
+    deps.createMcp = (options) => {
+      toolContext = options.toolContext;
+      return originalCreateMcp(options);
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    try {
+      const result = await toolContext!.context.build({
+        workspaceId: "ws_test",
+        intent: "understand",
+        target: "src/main.ts",
+        maxBytes: 64
+      });
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        intent: "understand",
+        target: "src/main.ts",
+        selectedFiles: [
+          {
+            path: "src/main.ts",
+            reason: "exact-target",
+            content: "export const value = 1;\n",
+            truncated: false
+          }
+        ],
+        totalBytes: 24,
+        truncated: false
+      });
+    } finally {
+      await started.close();
+    }
+  });
+
   it("rejects connector bootstrap unless it is paired with explicit public query compatibility", async () => {
     await expect(
       startKodegpt(

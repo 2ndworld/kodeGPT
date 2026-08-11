@@ -1,6 +1,8 @@
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  ContextBuildInputSchema,
+  ContextBuildResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,
@@ -33,6 +35,7 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
+  { name: "context.build", required: ["workspaceId", "intent"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",
@@ -196,6 +199,22 @@ export function registerKodegptTools(
       nativeCapabilityResult(async () =>
         CodeSearchResultSchema.parse(
           await context.code.search({ workspaceId, query, mode, path, maxResults })
+        )
+      )
+  );
+
+  server.registerTool(
+    "context.build",
+    {
+      description: "Build a deterministic bounded context bundle from existing workspace capabilities.",
+      inputSchema: ContextBuildInputSchema,
+      outputSchema: ContextBuildResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, intent, target, maxBytes }) =>
+      nativeCapabilityResult(async () =>
+        ContextBuildResultSchema.parse(
+          await context.context.build({ workspaceId, intent, target, maxBytes })
         )
       )
   );

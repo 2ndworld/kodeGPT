@@ -8,6 +8,7 @@ const LOCKED_SURFACE = [
   { name: "artifact.read", required: ["uri"] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
+  { name: "context.build", required: ["workspaceId", "intent"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",

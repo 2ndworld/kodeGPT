@@ -13,8 +13,7 @@ import {
   MAX_SEARCH_MAX_RESULTS
 } from "./contracts.js";
 import { CapabilityError, toPublicCapabilityError } from "./errors.js";
-import { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
-import { createTestCapabilityDependencies } from "./test-support.js";
+import { CapabilityNotImplementedError } from "./native-capability-service.js";
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
@@ -221,10 +220,9 @@ describe("capability contracts", () => {
     ).toMatchObject({ workspaceId: "ws_1", recipe: { id: "package:test" }, operation: { operationId: "op_verify" } });
   });
 
-  it("keeps remaining unimplemented capability methods explicit and stable", async () => {
-    const service = new NativeCapabilityService(createTestCapabilityDependencies());
-
-    await expect(service.buildContext({ workspaceId: "ws_1", intent: "understand" })).rejects.toEqual(
+  it("retains the explicit not-implemented error type for compatibility", () => {
+    const error = new CapabilityNotImplementedError("context.build");
+    expect(error).toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",

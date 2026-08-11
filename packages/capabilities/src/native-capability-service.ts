@@ -26,6 +26,7 @@ import type {
   WorkspaceInspectResult
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
+import { buildContext as composeContext } from "./context-build.js";
 import { gitChanges } from "./git-changes.js";
 import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
@@ -112,7 +113,16 @@ export class NativeCapabilityService {
   }
 
   async buildContext(input: ContextBuildInput): Promise<ContextBuildResult> {
-    void input;
-    throw new CapabilityNotImplementedError("context.build");
+    return composeContext(
+      {
+        inspect: (inspectInput) => this.inspectWorkspace(inspectInput),
+        git: (gitInput) => this.gitChanges(gitInput),
+        search: (searchInput) => this.searchCode(searchInput),
+        verify: (verifyInput) => this.listVerifications(verifyInput),
+        readFile: (workspaceId, path, options) =>
+          this.#dependencies.workspace.inspection.readFile(workspaceId, path, options)
+      },
+      input
+    );
   }
 }

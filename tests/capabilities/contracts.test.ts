@@ -4,6 +4,8 @@ import {
   CAPABILITY_SCHEMA_VERSION,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  ContextBuildInputSchema,
+  ContextBuildResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,
@@ -18,7 +20,7 @@ import {
 } from "../../packages/capabilities/src/index.js";
 
 describe("native capability public package boundary", () => {
-  it("exports the Task 1–8 service and runtime contracts from the package entrypoint", () => {
+  it("exports the Task 1–9 service and runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(typeof NativeCapabilityService).toBe("function");
     expect(
@@ -96,6 +98,54 @@ describe("native capability public package boundary", () => {
         committedPaths: []
       })
     ).toMatchObject({ workspaceId: "ws_public", mode: "check", committedPaths: [] });
+    expect(
+      ContextBuildInputSchema.parse({
+        workspaceId: "ws_public",
+        intent: "review",
+        target: "src/main.ts",
+        maxBytes: 1024
+      })
+    ).toEqual({
+      workspaceId: "ws_public",
+      intent: "review",
+      target: "src/main.ts",
+      maxBytes: 1024
+    });
+    expect(
+      ContextBuildResultSchema.parse({
+        schemaVersion: 1,
+        intent: "review",
+        target: "src/main.ts",
+        workspace: {
+          schemaVersion: 1,
+          workspaceId: "ws_public",
+          root: ".",
+          projectTypes: [],
+          languages: [],
+          entrypoints: [],
+          areas: [],
+          manifests: [],
+          warnings: [],
+          truncated: false
+        },
+        git: {
+          schemaVersion: 1,
+          workspaceId: "ws_public",
+          clean: true,
+          changedPaths: [],
+          summary: { changedFiles: 0 },
+          patchCoverage: { staged: true, worktree: true, untracked: false },
+          truncated: false,
+          fingerprint: "a".repeat(64)
+        },
+        selectedFiles: [],
+        relevantMatches: [],
+        verifications: [],
+        warnings: [],
+        totalBytes: 0,
+        truncated: false
+      })
+    ).toMatchObject({ intent: "review", target: "src/main.ts", totalBytes: 0, truncated: false });
     expect(VerifyListInputSchema.parse({ workspaceId: "ws_public" })).toEqual({
       workspaceId: "ws_public"
     });

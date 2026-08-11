@@ -2,6 +2,7 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "artifact.read", required: ["uri"] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
+  { name: "context.build", required: ["workspaceId", "intent"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",
