@@ -72,7 +72,7 @@ describe("structured MCP tool results", () => {
         capabilities: async () => ({}),
         health: async () => ({ ok: true })
       }
-    } as KodegptToolContext;
+    } as unknown as KodegptToolContext;
 
     registerKodegptTools(server, context);
     const handler = handlers.get("workspace.list");
