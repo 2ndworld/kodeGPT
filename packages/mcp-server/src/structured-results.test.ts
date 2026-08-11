@@ -12,9 +12,9 @@ const typedWorkspaceListResult: OpenWorkspace[] = [
     id: "ws_1",
     canonicalRoot: "/workspace",
     effectivePolicy: {
-      profile: "observe",
-      writeAllowed: false,
-      processAllowed: false,
+      name: "observe",
+      allowWrite: false,
+      allowProcess: false,
       network: "deny",
       allowedExecutableNames: [],
       inheritEnv: false,
