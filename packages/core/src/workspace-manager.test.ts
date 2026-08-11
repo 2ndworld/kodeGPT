@@ -78,6 +78,15 @@ class FakeKernel implements KernelTransport {
         return this.activateResult as T;
       case "file.read":
         return { contents: "file contents", bytesRead: 13, eof: true } as T;
+      case "file.identity":
+        return {
+          schemaVersion: 1,
+          exists: true,
+          kind: "file",
+          sizeBytes: 13,
+          sha256: "a".repeat(64),
+          hashTruncated: false
+        } as T;
       case "file.write":
         return { bytesWritten: 7, created: true } as T;
       case "file.edit":
@@ -195,6 +204,7 @@ describe("WorkspaceManager", () => {
 
     const opened = await manager.openWorkspace("/workspace");
     const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
+    const identity = await manager.pathIdentity("ws_files", "inside.txt", { includeSha256: true });
     const write = await manager.writeFile("ws_files", "created.txt", "created");
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
     const gitStatus = await manager.gitStatus("ws_files");
@@ -205,6 +215,14 @@ describe("WorkspaceManager", () => {
     const boundedMatches = await manager.searchBounded("ws_files", "needle", ".", 500);
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
+    expect(identity).toEqual({
+      schemaVersion: 1,
+      exists: true,
+      kind: "file",
+      sizeBytes: 13,
+      sha256: "a".repeat(64),
+      hashTruncated: false
+    });
     expect(write).toEqual({ bytesWritten: 7, created: true });
     expect(edit).toEqual({ bytesWritten: 11, replacements: 2 });
     expect(gitStatus).toEqual({
@@ -264,10 +282,14 @@ describe("WorkspaceManager", () => {
       truncationReasons: []
     });
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-9)).toEqual([
+    expect(kernel.calls.slice(-10)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
+      },
+      {
+        method: "file.identity",
+        params: { capabilityId: "kc_fixture", path: "inside.txt", includeSha256: true }
       },
       {
         method: "file.write",

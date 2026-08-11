@@ -136,6 +136,14 @@ pub struct FileSearchParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FileIdentityParams {
+    pub capability_id: String,
+    pub path: String,
+    pub include_sha256: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileWriteParams {
     pub capability_id: String,
     pub path: String,
@@ -264,6 +272,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: FileSearchParams,
+    },
+    #[serde(rename = "file.identity")]
+    FileIdentity {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: FileIdentityParams,
     },
     #[serde(rename = "file.write")]
     FileWrite {

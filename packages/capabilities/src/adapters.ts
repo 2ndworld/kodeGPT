@@ -29,6 +29,14 @@ export interface CapabilitySearchResult {
   truncationReasons: CodeSearchTruncationReason[];
 }
 
+export interface CapabilityPathIdentityResult {
+  exists: boolean;
+  kind?: "file" | "directory" | "symlink" | "other";
+  sizeBytes?: number;
+  sha256?: string;
+  hashTruncated: boolean;
+}
+
 export interface GitInspectionAdapterResult {
   schemaVersion: 1;
   exitCode: number;

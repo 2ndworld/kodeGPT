@@ -47,6 +47,15 @@ export interface WorkspaceFileEditResult {
   replacements: number;
 }
 
+export interface WorkspacePathIdentityResult {
+  schemaVersion: 1;
+  exists: boolean;
+  kind?: "file" | "directory" | "symlink" | "other";
+  sizeBytes?: number;
+  sha256?: string;
+  hashTruncated: boolean;
+}
+
 export interface WorkspaceGitInspectionResult {
   schemaVersion: 1;
   exitCode: number;
@@ -345,6 +354,29 @@ export class WorkspaceManager {
       bytesRead: result.bytesRead as number,
       eof: result.eof
     };
+  }
+
+  async pathIdentity(
+    workspaceId: string,
+    path: string,
+    options: { includeSha256: boolean }
+  ): Promise<WorkspacePathIdentityResult> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace identity path must not be empty");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.identity", {
+      capabilityId: state.capabilityId,
+      path,
+      includeSha256: options.includeSha256
+    });
+    if (!isValidPathIdentityResult(result, options.includeSha256)) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.identity returned an invalid payload"
+      );
+    }
+    return result;
   }
 
   async writeFile(
@@ -716,6 +748,45 @@ function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
 
 function isTreeEntryKind(value: unknown): value is WorkspaceTreeEntryKind {
   return value === "file" || value === "directory" || value === "symlink" || value === "other";
+}
+
+function isValidPathIdentityResult(
+  value: unknown,
+  includeSha256: boolean
+): value is WorkspacePathIdentityResult {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.exists !== "boolean" ||
+    typeof value.hashTruncated !== "boolean"
+  ) {
+    return false;
+  }
+  if (!value.exists) {
+    return (
+      value.kind === undefined &&
+      value.sizeBytes === undefined &&
+      value.sha256 === undefined &&
+      value.hashTruncated === false
+    );
+  }
+  if (
+    !isTreeEntryKind(value.kind) ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    (value.sizeBytes as number) < 0 ||
+    (value.sha256 !== undefined &&
+      (typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.sha256))) ||
+    (value.hashTruncated && value.sha256 !== undefined)
+  ) {
+    return false;
+  }
+  if (!includeSha256) {
+    return value.sha256 === undefined && value.hashTruncated === false;
+  }
+  if (value.kind === "file" || value.kind === "symlink") {
+    return value.hashTruncated || value.sha256 !== undefined;
+  }
+  return value.sha256 === undefined && value.hashTruncated === false;
 }
 
 function isSearchTruncationReason(value: unknown): value is WorkspaceSearchTruncationReason {

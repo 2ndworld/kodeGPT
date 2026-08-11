@@ -11,6 +11,7 @@ use crate::mountinfo::{
     BackingTreeIdentity, MountInfoEntry, MountInfoError, backing_tree_for_path,
     read_current_mountinfo,
 };
+use crate::path_identity::{PathIdentityError, PathIdentityResult, path_identity_beneath};
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
     ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult, WorkspaceReadError,
@@ -306,6 +307,20 @@ impl<P> WorkspaceRegistry<P> {
         .map_err(map_workspace_read_error)
     }
 
+    pub fn path_identity(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        include_sha256: bool,
+    ) -> Result<PathIdentityResult, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        let root_fd = context
+            .root_fd
+            .try_clone()
+            .map_err(|_| WorkspaceRegistryError::FileReadFailed)?;
+        path_identity_beneath(&root_fd, relative_path, include_sha256).map_err(map_path_identity_error)
+    }
+
     pub fn write_file_with_policy<F>(
         &self,
         capability_id: &str,
@@ -453,6 +468,20 @@ fn map_workspace_read_error(error: WorkspaceReadError) -> WorkspaceRegistryError
         WorkspaceReadError::InvalidUtf8 => WorkspaceRegistryError::FileInvalidUtf8,
         WorkspaceReadError::LimitExceeded => WorkspaceRegistryError::FileLimitExceeded,
         WorkspaceReadError::NotRegularFile | WorkspaceReadError::Io(_) => {
+            WorkspaceRegistryError::FileReadFailed
+        }
+    }
+}
+
+fn map_path_identity_error(error: PathIdentityError) -> WorkspaceRegistryError {
+    match error {
+        PathIdentityError::InvalidPath | PathIdentityError::BoundaryViolation => {
+            WorkspaceRegistryError::FileAccessDenied
+        }
+        PathIdentityError::BoundaryUnavailable => {
+            WorkspaceRegistryError::FilesystemBoundaryUnavailable
+        }
+        PathIdentityError::ChangedDuringInspection | PathIdentityError::Io(_) => {
             WorkspaceRegistryError::FileReadFailed
         }
     }

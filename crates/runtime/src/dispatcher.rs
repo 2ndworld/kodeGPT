@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kodegpt_protocol::{
-    ArtifactReadParams, FileEditParams, FileReadParams, FileSearchParams, FileTreeParams,
-    FileWriteParams, GitDiffParams, GitStatusParams,
+    ArtifactReadParams, FileEditParams, FileIdentityParams, FileReadParams, FileSearchParams,
+    FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessOperationParams,
     ProcessRunParams, ProfileName, RuntimePolicy, WorkspaceActivateParams,
     WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
@@ -443,6 +443,29 @@ async fn dispatch_one(
                 AuditAction::FileSearch,
                 move |registry| {
                     let result = registry.search(&capability_id, &path, &query, max_matches)?;
+                    Ok(json!(result))
+                },
+            )
+        }
+        "file.identity" => {
+            let params = match serde_json::from_value::<FileIdentityParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() && !params.path.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            let include_sha256 = params.include_sha256;
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileIdentity,
+                move |registry| {
+                    let result = registry.path_identity(&capability_id, &path, include_sha256)?;
                     Ok(json!(result))
                 },
             )
@@ -1758,10 +1781,30 @@ mod tests {
         assert_eq!(matches[0]["line"], 2);
         assert_eq!(matches[0]["lineText"], "needle here");
 
+        let identity = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_identity",
+            "file.identity",
+            json!({ "capabilityId": capability_id, "path": "inside.txt", "includeSha256": true }),
+        )
+        .await;
+        assert_eq!(identity["result"]["exists"], true);
+        assert_eq!(identity["result"]["kind"], "file");
+        assert_eq!(identity["result"]["hashTruncated"], false);
+        assert_eq!(
+            identity["result"]["sha256"]
+                .as_str()
+                .expect("identity returns sha256")
+                .len(),
+            64
+        );
+
         let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
         assert!(audit_text.contains("file_read"));
         assert!(audit_text.contains("file_tree"));
         assert!(audit_text.contains("file_search"));
+        assert!(audit_text.contains("file_identity"));
 
         audit.inject_faults(AuditFaults {
             fail_next_decision: true,

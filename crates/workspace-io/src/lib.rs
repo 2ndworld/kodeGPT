@@ -3,6 +3,7 @@
 mod identity;
 mod mountinfo;
 mod openat;
+mod path_identity;
 mod profile;
 mod read;
 mod registry;
@@ -12,6 +13,10 @@ pub use identity::{FilesystemIdentity, InspectRootError, InspectedRoot, inspect_
 pub use openat::{
     OpenatBoundaryError, OpenedParent, open_directory_beneath, open_existing_beneath,
     open_parent_beneath, probe_filesystem_boundary,
+};
+pub use path_identity::{
+    PATH_IDENTITY_MAX_HASH_BYTES, PathIdentityError, PathIdentityKind, PathIdentityResult,
+    path_identity_beneath,
 };
 pub use read::{
     INLINE_READ_MAX_BYTES, ReadFileResult, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES,

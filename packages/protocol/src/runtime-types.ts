@@ -13,6 +13,7 @@ export const RUNTIME_METHODS = [
   "file.read",
   "file.tree",
   "file.search",
+  "file.identity",
   "file.write",
   "file.edit",
   "git.status",
@@ -106,6 +107,14 @@ const fileSearchParamsSchema = z
   })
   .strict();
 
+const fileIdentityParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    path: z.string().min(1),
+    includeSha256: z.boolean()
+  })
+  .strict();
+
 const fileWriteParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -180,6 +189,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.read", fileReadParamsSchema),
   requestSchema("file.tree", fileTreeParamsSchema),
   requestSchema("file.search", fileSearchParamsSchema),
+  requestSchema("file.identity", fileIdentityParamsSchema),
   requestSchema("file.write", fileWriteParamsSchema),
   requestSchema("file.edit", fileEditParamsSchema),
   requestSchema("git.status", gitInspectionParamsSchema),

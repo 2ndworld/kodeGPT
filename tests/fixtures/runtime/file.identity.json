@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_identity",
+  "method": "file.identity",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "package.json",
+    "includeSha256": false
+  }
+}
