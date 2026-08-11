@@ -3,16 +3,22 @@ import {
   CodeSearchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  VerifyListInputSchema,
+  VerifyListResultSchema,
+  VerifyRunInputSchema,
+  VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
   type CodeSearchResult,
   type GitChangesResult,
+  type VerifyListResult,
+  type VerifyRunResult,
   type WorkspaceInspectResult
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import type { OpenWorkspace } from "../../core/src/index.js";
-import { READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import { PROCESS_RUN_TOOL_ANNOTATIONS, READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
 import { registerKodegptTools } from "./tools.js";
 
@@ -81,6 +87,48 @@ const typedGitChangesResult: GitChangesResult = {
   fingerprint: "a".repeat(64)
 };
 
+const typedVerifyListResult: VerifyListResult = {
+  schemaVersion: 1,
+  workspaceId: "ws_1",
+  recipes: [
+    {
+      id: "package:test",
+      label: "Package test",
+      category: "test",
+      logicalExecutable: "pnpm",
+      argv: ["run", "test"],
+      cwd: ".",
+      source: "package-script",
+      allowed: true
+    }
+  ]
+};
+
+const typedVerifyRunResult: VerifyRunResult = {
+  schemaVersion: 1,
+  workspaceId: "ws_1",
+  recipe: typedVerifyListResult.recipes[0]!,
+  operation: {
+    schemaVersion: 1,
+    operationId: "op_verify",
+    state: "completed",
+    exitCode: 0,
+    stdoutPreview: "ok\n",
+    stderrPreview: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    sourceTruncated: false,
+    bytesSpooled: 3,
+    artifact: {
+      schemaVersion: 1,
+      uri: "artifact://ka_verify",
+      mediaType: "text/plain",
+      sizeBytes: 3,
+      sourceTruncated: false
+    }
+  }
+};
+
 function makeContext(): KodegptToolContext {
   return {
     workspace: {
@@ -126,8 +174,8 @@ function makeContext(): KodegptToolContext {
       patch: async () => ({} as never)
     },
     verify: {
-      list: async () => ({} as never),
-      run: async () => ({} as never)
+      list: async () => typedVerifyListResult,
+      run: async () => typedVerifyRunResult
     },
     context: {
       build: async () => ({} as never)
@@ -239,6 +287,58 @@ describe("structured MCP tool results", () => {
     };
 
     expect(result.structuredContent).toEqual(typedGitChangesResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps verify.list schemas, read-only annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("verify.list");
+    const definition = definitions.get("verify.list");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(VerifyListInputSchema);
+    expect(definition?.outputSchema).toBe(VerifyListResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({ workspaceId: "ws_1" } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(result.structuredContent).toEqual(typedVerifyListResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps verify.run schemas, process annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("verify.run");
+    const definition = definitions.get("verify.run");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(VerifyRunInputSchema);
+    expect(definition?.outputSchema).toBe(VerifyRunResultSchema);
+    expect(definition?.annotations).toEqual(PROCESS_RUN_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({ workspaceId: "ws_1", recipeId: "package:test" } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(result.structuredContent).toEqual(typedVerifyRunResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 });

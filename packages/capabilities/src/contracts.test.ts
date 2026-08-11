@@ -18,6 +18,10 @@ import {
   CodeSearchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  VerifyListInputSchema,
+  VerifyListResultSchema,
+  VerifyRunInputSchema,
+  VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "./schemas.js";
@@ -120,18 +124,71 @@ describe("capability contracts", () => {
     expect(() => GitChangesResultSchema.parse({ ...validResult, fingerprint: "not-a-sha" })).toThrow();
   });
 
+  it("validates verify.list and verify.run contracts at runtime", () => {
+    expect(VerifyListInputSchema.parse({ workspaceId: "ws_1" })).toEqual({ workspaceId: "ws_1" });
+    expect(VerifyRunInputSchema.parse({ workspaceId: "ws_1", recipeId: "package:test", background: true })).toEqual({
+      workspaceId: "ws_1",
+      recipeId: "package:test",
+      background: true
+    });
+
+    const recipe = {
+      id: "package:test",
+      label: "Package test",
+      category: "test" as const,
+      logicalExecutable: "pnpm",
+      argv: ["run", "test"],
+      cwd: ".",
+      source: "package-script" as const,
+      allowed: true
+    };
+    expect(
+      VerifyListResultSchema.parse({ schemaVersion: 1, workspaceId: "ws_1", recipes: [recipe] })
+    ).toEqual({ schemaVersion: 1, workspaceId: "ws_1", recipes: [recipe] });
+
+    const operation = {
+      schemaVersion: 1 as const,
+      operationId: "op_verify",
+      state: "completed" as const,
+      exitCode: 0,
+      stdoutPreview: "ok\n",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 3,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_verify" as const,
+        mediaType: "text/plain",
+        sizeBytes: 3,
+        sourceTruncated: false
+      }
+    };
+    expect(
+      VerifyRunResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_1",
+        recipe,
+        operation
+      })
+    ).toMatchObject({ workspaceId: "ws_1", recipe: { id: "package:test" }, operation: { operationId: "op_verify" } });
+  });
+
   it("keeps remaining unimplemented capability methods explicit and stable", async () => {
     const service = new NativeCapabilityService({
       workspaceInspection: {} as never,
       codeSearch: {} as never,
-      gitInspection: {} as never
+      gitInspection: {} as never,
+      verificationWorkspace: {} as never,
+      execution: {} as never
     });
 
-    await expect(service.listVerifications({ workspaceId: "ws_1" })).rejects.toEqual(
+    await expect(service.patchFile({ workspaceId: "ws_1", patch: "" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",
-        capability: "verify.list"
+        capability: "file.patch"
       })
     );
   });

@@ -39,7 +39,9 @@ function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCap
     gitInspection: {
       gitStatus: async () => ({} as never),
       gitDiff: async () => ({} as never)
-    }
+    },
+    verificationWorkspace: {} as never,
+    execution: {} as never
   });
 }
 

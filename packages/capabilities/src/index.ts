@@ -61,6 +61,7 @@ export type {
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,
+  VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
@@ -70,6 +71,11 @@ export {
   CodeSearchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  VerifyListInputSchema,
+  VerifyListResultSchema,
+  VerifyRunInputSchema,
+  VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "./schemas.js";
+export { VerificationRecipeError } from "./verification.js";

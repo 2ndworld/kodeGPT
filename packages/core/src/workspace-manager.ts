@@ -62,7 +62,7 @@ export interface WorkspaceGitInspectionResult {
 export type ProcessOperationState = "running" | "completed" | "failed" | "cancelled";
 
 export interface WorkspaceProcessOperationResult {
-  schemaVersion: number;
+  schemaVersion: 1;
   operationId: string;
   state: ProcessOperationState;
   exitCode?: number;

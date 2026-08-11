@@ -66,7 +66,7 @@ describe("bridge command unit tests", () => {
       effectivePolicy
     };
     const processResult = {
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       operationId: "op_1",
       state: "completed" as const,
       exitCode: 0,

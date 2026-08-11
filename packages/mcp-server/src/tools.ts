@@ -3,6 +3,10 @@ import {
   CodeSearchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  VerifyListInputSchema,
+  VerifyListResultSchema,
+  VerifyRunInputSchema,
+  VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "@kodegpt/capabilities";
@@ -45,6 +49,8 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "profile.inspect", required: ["name"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "verify.list", required: ["workspaceId"] },
+  { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
@@ -312,6 +318,36 @@ export function registerKodegptTools(
       consoleState.recordGitStatus(workspaceId, value);
       return structuredToolResult(value);
     }
+  );
+
+  server.registerTool(
+    "verify.list",
+    {
+      description: "List safe verification recipes discovered from workspace manifests and current policy.",
+      inputSchema: VerifyListInputSchema,
+      outputSchema: VerifyListResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId }) =>
+      structuredToolResult(
+        VerifyListResultSchema.parse(await context.verify.list({ workspaceId }))
+      )
+  );
+
+  server.registerTool(
+    "verify.run",
+    {
+      description: "Run a currently allowed verification recipe through the retained-root process sandbox.",
+      inputSchema: VerifyRunInputSchema,
+      outputSchema: VerifyRunResultSchema,
+      annotations: PROCESS_RUN_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, recipeId, background }) =>
+      structuredToolResult(
+        VerifyRunResultSchema.parse(
+          await context.verify.run({ workspaceId, recipeId, background })
+        )
+      )
   );
 
   server.registerTool(

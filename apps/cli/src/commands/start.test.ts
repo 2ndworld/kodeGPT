@@ -212,6 +212,121 @@ describe("kodegpt start orchestration", () => {
     }
   });
 
+  it("production-wires verification discovery through the existing workspace manager", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateMcp = deps.createMcp;
+    let toolContext: Parameters<StartDependencies["createMcp"]>[0]["toolContext"] | undefined;
+    deps.createMcp = (options) => {
+      toolContext = options.toolContext;
+      return originalCreateMcp(options);
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    try {
+      await expect(toolContext!.verify.list({ workspaceId: "ws_test" })).resolves.toEqual({
+        schemaVersion: 1,
+        workspaceId: "ws_test",
+        recipes: []
+      });
+    } finally {
+      await started.close();
+    }
+  });
+
+  it("production-wires verification execution through the existing workspace manager", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    const runInputs: unknown[] = [];
+    deps.createManagers = (options) => {
+      const managers = originalCreateManagers(options);
+      const packageJson = JSON.stringify({ scripts: { test: "metadata only" } });
+      Object.assign(managers.workspaceManager, {
+        requireReady: () => ({
+          id: "ws_test",
+          canonicalRoot: "/workspace",
+          effectivePolicy: {
+            name: "trusted" as const,
+            allowWrite: true,
+            allowProcess: true,
+            network: "unrestricted" as const,
+            allowedExecutableNames: ["pnpm"],
+            inheritEnv: false as const,
+            envAllowlist: []
+          }
+        }),
+        treeBounded: async () => ({
+          entries: [{ path: "package.json", kind: "file" as const }],
+          truncated: false
+        }),
+        readFile: async () => ({ contents: packageJson, bytesRead: packageJson.length, eof: true }),
+        runProcess: async (input: unknown) => {
+          runInputs.push(input);
+          return {
+            schemaVersion: 1 as const,
+            operationId: "op_verify",
+            state: "completed" as const,
+            exitCode: 0,
+            stdoutPreview: "verify-ok\n",
+            stderrPreview: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            sourceTruncated: false,
+            bytesSpooled: 10,
+            artifact: {
+              schemaVersion: 1 as const,
+              uri: "artifact://ka_verify" as const,
+              mediaType: "text/plain",
+              sizeBytes: 10,
+              sourceTruncated: false
+            }
+          };
+        }
+      });
+      return managers;
+    };
+
+    const originalCreateMcp = deps.createMcp;
+    let toolContext: Parameters<StartDependencies["createMcp"]>[0]["toolContext"] | undefined;
+    deps.createMcp = (options) => {
+      toolContext = options.toolContext;
+      return originalCreateMcp(options);
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    try {
+      const result = await toolContext!.verify.run({
+        workspaceId: "ws_test",
+        recipeId: "package:test",
+        background: true
+      });
+      expect(runInputs).toEqual([
+        {
+          workspaceId: "ws_test",
+          logicalExecutable: "pnpm",
+          argv: ["run", "test"],
+          cwd: ".",
+          background: true
+        }
+      ]);
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: "ws_test",
+        recipe: { id: "package:test", allowed: true },
+        operation: { operationId: "op_verify", state: "completed", exitCode: 0 }
+      });
+    } finally {
+      await started.close();
+    }
+  });
+
   it("rejects connector bootstrap unless it is paired with explicit public query compatibility", async () => {
     await expect(
       startKodegpt(

@@ -1,10 +1,13 @@
 import type {
+  CapabilityExecutionAdapter,
   CodeSearchAdapter,
   GitInspectionAdapter,
+  VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 import { searchCode } from "./code-search.js";
 import { gitChanges } from "./git-changes.js";
+import { listVerifications, runVerification } from "./verification.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
@@ -47,15 +50,21 @@ export class NativeCapabilityService {
   readonly #workspaceInspection: WorkspaceInspectionAdapter;
   readonly #codeSearch: CodeSearchAdapter;
   readonly #gitInspection: GitInspectionAdapter;
+  readonly #verificationWorkspace: VerificationWorkspaceAdapter;
+  readonly #execution: CapabilityExecutionAdapter;
 
   constructor(options: {
     workspaceInspection: WorkspaceInspectionAdapter;
     codeSearch: CodeSearchAdapter;
     gitInspection: GitInspectionAdapter;
+    verificationWorkspace: VerificationWorkspaceAdapter;
+    execution: CapabilityExecutionAdapter;
   }) {
     this.#workspaceInspection = options.workspaceInspection;
     this.#codeSearch = options.codeSearch;
     this.#gitInspection = options.gitInspection;
+    this.#verificationWorkspace = options.verificationWorkspace;
+    this.#execution = options.execution;
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
@@ -71,13 +80,11 @@ export class NativeCapabilityService {
   }
 
   async listVerifications(input: VerifyListInput): Promise<VerifyListResult> {
-    void input;
-    throw new CapabilityNotImplementedError("verify.list");
+    return listVerifications(this.#verificationWorkspace, input);
   }
 
   async runVerification(input: VerifyRunInput): Promise<VerifyRunResult> {
-    void input;
-    throw new CapabilityNotImplementedError("verify.run");
+    return runVerification(this.#verificationWorkspace, this.#execution, input);
   }
 
   async patchFile(input: FilePatchInput): Promise<FilePatchResult> {

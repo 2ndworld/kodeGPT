@@ -85,6 +85,23 @@ export interface PatchCommitAdapter {
   commitPatchFile(input: PatchCommitAdapterInput): Promise<PatchCommitAdapterResult>;
 }
 
+export interface VerificationWorkspaceAdapter {
+  readFile(
+    workspaceId: string,
+    path: string,
+    options?: { offset?: number; maxBytes?: number }
+  ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
+  tree(
+    workspaceId: string,
+    path: string | undefined,
+    maxEntries: number
+  ): Promise<CapabilityTreeResult>;
+  effectivePolicy(workspaceId: string): {
+    allowProcess: boolean;
+    allowedExecutableNames: string[];
+  };
+}
+
 export interface CapabilityExecutionAdapter {
   run(input: {
     workspaceId: string;

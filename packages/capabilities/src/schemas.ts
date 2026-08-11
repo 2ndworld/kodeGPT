@@ -7,6 +7,10 @@ import {
   type CodeSearchResult,
   type GitChangesInput,
   type GitChangesResult,
+  type VerifyListInput,
+  type VerifyListResult,
+  type VerifyRunInput,
+  type VerifyRunResult,
   type WorkspaceInspectInput,
   type WorkspaceInspectResult
 } from "./contracts.js";
@@ -143,5 +147,72 @@ export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
       .optional(),
     truncated: z.boolean(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict();
+
+const verificationRecipeSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    category: z.enum(["test", "lint", "typecheck", "build", "format-check", "custom"]),
+    logicalExecutable: z.string().min(1),
+    argv: z.array(z.string()),
+    cwd: z.string().min(1),
+    source: z.enum(["package-script", "cargo", "kodegpt-config"]),
+    allowed: z.boolean(),
+    blockedReason: z.string().min(1).optional()
+  })
+  .strict();
+
+const verificationOperationSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    operationId: z.string().startsWith("op_"),
+    state: z.enum(["running", "completed", "failed", "cancelled"]),
+    exitCode: z.number().int().safe().optional(),
+    stdoutPreview: z.string(),
+    stderrPreview: z.string(),
+    stdoutTruncated: z.boolean(),
+    stderrTruncated: z.boolean(),
+    sourceTruncated: z.boolean(),
+    bytesSpooled: z.number().int().nonnegative().safe(),
+    artifact: z
+      .object({
+        schemaVersion: z.literal(1),
+        uri: z.templateLiteral(["artifact://", z.string()]),
+        mediaType: z.string().min(1),
+        sizeBytes: z.number().int().nonnegative().safe(),
+        sourceTruncated: z.boolean()
+      })
+      .strict()
+  })
+  .strict();
+
+export const VerifyListInputSchema: z.ZodType<VerifyListInput> = z
+  .object({ workspaceId: z.string().min(1) })
+  .strict();
+
+export const VerifyListResultSchema: z.ZodType<VerifyListResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    recipes: z.array(verificationRecipeSchema)
+  })
+  .strict();
+
+export const VerifyRunInputSchema: z.ZodType<VerifyRunInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    recipeId: z.string().min(1),
+    background: z.boolean().optional()
+  })
+  .strict();
+
+export const VerifyRunResultSchema: z.ZodType<VerifyRunResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    recipe: verificationRecipeSchema,
+    operation: verificationOperationSchema
   })
   .strict();

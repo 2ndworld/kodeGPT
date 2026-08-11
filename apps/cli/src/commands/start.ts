@@ -196,6 +196,22 @@ export async function createProductionServiceStack(
       gitInspection: {
         gitStatus: (workspaceId) => managers.workspaceManager.gitStatus(workspaceId),
         gitDiff: (workspaceId) => managers.workspaceManager.gitDiff(workspaceId)
+      },
+      verificationWorkspace: {
+        readFile: (workspaceId, path, readOptions) =>
+          managers.workspaceManager.readFile(workspaceId, path, readOptions),
+        tree: (workspaceId, path, maxEntries) =>
+          managers.workspaceManager.treeBounded(workspaceId, path, maxEntries),
+        effectivePolicy: (workspaceId) => {
+          const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
+          return {
+            allowProcess: policy.allowProcess,
+            allowedExecutableNames: [...policy.allowedExecutableNames]
+          };
+        }
+      },
+      execution: {
+        run: (input) => managers.workspaceManager.runProcess(input)
       }
     });
     const toolContext = createKodegptToolContext({

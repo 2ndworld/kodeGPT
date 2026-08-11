@@ -693,42 +693,29 @@ git commit -m "feat(capabilities): add git change checkpoints"
 **Files:**
 - Create: `packages/capabilities/src/verification.ts`
 - Create: `packages/capabilities/src/verification.test.ts`
-- Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
-- Modify: `apps/cli/src/commands/start.ts`
-- Modify: `apps/cli/package.json`
+- Modify: `packages/capabilities/src/adapters.ts`, `native-capability-service.ts`, `schemas.ts`, `index.ts`
+- Modify: `packages/core/src/workspace-manager.ts`
+- Modify: `packages/mcp-server/src/tools.ts` and MCP surface/result tests
+- Modify: `apps/cli/src/commands/start.ts` and production-stack fixtures
+- Modify: `tests/capabilities/contracts.test.ts`, `tests/fixtures/mcp-surface.ts`, `tests/integration/full-stack.test.ts`
 
 **Interfaces:**
-- Consumes: workspace manifest reads + effective policy + `CapabilityExecutionAdapter.run`.
-- Produces: `verify.list`, `verify.run`.
+- Consumes only bounded manifest tree/read access, the current effective `allowProcess` + executable allowlist, and existing `CapabilityExecutionAdapter.run`.
+- Produces schema-validated `verify.list` and `verify.run`.
+- No shell parser, arbitrary executable/argv input, filesystem authority, or second execution path is introduced.
 
 - [ ] **Step 1: Write failing discovery tests**
 
-Fixture `package.json`:
-
-```json
-{
-  "scripts": {
-    "test": "vitest run",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.json"
-  }
-}
-```
-
-Expected recipe IDs:
+Package discovery recognizes only fixed script names `test`, `lint`, `typecheck`, and `build`. The script body is metadata only and is never parsed as a command. Each discovered package recipe resolves to:
 
 ```text
-package:test
-package:lint
-package:typecheck
-package:build
+logicalExecutable = pnpm
+argv              = ["run", <script>]
+cwd               = "."
+source             = package-script
 ```
 
-Each package recipe resolves to `logicalExecutable: "pnpm"`, `argv: ["run", <script>]`, `cwd: "."`.
-
-Cargo fixture produces at least:
+Cargo root evidence produces the fixed recipes:
 
 ```text
 cargo:test       => cargo test --workspace
@@ -736,15 +723,22 @@ cargo:check      => cargo check --workspace
 cargo:fmt-check  => cargo fmt --all -- --check
 ```
 
+Discovery reads root `package.json` with a 64 KiB ceiling and uses a bounded root tree with a 10,000-entry ceiling. Because `VerifyListResult` v1 has no partial-result marker, a truncated manifest tree or truncated package manifest read fails closed rather than claiming the recipe set is complete.
+
 - [ ] **Step 2: Prove discovery executes nothing**
 
-Use a fake execution adapter that throws if called. `listVerifications()` must pass without invoking it.
+Use an execution adapter that throws if invoked. `listVerifications()` must still succeed. Manifest discovery must not run package-manager lifecycle scripts.
 
 - [ ] **Step 3: Implement policy compatibility**
 
-Read `effectivePolicy.allowedExecutableNames`. A recipe is `allowed: true` only when its logical executable is in that list. Return `blockedReason: "EXECUTABLE_NOT_ALLOWED"` otherwise.
+A recipe is `allowed: true` only when both conditions hold:
 
-Do not use shell parsing of script bodies. The script body is metadata only; execution is performed via package manager argv.
+```text
+effectivePolicy.allowProcess === true
+logical executable ∈ effectivePolicy.allowedExecutableNames
+```
+
+Use `blockedReason: "PROCESS_NOT_ALLOWED"` when process authority is disabled and `blockedReason: "EXECUTABLE_NOT_ALLOWED"` when the logical executable is absent from the allowlist. This distinction matters because a narrowed profile may retain executable names while disabling process authority.
 
 - [ ] **Step 4: Implement `runVerification` with recipe re-resolution**
 
@@ -753,30 +747,64 @@ Required flow:
 ```text
 list current recipes
 → find recipeId
-→ re-check allowed
-→ call execution.run with stored logicalExecutable/argv/cwd
+→ re-check current allowProcess + executable allowlist
+→ call execution.run with the recipe's stored logicalExecutable/argv/cwd
 ```
 
-Input contains no arbitrary executable or argv override.
+`VerifyRunInput` contains only `workspaceId`, `recipeId`, and optional `background`; there is no client-provided executable, argv, cwd, environment, or network override.
 
-- [ ] **Step 5: Register MCP tools**
+- [ ] **Step 5: Add shared runtime schemas**
 
-`verify.list`: read-only annotations.
+`packages/capabilities/src/schemas.ts` owns closed `VerifyListInputSchema`, `VerifyListResultSchema`, `VerifyRunInputSchema`, and `VerifyRunResultSchema`. Validate recipe metadata and the complete verification operation/artifact shape, including literal `schemaVersion: 1`.
 
-`verify.run`: use process-run-equivalent annotations (`readOnlyHint: false`, open-world consistent with process execution).
+- [ ] **Step 6: Extend the existing production capability service before advertising**
 
-- [ ] **Step 6: Extend the existing production capability service for verification authority**
+Extend the Task 3–5 `NativeCapabilityService` instance in `createProductionServiceStack` with:
 
-Task 3 already establishes `NativeCapabilityService` production wiring in `createProductionServiceStack` using the existing workspace manager. Extend that same service construction with the verification-specific workspace policy/manifest and `CapabilityExecutionAdapter` dependencies required by Task 6. Do not create a second capability service, kernel, workspace manager, or execution manager, and do not defer production usability until after the MCP tools are advertised.
+```text
+verificationWorkspace.readFile       -> existing WorkspaceManager.readFile
+verificationWorkspace.tree           -> existing WorkspaceManager.treeBounded
+verificationWorkspace.effectivePolicy-> existing WorkspaceManager.requireReady(...).effectivePolicy
+execution.run                         -> existing WorkspaceManager.runProcess
+```
 
-- [ ] **Step 7: Run GREEN and commit**
+Do not create a second service, kernel, workspace manager, or execution manager. Narrow `WorkspaceProcessOperationResult.schemaVersion` to literal `1`, matching its existing runtime validator.
+
+Production-stack tests must prove both discovery and execution mapping. `verify.run` must pass exactly the stored recipe executable/argv/cwd to the existing process authority.
+
+- [ ] **Step 7: Register MCP tools**
+
+Use shared schemas and structured/text parity:
+
+```text
+verify.list -> READ_ONLY_TOOL_ANNOTATIONS
+verify.run  -> PROCESS_RUN_TOOL_ANNOTATIONS
+```
+
+Add both tools to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"` for this Phase 1 capability addition.
+
+- [ ] **Step 8: Add full-stack discovery coverage and preserve host executable trust**
+
+The full-stack temporary workspace must prove `verify.list` works through real MCP and reports a policy-compatible package recipe without exposing host paths.
+
+Do not weaken Rust trusted-executable rules to make host-local package-manager installations runnable. On the current development host, `pnpm` resolves under the user's NVM directory rather than the fixed root-owned executable directories, so real-host `verify.run(package:test)` correctly fails the existing trusted-executable boundary. Production `verify.run` correctness is instead covered at the service/manager boundary; installations with a trusted package-manager executable can use the same runtime path unchanged.
+
+- [ ] **Step 9: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
 pnpm --filter @kodegpt/mcp-server test
-pnpm --filter @kodegpt/cli test
+pnpm --filter kodegpt test
+pnpm exec vitest run tests/integration/full-stack.test.ts --no-file-parallelism
 
-git add packages/capabilities packages/mcp-server apps/cli pnpm-lock.yaml
+pnpm test
+pnpm typecheck
+pnpm build
+pnpm verify:forbidden
+pnpm verify:package
+pnpm test:rust
+
+git add packages/capabilities packages/core packages/mcp-server apps/cli tests docs
 
 git commit -m "feat(capabilities): add safe verification recipes"
 ```

@@ -56,7 +56,13 @@ function service(options: {
     }
   };
 
-  return new NativeCapabilityService({ workspaceInspection, codeSearch, gitInspection });
+  return new NativeCapabilityService({
+    workspaceInspection,
+    codeSearch,
+    gitInspection,
+    verificationWorkspace: {} as never,
+    execution: {} as never
+  });
 }
 
 describe("git.changes", () => {

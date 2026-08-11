@@ -21,6 +21,8 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "profile.inspect", required: ["name"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "verify.list", required: ["workspaceId"] },
+  { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },

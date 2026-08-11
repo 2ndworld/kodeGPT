@@ -145,7 +145,14 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     await mkdir(join(workspaceA, "src"));
     await writeFile(join(workspaceA, "tracked.txt"), "before\n");
     await writeFile(join(workspaceA, "src/main.ts"), "export function needle() {}\nneedle();\n");
-    await writeFile(join(workspaceA, "package.json"), '{"name":"workspace-a","private":true}\n');
+    await writeFile(
+      join(workspaceA, "package.json"),
+      JSON.stringify({
+        name: "workspace-a",
+        private: true,
+        scripts: { test: "node -e \"console.log('verify-ok')\"" }
+      }) + "\n"
+    );
     await writeFile(join(workspaceA, "pnpm-workspace.yaml"), "packages: []\n");
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
@@ -301,6 +308,26 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
           preview: "export function needle() {}"
         }
       ]);
+
+      const verifyListResult = await callTool(
+        port,
+        credential.token,
+        "verify.list",
+        { workspaceId: openedA.id },
+        "req_full_verify_list"
+      );
+      const verifyList = textJson(verifyListResult);
+      expect(verifyListResult.structuredContent).toEqual(verifyList);
+      expect(verifyList.recipes).toContainEqual({
+        id: "package:test",
+        label: "Package test",
+        category: "test",
+        logicalExecutable: "pnpm",
+        argv: ["run", "test"],
+        cwd: ".",
+        source: "package-script",
+        allowed: true
+      });
 
       const gitChangesResult = await callTool(
         port,

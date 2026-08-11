@@ -7,12 +7,16 @@ import {
   GitChangesInputSchema,
   GitChangesResultSchema,
   NativeCapabilityService,
+  VerifyListInputSchema,
+  VerifyListResultSchema,
+  VerifyRunInputSchema,
+  VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "../../packages/capabilities/src/index.js";
 
 describe("native capability public package boundary", () => {
-  it("exports the Task 1–5 service and runtime contracts from the package entrypoint", () => {
+  it("exports the Task 1–6 service and runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(typeof NativeCapabilityService).toBe("function");
     expect(
@@ -59,5 +63,15 @@ describe("native capability public package boundary", () => {
         fingerprint: "a".repeat(64)
       })
     ).toMatchObject({ workspaceId: "ws_public", clean: true, truncated: false });
+    expect(VerifyListInputSchema.parse({ workspaceId: "ws_public" })).toEqual({
+      workspaceId: "ws_public"
+    });
+    expect(
+      VerifyListResultSchema.parse({ schemaVersion: 1, workspaceId: "ws_public", recipes: [] })
+    ).toEqual({ schemaVersion: 1, workspaceId: "ws_public", recipes: [] });
+    expect(
+      VerifyRunInputSchema.parse({ workspaceId: "ws_public", recipeId: "package:test" })
+    ).toEqual({ workspaceId: "ws_public", recipeId: "package:test" });
+    expect(typeof VerifyRunResultSchema.parse).toBe("function");
   });
 });
