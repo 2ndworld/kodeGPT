@@ -58,6 +58,8 @@ importers:
 
   packages/auth: {}
 
+  packages/capabilities: {}
+
   packages/core:
     dependencies:
       '@kodegpt/artifacts':
