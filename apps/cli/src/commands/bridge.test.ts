@@ -57,7 +57,7 @@ describe("bridge command unit tests", () => {
       allowProcess: false,
       network: "deny" as const,
       allowedExecutableNames: [],
-      inheritEnv: false,
+      inheritEnv: false as const,
       envAllowlist: []
     };
     const readyWorkspace = {
