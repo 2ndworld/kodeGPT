@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MCP_SURFACE_VERSION } from "./surface-version.js";
 import { createKodegptMcpServer, listSurfaceTools } from "./server.js";
+import type { KodegptToolContext } from "./tool-context.js";
 
 const expectedTools = [
   "artifact.read",
@@ -59,7 +60,7 @@ describe("KodeGPT MCP semantic surface", () => {
   });
 
   it("registers only the locked semantic tool names", () => {
-    const server = createKodegptMcpServer({
+    const context = {
       workspace: {
         list: async () => [],
         open: async () => ({}),
@@ -94,7 +95,9 @@ describe("KodeGPT MCP semantic surface", () => {
         capabilities: async () => ({}),
         health: async () => ({ ok: true })
       }
-    });
+    } as unknown as KodegptToolContext;
+
+    const server = createKodegptMcpServer(context);
 
     expect(listSurfaceTools().map(({ name }) => name)).toEqual([...expectedTools]);
     expect(server).toBeDefined();

@@ -89,7 +89,7 @@ export function registerKodegptTools(
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ limit }) => toolResult(await context.extension.list({ limit }))
+    async ({ limit }) => structuredToolResult(await context.extension.list({ limit }))
   );
 
   server.registerTool(
@@ -104,7 +104,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ uri, offset, maxBytes }) =>
-      toolResult(await context.artifact.read({ uri, offset, maxBytes }))
+      structuredToolResult(await context.artifact.read({ uri, offset, maxBytes }))
   );
 
   server.registerTool(
@@ -114,7 +114,7 @@ export function registerKodegptTools(
       inputSchema: {},
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async () => toolResult(await context.workspace.list())
+    async () => structuredToolResult(await context.workspace.list())
   );
 
   server.registerTool(
@@ -124,7 +124,7 @@ export function registerKodegptTools(
       inputSchema: { rootPath: z.string().min(1) },
       annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
     },
-    async ({ rootPath }) => toolResult(await context.workspace.open({ rootPath }))
+    async ({ rootPath }) => structuredToolResult(await context.workspace.open({ rootPath }))
   );
 
   server.registerTool(
@@ -134,7 +134,7 @@ export function registerKodegptTools(
       inputSchema: { workspaceId: z.string().min(1) },
       annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) => toolResult(await context.workspace.close({ workspaceId }))
+    async ({ workspaceId }) => structuredToolResult(await context.workspace.close({ workspaceId }))
   );
 
   server.registerTool(
@@ -144,7 +144,7 @@ export function registerKodegptTools(
       inputSchema: { workspaceId: z.string().min(1) },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) => toolResult(await context.workspace.info({ workspaceId }))
+    async ({ workspaceId }) => structuredToolResult(await context.workspace.info({ workspaceId }))
   );
 
   server.registerTool(
@@ -162,7 +162,7 @@ export function registerKodegptTools(
       annotations: MUTATING_FILE_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path, oldText, newText, expectedReplacements }) =>
-      toolResult(
+      structuredToolResult(
         await context.workspace.editFile({
           workspaceId,
           path,
@@ -186,7 +186,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path, offset, maxBytes }) =>
-      toolResult(await context.workspace.readFile({ workspaceId, path, offset, maxBytes }))
+      structuredToolResult(await context.workspace.readFile({ workspaceId, path, offset, maxBytes }))
   );
 
   server.registerTool(
@@ -201,7 +201,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, query, path }) =>
-      toolResult(await context.workspace.search({ workspaceId, query, path }))
+      structuredToolResult(await context.workspace.search({ workspaceId, query, path }))
   );
 
   server.registerTool(
@@ -214,7 +214,8 @@ export function registerKodegptTools(
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, path }) => toolResult(await context.workspace.tree({ workspaceId, path }))
+    async ({ workspaceId, path }) =>
+      structuredToolResult(await context.workspace.tree({ workspaceId, path }))
   );
 
   server.registerTool(
@@ -229,7 +230,7 @@ export function registerKodegptTools(
       annotations: MUTATING_FILE_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path, content }) =>
-      toolResult(await context.workspace.writeFile({ workspaceId, path, content }))
+      structuredToolResult(await context.workspace.writeFile({ workspaceId, path, content }))
   );
 
   server.registerTool(
@@ -239,7 +240,7 @@ export function registerKodegptTools(
       inputSchema: { workspaceId: z.string().min(1) },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) => toolResult(await context.git.diff({ workspaceId }))
+    async ({ workspaceId }) => structuredToolResult(await context.git.diff({ workspaceId }))
   );
 
   server.registerTool(
@@ -252,7 +253,7 @@ export function registerKodegptTools(
     async ({ workspaceId }) => {
       const value = await context.git.status({ workspaceId });
       consoleState.recordGitStatus(workspaceId, value);
-      return toolResult(value);
+      return structuredToolResult(value);
     }
   );
 
@@ -280,7 +281,7 @@ export function registerKodegptTools(
         background
       });
       consoleState.recordProcessOperation(value);
-      return toolResult(value);
+      return structuredToolResult(value);
     }
   );
 
@@ -297,7 +298,7 @@ export function registerKodegptTools(
     async ({ workspaceId, operationId }) => {
       const value = await context.process.status({ workspaceId, operationId });
       consoleState.recordProcessOperation(value);
-      return toolResult(value);
+      return structuredToolResult(value);
     }
   );
 
@@ -314,7 +315,7 @@ export function registerKodegptTools(
     async ({ workspaceId, operationId }) => {
       const value = await context.process.cancel({ workspaceId, operationId });
       consoleState.recordProcessOperation(value);
-      return toolResult(value);
+      return structuredToolResult(value);
     }
   );
 
@@ -325,7 +326,7 @@ export function registerKodegptTools(
       inputSchema: { workspaceId: z.string().min(1) },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) => toolResult(await context.profile.current({ workspaceId }))
+    async ({ workspaceId }) => structuredToolResult(await context.profile.current({ workspaceId }))
   );
 
   server.registerTool(
@@ -335,7 +336,7 @@ export function registerKodegptTools(
       inputSchema: { name: z.enum(["observe", "develop", "trusted"]) },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ name }) => toolResult(await context.profile.inspect({ name }))
+    async ({ name }) => structuredToolResult(await context.profile.inspect({ name }))
   );
 
   server.registerTool(
@@ -345,7 +346,7 @@ export function registerKodegptTools(
       inputSchema: {},
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async () => toolResult(await context.system.capabilities())
+    async () => structuredToolResult(await context.system.capabilities())
   );
 
   server.registerTool(
@@ -355,18 +356,20 @@ export function registerKodegptTools(
       inputSchema: {},
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async () => toolResult(await context.system.health())
+    async () => structuredToolResult(await context.system.health())
   );
 }
 
-function toolResult(value: unknown) {
+export function structuredToolResult<T>(value: T) {
+  const structuredContent = value ?? null;
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify(value ?? null)
+        text: JSON.stringify(structuredContent)
       }
-    ]
+    ],
+    structuredContent
   };
 }
 

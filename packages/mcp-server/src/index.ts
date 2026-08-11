@@ -19,12 +19,35 @@ export {
 export { serveKodegptStdio } from "./stdio.js";
 export type { KodegptStdioHandle } from "./stdio.js";
 export { MCP_SURFACE_VERSION } from "./surface-version.js";
-export { createKodegptToolContext } from "./tool-context.js";
+export { structuredToolResult } from "./tools.js";
+export {
+  NativeCapabilityAdapterUnavailableError,
+  createKodegptToolContext
+} from "./tool-context.js";
 export type {
+  ArtifactStoreToolAdapter,
+  ArtifactToolContext,
+  CodeToolContext,
+  ContextToolContext,
+  ExecutionManagerToolAdapter,
   ExtensionRegistryToolAdapter,
+  ExtensionToolContext,
+  FileCapabilityToolContext,
+  GitToolContext,
+  JsonObject,
   KodegptToolContext,
+  MaybePromise,
+  NativeCapabilityToolAdapter,
+  ProcessToolContext,
+  ProfileCurrentResult,
   ProfileToolContext,
   SystemToolContext,
+  VerifyToolContext,
+  WorkspaceCloseResult,
+  WorkspaceFileEditResult,
+  WorkspaceFileWriteResult,
+  WorkspaceGitInspectionResult,
   WorkspaceManagerToolAdapter,
+  WorkspaceProcessOperationResult,
   WorkspaceToolContext
 } from "./tool-context.js";
