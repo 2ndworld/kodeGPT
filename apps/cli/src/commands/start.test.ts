@@ -31,72 +31,64 @@ function dependencies(
       events.push("kernel.stop");
     }
   };
+  const effectivePolicy = {
+    name: "observe" as const,
+    allowWrite: false,
+    allowProcess: false,
+    network: "deny" as const,
+    allowedExecutableNames: [],
+    inheritEnv: false,
+    envAllowlist: []
+  };
+  const readyWorkspace = {
+    id: "ws_test",
+    canonicalRoot: "/workspace",
+    effectivePolicy
+  };
+  const artifact = {
+    schemaVersion: 1 as const,
+    uri: "artifact://ka_test" as const,
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    sizeBytes: 0,
+    sourceTruncated: false
+  };
+  const gitInspection = {
+    schemaVersion: 1 as const,
+    exitCode: 0,
+    stdoutPreview: "",
+    stderrPreview: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    sourceTruncated: false,
+    bytesSpooled: 0,
+    artifact
+  };
+  const completedProcess = {
+    schemaVersion: 1 as const,
+    operationId: "op_test",
+    state: "completed" as const,
+    exitCode: 0,
+    stdoutPreview: "",
+    stderrPreview: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    sourceTruncated: false,
+    bytesSpooled: 0,
+    artifact
+  };
   const workspaceManager = {
     listWorkspaces: () => [],
-    openWorkspace: async () => ({}),
+    openWorkspace: async () => readyWorkspace,
     closeWorkspace: async () => undefined,
-    requireReady: () => ({ effectivePolicy: {} }),
-    readFile: async () => ({}),
-    writeFile: async () => ({}),
-    editFile: async () => ({}),
-    gitStatus: async () => ({}),
-    gitDiff: async () => ({}),
-    runProcess: async () => ({
-      schemaVersion: 1,
-      operationId: "op_test",
-      state: "completed" as const,
-      exitCode: 0,
-      stdoutPreview: "",
-      stderrPreview: "",
-      stdoutTruncated: false,
-      stderrTruncated: false,
-      sourceTruncated: false,
-      bytesSpooled: 0,
-      artifact: {
-        schemaVersion: 1 as const,
-        uri: "artifact://ka_test" as const,
-        mediaType: "application/vnd.kodegpt.execution-stream",
-        sizeBytes: 0,
-        sourceTruncated: false
-      }
-    }),
-    processStatus: async () => ({
-      schemaVersion: 1,
-      operationId: "op_test",
-      state: "completed" as const,
-      exitCode: 0,
-      stdoutPreview: "",
-      stderrPreview: "",
-      stdoutTruncated: false,
-      stderrTruncated: false,
-      sourceTruncated: false,
-      bytesSpooled: 0,
-      artifact: {
-        schemaVersion: 1 as const,
-        uri: "artifact://ka_test" as const,
-        mediaType: "application/vnd.kodegpt.execution-stream",
-        sizeBytes: 0,
-        sourceTruncated: false
-      }
-    }),
-    processCancel: async () => ({
-      schemaVersion: 1,
-      operationId: "op_test",
-      state: "cancelled" as const,
-      stdoutPreview: "",
-      stderrPreview: "",
-      stdoutTruncated: false,
-      stderrTruncated: false,
-      sourceTruncated: false,
-      bytesSpooled: 0,
-      artifact: {
-        schemaVersion: 1 as const,
-        uri: "artifact://ka_test" as const,
-        mediaType: "application/vnd.kodegpt.execution-stream",
-        sizeBytes: 0,
-        sourceTruncated: false
-      }
-    }),
+    requireReady: () => readyWorkspace,
+    readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+    writeFile: async () => ({ bytesWritten: 0, created: true }),
+    editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
+    gitStatus: async () => gitInspection,
+    gitDiff: async () => gitInspection,
+    runProcess: async () => completedProcess,
+    processStatus: async () => completedProcess,
+    processCancel: async () => ({ ...completedProcess, state: "cancelled" as const }),
     search: async () => [],
     tree: async () => []
   };
