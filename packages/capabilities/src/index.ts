@@ -1,0 +1,63 @@
+export {
+  CAPABILITY_SCHEMA_VERSION,
+  DEFAULT_CONTEXT_MAX_BYTES,
+  DEFAULT_INSPECT_MAX_ENTRIES,
+  DEFAULT_SEARCH_MAX_RESULTS,
+  MAX_CONTEXT_MAX_BYTES,
+  MAX_INSPECT_MAX_ENTRIES,
+  MAX_PATCH_BYTES,
+  MAX_PATCH_FILES,
+  MAX_PATCH_HUNKS,
+  MAX_SEARCH_MAX_RESULTS
+} from "./contracts.js";
+export type {
+  CapabilityArtifactMetadata,
+  CodeSearchInput,
+  CodeSearchMatch,
+  CodeSearchMode,
+  CodeSearchPrecision,
+  CodeSearchResult,
+  ContextBuildInput,
+  ContextBuildResult,
+  ContextIntent,
+  ContextSelectedFile,
+  FilePatchFileResult,
+  FilePatchInput,
+  FilePatchMode,
+  FilePatchResult,
+  GitChangedPath,
+  GitChangesInput,
+  GitChangesResult,
+  GitChangesSummary,
+  GitPatchArtifact,
+  PatchFileAction,
+  VerificationCategory,
+  VerificationOperationResult,
+  VerificationOperationState,
+  VerificationRecipe,
+  VerificationSource,
+  VerifyListInput,
+  VerifyListResult,
+  VerifyRunInput,
+  VerifyRunResult,
+  WorkspaceInspectArea,
+  WorkspaceInspectAreaKind,
+  WorkspaceInspectEntrypoint,
+  WorkspaceInspectInput,
+  WorkspaceInspectLanguage,
+  WorkspaceInspectManifest,
+  WorkspaceInspectResult
+} from "./contracts.js";
+export type {
+  CapabilityExecutionAdapter,
+  CapabilitySearchMatch,
+  CapabilityTreeEntry,
+  CapabilityTreeEntryKind,
+  CapabilityWorkspaceAdapter,
+  CapabilityWorkspaceInfo,
+  GitInspectionAdapterResult,
+  PatchCommitAdapterInput,
+  PatchCommitAdapterResult
+} from "./adapters.js";
+export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
+export type { NativeCapabilityName } from "./native-capability-service.js";
