@@ -48,7 +48,7 @@ export interface WorkspaceFileEditResult {
 }
 
 export interface WorkspaceGitInspectionResult {
-  schemaVersion: number;
+  schemaVersion: 1;
   exitCode: number;
   stdoutPreview: string;
   stderrPreview: string;

@@ -11,6 +11,7 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.changes", required: ["workspaceId"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },

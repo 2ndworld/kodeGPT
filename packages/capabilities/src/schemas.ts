@@ -5,6 +5,8 @@ import {
   MAX_SEARCH_MAX_RESULTS,
   type CodeSearchInput,
   type CodeSearchResult,
+  type GitChangesInput,
+  type GitChangesResult,
   type WorkspaceInspectInput,
   type WorkspaceInspectResult
 } from "./contracts.js";
@@ -100,5 +102,46 @@ export const CodeSearchResultSchema: z.ZodType<CodeSearchResult> = z
         .strict()
     ),
     truncated: z.boolean()
+  })
+  .strict();
+
+export const GitChangesInputSchema: z.ZodType<GitChangesInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    includePatch: z.boolean().optional()
+  })
+  .strict();
+
+export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    clean: z.boolean(),
+    changedPaths: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          indexStatus: z.string().length(1).optional(),
+          worktreeStatus: z.string().length(1).optional()
+        })
+        .strict()
+    ),
+    summary: z
+      .object({
+        changedFiles: z.number().int().nonnegative().safe(),
+        insertions: z.number().int().nonnegative().safe().optional(),
+        deletions: z.number().int().nonnegative().safe().optional()
+      })
+      .strict(),
+    patchPreview: z.string().optional(),
+    patchArtifact: z
+      .object({
+        uri: z.string().startsWith("artifact://"),
+        bytes: z.number().int().nonnegative().safe()
+      })
+      .strict()
+      .optional(),
+    truncated: z.boolean(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
   })
   .strict();

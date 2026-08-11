@@ -605,16 +605,20 @@ git commit -m "feat(capabilities): add structured code search"
 **Files:**
 - Create: `packages/capabilities/src/git-changes.ts`
 - Create: `packages/capabilities/src/git-changes.test.ts`
-- Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
+- Modify: `packages/capabilities/src/native-capability-service.ts`, `schemas.ts`, `index.ts`
+- Modify: `packages/core/src/workspace-manager.ts`
+- Modify: `apps/cli/src/commands/start.ts` and focused production-stack fixtures
+- Modify: `packages/mcp-server/src/tools.ts` and MCP surface/result tests
+- Modify: `tests/capabilities/contracts.test.ts`, `tests/fixtures/mcp-surface.ts`, `tests/integration/full-stack.test.ts`
 
 **Interfaces:**
-- Consumes: existing hardened `gitStatus` / `gitDiff` results.
-- Produces: compact normalized change state + SHA-256 fingerprint.
+- Consumes only existing hardened `GitInspectionAdapter.gitStatus` / `gitDiff` results.
+- No filesystem, process, shell, network, or new Git-execution authority is added to the capability layer.
+- Produces compact normalized change state + deterministic SHA-256 fingerprint.
 
 - [ ] **Step 1: Add failing parser/fingerprint tests**
 
-Use porcelain fixtures covering modified, added, deleted, renamed, staged-only, worktree-only, and clean states. Assert two semantically identical normalized states produce the same fingerprint even if input line order differs.
+Use porcelain-v1 fixtures covering modified, added, deleted, renamed, staged-only, worktree-only, both-side modification, untracked, and clean states. Cover rename/copy destination normalization from either XY position and Git C-quoted UTF-8 path decoding. Assert two semantically identical normalized states produce the same fingerprint even if input line order differs.
 
 - [ ] **Step 2: Run RED**
 
@@ -622,40 +626,62 @@ Use porcelain fixtures covering modified, added, deleted, renamed, staged-only, 
 pnpm --filter @kodegpt/capabilities test -- git-changes
 ```
 
-- [ ] **Step 3: Implement normalization**
+- [ ] **Step 3: Implement deterministic normalization**
 
-Use Node `createHash("sha256")` over stable JSON:
+Use Node `createHash("sha256")` only as a pure computation dependency. Normalize status paths first, then sort with deterministic bytewise/string ordering rather than locale-dependent ordering:
 
 ```ts
 const normalized = {
-  changedPaths: [...changedPaths].sort((a, b) => a.path.localeCompare(b.path)),
-  patchPreview: includePatch ? boundedPatch : undefined,
+  changedPaths: [...changedPaths].sort(compareChangedPath),
+  ...(includePatch ? { patchPreview: boundedPatch } : {}),
   sourceTruncated
 };
 ```
 
-If existing Git output is truncated, propagate `truncated: true`; do not claim a complete changed-path set.
+`includePatch=false` must not invoke `gitDiff`. `includePatch=true` may return the already-bounded diff preview plus opaque artifact metadata from the hardened Git result. If status or requested patch output is truncated, propagate `truncated: true`; if status is truncated, never claim `clean: true` even when no visible changed path survived the preview.
 
-- [ ] **Step 4: Register MCP `git.changes`**
+- [ ] **Step 4: Add shared runtime schemas**
 
-Input:
+`packages/capabilities/src/schemas.ts` owns closed `GitChangesInputSchema` / `GitChangesResultSchema`. Validate the optional patch artifact, one-character XY status fields, non-negative summary values, and lowercase 64-hex SHA-256 fingerprint.
+
+- [ ] **Step 5: Production-wire before advertising**
+
+Extend the existing `NativeCapabilityService` construction with a narrow `GitInspectionAdapter` backed by the same `WorkspaceManager.gitStatus/gitDiff`. Do not create another manager or Git executor.
+
+Add a direct production-stack test that captures `toolContext` and proves `toolContext.git.changes()` works before public registration. Keep `WorkspaceGitInspectionResult.schemaVersion` narrowed to literal `1`, matching the runtime validator and capability adapter contract.
+
+- [ ] **Step 6: Register MCP `git.changes`**
+
+Use:
 
 ```ts
-{
-  workspaceId: z.string().min(1),
-  includePatch: z.boolean().optional()
-}
+inputSchema: GitChangesInputSchema
+outputSchema: GitChangesResultSchema
+annotations: READ_ONLY_TOOL_ANNOTATIONS
 ```
 
-Annotations: read-only.
+Required public field remains `workspaceId`; `includePatch` is optional. Preserve equivalent JSON text fallback and `structuredContent`. Add `git.changes` to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"` for this Phase 1 capability addition.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [ ] **Step 7: Add full-stack checkpoint coverage**
+
+On a trusted/open temporary Git workspace containing staged, worktree, and untracked changes, call `git.changes(includePatch:true)` through MCP and assert normalized changed paths, SHA-256 fingerprint, bounded patch preview/artifact, structured/text parity, and absence of host absolute paths.
+
+- [ ] **Step 8: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
 pnpm --filter @kodegpt/mcp-server test
+pnpm --filter kodegpt test
+pnpm exec vitest run tests/integration/full-stack.test.ts --no-file-parallelism
 
-git add packages/capabilities packages/mcp-server
+pnpm test
+pnpm typecheck
+pnpm build
+pnpm verify:forbidden
+pnpm verify:package
+pnpm test:rust
+
+git add packages/capabilities packages/core packages/mcp-server apps/cli tests docs
 
 git commit -m "feat(capabilities): add git change checkpoints"
 ```

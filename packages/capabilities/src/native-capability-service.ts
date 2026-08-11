@@ -1,5 +1,10 @@
-import type { CodeSearchAdapter, WorkspaceInspectionAdapter } from "./adapters.js";
+import type {
+  CodeSearchAdapter,
+  GitInspectionAdapter,
+  WorkspaceInspectionAdapter
+} from "./adapters.js";
 import { searchCode } from "./code-search.js";
+import { gitChanges } from "./git-changes.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
@@ -41,13 +46,16 @@ export class CapabilityNotImplementedError extends Error {
 export class NativeCapabilityService {
   readonly #workspaceInspection: WorkspaceInspectionAdapter;
   readonly #codeSearch: CodeSearchAdapter;
+  readonly #gitInspection: GitInspectionAdapter;
 
   constructor(options: {
     workspaceInspection: WorkspaceInspectionAdapter;
     codeSearch: CodeSearchAdapter;
+    gitInspection: GitInspectionAdapter;
   }) {
     this.#workspaceInspection = options.workspaceInspection;
     this.#codeSearch = options.codeSearch;
+    this.#gitInspection = options.gitInspection;
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
@@ -59,8 +67,7 @@ export class NativeCapabilityService {
   }
 
   async gitChanges(input: GitChangesInput): Promise<GitChangesResult> {
-    void input;
-    throw new CapabilityNotImplementedError("git.changes");
+    return gitChanges(this.#gitInspection, input);
   }
 
   async listVerifications(input: VerifyListInput): Promise<VerifyListResult> {

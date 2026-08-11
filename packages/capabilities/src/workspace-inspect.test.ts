@@ -35,6 +35,10 @@ function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCap
     workspaceInspection,
     codeSearch: {
       search: async () => ({ matches: [], truncated: false })
+    },
+    gitInspection: {
+      gitStatus: async () => ({} as never),
+      gitDiff: async () => ({} as never)
     }
   });
 }

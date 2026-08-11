@@ -68,6 +68,8 @@ export type { NativeCapabilityName } from "./native-capability-service.js";
 export {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  GitChangesInputSchema,
+  GitChangesResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "./schemas.js";

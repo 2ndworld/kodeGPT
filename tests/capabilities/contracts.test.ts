@@ -4,13 +4,15 @@ import {
   CAPABILITY_SCHEMA_VERSION,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  GitChangesInputSchema,
+  GitChangesResultSchema,
   NativeCapabilityService,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "../../packages/capabilities/src/index.js";
 
 describe("native capability public package boundary", () => {
-  it("exports the Task 1–4 service and runtime contracts from the package entrypoint", () => {
+  it("exports the Task 1–5 service and runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(typeof NativeCapabilityService).toBe("function");
     expect(
@@ -43,5 +45,19 @@ describe("native capability public package boundary", () => {
         truncated: false
       })
     ).toMatchObject({ mode: "text", precision: "exact", truncated: false });
+    expect(GitChangesInputSchema.parse({ workspaceId: "ws_public" })).toEqual({
+      workspaceId: "ws_public"
+    });
+    expect(
+      GitChangesResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_public",
+        clean: true,
+        changedPaths: [],
+        summary: { changedFiles: 0 },
+        truncated: false,
+        fingerprint: "a".repeat(64)
+      })
+    ).toMatchObject({ workspaceId: "ws_public", clean: true, truncated: false });
   });
 });

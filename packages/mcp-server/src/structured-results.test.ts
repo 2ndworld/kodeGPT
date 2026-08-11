@@ -1,9 +1,12 @@
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  GitChangesInputSchema,
+  GitChangesResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
   type CodeSearchResult,
+  type GitChangesResult,
   type WorkspaceInspectResult
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -68,6 +71,16 @@ const typedCodeSearchResult: CodeSearchResult = {
   truncated: false
 };
 
+const typedGitChangesResult: GitChangesResult = {
+  schemaVersion: 1,
+  workspaceId: "ws_1",
+  clean: false,
+  changedPaths: [{ path: "src/main.ts", worktreeStatus: "M" }],
+  summary: { changedFiles: 1 },
+  truncated: false,
+  fingerprint: "a".repeat(64)
+};
+
 function makeContext(): KodegptToolContext {
   return {
     workspace: {
@@ -85,7 +98,7 @@ function makeContext(): KodegptToolContext {
     git: {
       status: async () => ({} as never),
       diff: async () => ({} as never),
-      changes: async () => ({} as never)
+      changes: async () => typedGitChangesResult
     },
     process: {
       run: async () => ({} as never),
@@ -199,6 +212,33 @@ describe("structured MCP tool results", () => {
     };
 
     expect(result.structuredContent).toEqual(typedCodeSearchResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps git.changes schemas, annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("git.changes");
+    const definition = definitions.get("git.changes");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(GitChangesInputSchema);
+    expect(definition?.outputSchema).toBe(GitChangesResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({ workspaceId: "ws_1" } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+
+    expect(result.structuredContent).toEqual(typedGitChangesResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 });

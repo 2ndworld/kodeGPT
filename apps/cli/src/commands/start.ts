@@ -192,6 +192,10 @@ export async function createProductionServiceStack(
       codeSearch: {
         search: (workspaceId, query, path, maxMatches) =>
           managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches)
+      },
+      gitInspection: {
+        gitStatus: (workspaceId) => managers.workspaceManager.gitStatus(workspaceId),
+        gitDiff: (workspaceId) => managers.workspaceManager.gitDiff(workspaceId)
       }
     });
     const toolContext = createKodegptToolContext({

@@ -119,7 +119,7 @@ describe("bridge command unit tests", () => {
           tree: async () => [],
           treeBounded: async () => ({ entries: [], truncated: false }),
           gitStatus: async () => ({
-            schemaVersion: 1,
+            schemaVersion: 1 as const,
             exitCode: 0,
             stdoutPreview: "",
             stderrPreview: "",
@@ -130,7 +130,7 @@ describe("bridge command unit tests", () => {
             artifact: processResult.artifact
           }),
           gitDiff: async () => ({
-            schemaVersion: 1,
+            schemaVersion: 1 as const,
             exitCode: 0,
             stdoutPreview: "",
             stderrPreview: "",

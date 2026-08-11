@@ -16,6 +16,8 @@ import { CapabilityNotImplementedError, NativeCapabilityService } from "./native
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  GitChangesInputSchema,
+  GitChangesResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "./schemas.js";
@@ -97,17 +99,39 @@ describe("capability contracts", () => {
     expect(() => CodeSearchResultSchema.parse({ ...validResult, precision: "exact-ish" })).toThrow();
   });
 
+  it("validates git.changes inputs and structured results at runtime", () => {
+    expect(GitChangesInputSchema.parse({ workspaceId: "ws_1", includePatch: true })).toEqual({
+      workspaceId: "ws_1",
+      includePatch: true
+    });
+
+    const validResult = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      clean: false,
+      changedPaths: [{ path: "src/main.ts", worktreeStatus: "M" }],
+      summary: { changedFiles: 1 },
+      patchPreview: "diff --git a/src/main.ts b/src/main.ts\n",
+      patchArtifact: { uri: "artifact://ka_diff", bytes: 42 },
+      truncated: false,
+      fingerprint: "a".repeat(64)
+    };
+    expect(GitChangesResultSchema.parse(validResult)).toEqual(validResult);
+    expect(() => GitChangesResultSchema.parse({ ...validResult, fingerprint: "not-a-sha" })).toThrow();
+  });
+
   it("keeps remaining unimplemented capability methods explicit and stable", async () => {
     const service = new NativeCapabilityService({
       workspaceInspection: {} as never,
-      codeSearch: {} as never
+      codeSearch: {} as never,
+      gitInspection: {} as never
     });
 
-    await expect(service.gitChanges({ workspaceId: "ws_1" })).rejects.toEqual(
+    await expect(service.listVerifications({ workspaceId: "ws_1" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",
-        capability: "git.changes"
+        capability: "verify.list"
       })
     );
   });

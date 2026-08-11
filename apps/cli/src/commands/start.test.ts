@@ -183,6 +183,35 @@ describe("kodegpt start orchestration", () => {
     expect(events.slice(-3)).toEqual(["bind.close", "mcp.close", "kernel.stop"]);
   });
 
+  it("production-wires git.changes through the existing workspace manager", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateMcp = deps.createMcp;
+    let toolContext: Parameters<StartDependencies["createMcp"]>[0]["toolContext"] | undefined;
+    deps.createMcp = (options) => {
+      toolContext = options.toolContext;
+      return originalCreateMcp(options);
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    try {
+      await expect(toolContext!.git.changes({ workspaceId: "ws_test" })).resolves.toMatchObject({
+        schemaVersion: 1,
+        workspaceId: "ws_test",
+        clean: true,
+        changedPaths: [],
+        summary: { changedFiles: 0 },
+        truncated: false,
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+    } finally {
+      await started.close();
+    }
+  });
+
   it("rejects connector bootstrap unless it is paired with explicit public query compatibility", async () => {
     await expect(
       startKodegpt(

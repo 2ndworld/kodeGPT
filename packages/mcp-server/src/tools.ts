@@ -1,6 +1,8 @@
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  GitChangesInputSchema,
+  GitChangesResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "@kodegpt/capabilities";
@@ -33,6 +35,7 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.changes", required: ["workspaceId"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
@@ -271,6 +274,20 @@ export function registerKodegptTools(
     },
     async ({ workspaceId, path, content }) =>
       structuredToolResult(await context.workspace.writeFile({ workspaceId, path, content }))
+  );
+
+  server.registerTool(
+    "git.changes",
+    {
+      description: "Return a compact deterministic checkpoint of normalized Git changes.",
+      inputSchema: GitChangesInputSchema,
+      outputSchema: GitChangesResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, includePatch }) =>
+      structuredToolResult(
+        GitChangesResultSchema.parse(await context.git.changes({ workspaceId, includePatch }))
+      )
   );
 
   server.registerTool(

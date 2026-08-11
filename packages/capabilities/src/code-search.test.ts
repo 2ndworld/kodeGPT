@@ -4,6 +4,7 @@ import type {
   CapabilitySearchMatch,
   CapabilityTreeEntry,
   CodeSearchAdapter,
+  GitInspectionAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
@@ -27,8 +28,12 @@ function service(options: {
       truncated: options.searchTruncated ?? false
     })
   };
+  const gitInspection: GitInspectionAdapter = {
+    gitStatus: async () => ({} as never),
+    gitDiff: async () => ({} as never)
+  };
 
-  return new NativeCapabilityService({ workspaceInspection, codeSearch });
+  return new NativeCapabilityService({ workspaceInspection, codeSearch, gitInspection });
 }
 
 describe("code.search", () => {

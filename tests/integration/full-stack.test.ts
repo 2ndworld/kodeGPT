@@ -302,6 +302,32 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         }
       ]);
 
+      const gitChangesResult = await callTool(
+        port,
+        credential.token,
+        "git.changes",
+        { workspaceId: openedA.id, includePatch: true },
+        "req_full_git_changes"
+      );
+      const gitChanges = textJson(gitChangesResult);
+      expect(gitChangesResult.structuredContent).toEqual(gitChanges);
+      expect(gitChanges).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: openedA.id,
+        clean: false,
+        summary: { changedFiles: 4 },
+        truncated: false
+      });
+      expect(gitChanges.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(gitChanges.changedPaths).toContainEqual({
+        path: "tracked.txt",
+        indexStatus: "A",
+        worktreeStatus: "M"
+      });
+      expect(gitChanges.patchPreview).toContain("tracked.txt");
+      expect(gitChanges.patchArtifact.uri).toMatch(/^artifact:\/\/ka_/);
+      expect(JSON.stringify(gitChanges)).not.toContain(workspaceA);
+
       const gitStatus = textJson(
         await callTool(
           port,
