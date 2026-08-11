@@ -1,4 +1,9 @@
-import { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "@kodegpt/capabilities";
+import {
+  CodeSearchInputSchema,
+  CodeSearchResultSchema,
+  WorkspaceInspectInputSchema,
+  WorkspaceInspectResultSchema
+} from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   ConsoleStateStore,
@@ -17,6 +22,7 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
+  { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "extension.list", required: [] },
   {
@@ -161,6 +167,22 @@ export function registerKodegptTools(
       structuredToolResult(
         WorkspaceInspectResultSchema.parse(
           await context.workspace.inspect({ workspaceId, path, maxEntries })
+        )
+      )
+  );
+
+  server.registerTool(
+    "code.search",
+    {
+      description: "Run bounded structured text, path, symbol, definition, or reference search.",
+      inputSchema: CodeSearchInputSchema,
+      outputSchema: CodeSearchResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, query, mode, path, maxResults }) =>
+      structuredToolResult(
+        CodeSearchResultSchema.parse(
+          await context.code.search({ workspaceId, query, mode, path, maxResults })
         )
       )
   );

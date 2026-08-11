@@ -22,6 +22,11 @@ export interface CapabilitySearchMatch {
   lineText: string;
 }
 
+export interface CapabilitySearchResult {
+  matches: CapabilitySearchMatch[];
+  truncated: boolean;
+}
+
 export interface GitInspectionAdapterResult {
   schemaVersion: 1;
   exitCode: number;
@@ -63,7 +68,12 @@ export interface WorkspaceInspectionAdapter {
 }
 
 export interface CodeSearchAdapter {
-  search(workspaceId: string, query: string, path?: string): Promise<CapabilitySearchMatch[]>;
+  search(
+    workspaceId: string,
+    query: string,
+    path: string | undefined,
+    maxMatches: number
+  ): Promise<CapabilitySearchResult>;
 }
 
 export interface GitInspectionAdapter {

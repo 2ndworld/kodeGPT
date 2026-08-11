@@ -142,7 +142,9 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     const workspaceA = await tempRoot("kodegpt-task23-a-");
     const workspaceB = await tempRoot("kodegpt-task23-b-");
     await mkdir(join(workspaceA, "nested"));
+    await mkdir(join(workspaceA, "src"));
     await writeFile(join(workspaceA, "tracked.txt"), "before\n");
+    await writeFile(join(workspaceA, "src/main.ts"), "export function needle() {}\nneedle();\n");
     await writeFile(join(workspaceA, "package.json"), '{"name":"workspace-a","private":true}\n');
     await writeFile(join(workspaceA, "pnpm-workspace.yaml"), "packages: []\n");
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
@@ -274,6 +276,31 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         projectTypes: ["node-pnpm"],
         truncated: false
       });
+
+      const codeSearchResult = await callTool(
+        port,
+        credential.token,
+        "code.search",
+        { workspaceId: openedA.id, query: "needle", mode: "definition", path: "src" },
+        "req_full_code_search"
+      );
+      const codeSearch = textJson(codeSearchResult);
+      expect(codeSearchResult.structuredContent).toEqual(codeSearch);
+      expect(codeSearch).toMatchObject({
+        schemaVersion: 1,
+        mode: "definition",
+        precision: "heuristic",
+        truncated: false
+      });
+      expect(codeSearch.matches).toEqual([
+        {
+          path: "src/main.ts",
+          line: 1,
+          column: 17,
+          kind: "definition",
+          preview: "export function needle() {}"
+        }
+      ]);
 
       const gitStatus = textJson(
         await callTool(

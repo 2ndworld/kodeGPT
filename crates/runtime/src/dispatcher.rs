@@ -10,8 +10,8 @@ use kodegpt_protocol::{
     WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };
 use kodegpt_workspace_io::{
-    FilesystemIdentity, TREE_MAX_ENTRIES, WorkspaceRegistry, WorkspaceRegistryError, inspect_root,
-    probe_filesystem_boundary,
+    FilesystemIdentity, SEARCH_MAX_MATCHES, TREE_MAX_ENTRIES, WorkspaceRegistry,
+    WorkspaceRegistryError, inspect_root, probe_filesystem_boundary,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -419,7 +419,13 @@ async fn dispatch_one(
         }
         "file.search" => {
             let params = match serde_json::from_value::<FileSearchParams>(request.params) {
-                Ok(params) if !params.query.is_empty() => params,
+                Ok(params)
+                    if !params.query.is_empty()
+                        && params.max_matches > 0
+                        && params.max_matches <= SEARCH_MAX_MATCHES =>
+                {
+                    params
+                }
                 Ok(_) | Err(_) => {
                     return error_response(Some(request.id), -32602, "INVALID_PARAMS");
                 }
@@ -428,6 +434,7 @@ async fn dispatch_one(
             let audit_capability_id = capability_id.clone();
             let path = PathBuf::from(params.path);
             let query = params.query;
+            let max_matches = params.max_matches;
             audited_workspace_operation(
                 &audit,
                 &workspace_registry,
@@ -435,8 +442,8 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileSearch,
                 move |registry| {
-                    let matches = registry.search(&capability_id, &path, &query)?;
-                    Ok(json!({ "matches": matches }))
+                    let result = registry.search(&capability_id, &path, &query, max_matches)?;
+                    Ok(json!(result))
                 },
             )
         }
@@ -1738,9 +1745,10 @@ mod tests {
             &mut response_rx,
             "req_file_search",
             "file.search",
-            json!({ "capabilityId": capability_id, "path": ".", "query": "needle" }),
+            json!({ "capabilityId": capability_id, "path": ".", "query": "needle", "maxMatches": 100 }),
         )
         .await;
+        assert_eq!(search["result"]["truncated"], false);
         let matches = search["result"]["matches"]
             .as_array()
             .expect("search returns matches");

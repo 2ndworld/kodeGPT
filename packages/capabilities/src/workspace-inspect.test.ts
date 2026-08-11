@@ -31,7 +31,12 @@ function makeWorkspaceAdapter(
 }
 
 function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCapabilityService {
-  return new NativeCapabilityService({ workspaceInspection });
+  return new NativeCapabilityService({
+    workspaceInspection,
+    codeSearch: {
+      search: async () => ({ matches: [], truncated: false })
+    }
+  });
 }
 
 describe("workspace.inspect", () => {

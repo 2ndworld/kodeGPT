@@ -1,4 +1,5 @@
-import type { WorkspaceInspectionAdapter } from "./adapters.js";
+import type { CodeSearchAdapter, WorkspaceInspectionAdapter } from "./adapters.js";
+import { searchCode } from "./code-search.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
@@ -39,9 +40,14 @@ export class CapabilityNotImplementedError extends Error {
 
 export class NativeCapabilityService {
   readonly #workspaceInspection: WorkspaceInspectionAdapter;
+  readonly #codeSearch: CodeSearchAdapter;
 
-  constructor(options: { workspaceInspection: WorkspaceInspectionAdapter }) {
+  constructor(options: {
+    workspaceInspection: WorkspaceInspectionAdapter;
+    codeSearch: CodeSearchAdapter;
+  }) {
     this.#workspaceInspection = options.workspaceInspection;
+    this.#codeSearch = options.codeSearch;
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
@@ -49,8 +55,7 @@ export class NativeCapabilityService {
   }
 
   async searchCode(input: CodeSearchInput): Promise<CodeSearchResult> {
-    void input;
-    throw new CapabilityNotImplementedError("code.search");
+    return searchCode(this.#workspaceInspection, this.#codeSearch, input);
   }
 
   async gitChanges(input: GitChangesInput): Promise<GitChangesResult> {

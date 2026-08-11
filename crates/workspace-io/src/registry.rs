@@ -13,8 +13,8 @@ use crate::mountinfo::{
 };
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
-    ReadFileResult, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, SearchMatch, TreeResult,
-    WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
+    ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult, WorkspaceReadError,
+    read_file_beneath, search_utf8_beneath, tree_beneath,
 };
 use crate::write::{
     EditFileResult, WorkspaceWriteError, WriteFileResult, edit_file_exact_beneath,
@@ -293,13 +293,14 @@ impl<P> WorkspaceRegistry<P> {
         capability_id: &str,
         relative_path: &Path,
         query: &str,
-    ) -> Result<Vec<SearchMatch>, WorkspaceRegistryError> {
+        max_matches: usize,
+    ) -> Result<SearchResult, WorkspaceRegistryError> {
         let context = self.ready_context(capability_id)?;
         search_utf8_beneath(
             &context.root_fd,
             relative_path,
             query,
-            SEARCH_MAX_MATCHES,
+            max_matches,
             SEARCH_MAX_SNIPPET_BYTES,
         )
         .map_err(map_workspace_read_error)

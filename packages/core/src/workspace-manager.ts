@@ -102,6 +102,11 @@ export interface WorkspaceSearchMatch {
   lineText: string;
 }
 
+export interface WorkspaceSearchResult {
+  matches: WorkspaceSearchMatch[];
+  truncated: boolean;
+}
+
 type WorkspacePhase = "OPENING" | "READY" | "CLOSING";
 
 type WorkspaceState = {
@@ -480,25 +485,45 @@ export class WorkspaceManager {
   }
 
   async search(workspaceId: string, query: string, path = "."): Promise<WorkspaceSearchMatch[]> {
+    return (await this.searchBounded(workspaceId, query, path, 200)).matches;
+  }
+
+  async searchBounded(
+    workspaceId: string,
+    query: string,
+    path = ".",
+    maxMatches = 200
+  ): Promise<WorkspaceSearchResult> {
     if (query.length === 0) {
       throw new TypeError("Workspace search query must not be empty");
     }
     if (path.length === 0) {
       throw new TypeError("Workspace search path must not be empty");
     }
+    if (!Number.isSafeInteger(maxMatches) || maxMatches <= 0 || maxMatches > 500) {
+      throw new TypeError("Workspace search maxMatches must be between 1 and 500");
+    }
     const state = this.#requireReadyState(workspaceId);
     const result = await this.#kernel.request<unknown>("file.search", {
       capabilityId: state.capabilityId,
       path,
-      query
+      query,
+      maxMatches
     });
-    if (!isRecord(result) || !Array.isArray(result.matches)) {
+    if (
+      !isRecord(result) ||
+      !Array.isArray(result.matches) ||
+      typeof result.truncated !== "boolean"
+    ) {
       throw new WorkspaceManagerError(
         "RUNTIME_PROTOCOL_INVALID",
         "file.search returned an invalid payload"
       );
     }
-    return result.matches.map(validateSearchMatch);
+    return {
+      matches: result.matches.map(validateSearchMatch),
+      truncated: result.truncated
+    };
   }
 
   async #processOperation(

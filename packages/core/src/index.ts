@@ -20,6 +20,7 @@ export type {
   OpenWorkspace,
   WorkspaceFileReadResult,
   WorkspaceSearchMatch,
+  WorkspaceSearchResult,
   WorkspaceTreeEntry,
   WorkspaceTreeEntryKind
 } from "./workspace-manager.js";

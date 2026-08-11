@@ -51,7 +51,10 @@ export interface TrustProfileBundle {
 
 export interface ManagerBundle {
   workspaceManager: WorkspaceManagerToolAdapter &
-    Pick<WorkspaceManager, "runProcess" | "processStatus" | "processCancel" | "treeBounded">;
+    Pick<
+      WorkspaceManager,
+      "runProcess" | "processStatus" | "processCancel" | "treeBounded" | "searchBounded"
+    >;
 }
 
 export interface McpNodeHandle {
@@ -185,6 +188,10 @@ export async function createProductionServiceStack(
           managers.workspaceManager.readFile(workspaceId, path, readOptions),
         tree: (workspaceId, path, maxEntries) =>
           managers.workspaceManager.treeBounded(workspaceId, path, maxEntries)
+      },
+      codeSearch: {
+        search: (workspaceId, query, path, maxMatches) =>
+          managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches)
       }
     });
     const toolContext = createKodegptToolContext({

@@ -1,6 +1,9 @@
 import {
+  CodeSearchInputSchema,
+  CodeSearchResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
+  type CodeSearchResult,
   type WorkspaceInspectResult
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -49,6 +52,22 @@ const typedWorkspaceInspectResult: WorkspaceInspectResult = {
   truncated: false
 };
 
+const typedCodeSearchResult: CodeSearchResult = {
+  schemaVersion: 1,
+  mode: "definition",
+  precision: "heuristic",
+  matches: [
+    {
+      path: "src/main.ts",
+      line: 1,
+      column: 10,
+      kind: "definition",
+      preview: "function needle() {}"
+    }
+  ],
+  truncated: false
+};
+
 function makeContext(): KodegptToolContext {
   return {
     workspace: {
@@ -88,7 +107,7 @@ function makeContext(): KodegptToolContext {
       health: async () => ({ ok: true })
     },
     code: {
-      search: async () => ({} as never)
+      search: async () => typedCodeSearchResult
     },
     file: {
       patch: async () => ({} as never)
@@ -149,6 +168,37 @@ describe("structured MCP tool results", () => {
     };
 
     expect(result.structuredContent).toEqual(typedWorkspaceInspectResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps code.search schemas, annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("code.search");
+    const definition = definitions.get("code.search");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(CodeSearchInputSchema);
+    expect(definition?.outputSchema).toBe(CodeSearchResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      query: "needle",
+      mode: "definition"
+    } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+
+    expect(result.structuredContent).toEqual(typedCodeSearchResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 });

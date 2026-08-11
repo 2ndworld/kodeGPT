@@ -123,7 +123,8 @@ class FakeKernel implements KernelTransport {
         } as T;
       case "file.search":
         return {
-          matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }]
+          matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }],
+          truncated: false
         } as T;
       case "workspace.restrict_policy":
       case "workspace.begin_close":
@@ -199,6 +200,7 @@ describe("WorkspaceManager", () => {
     const tree = await manager.tree("ws_files", ".");
     const boundedTree = await manager.treeBounded("ws_files", ".", 10_000);
     const matches = await manager.search("ws_files", "needle", ".");
+    const boundedMatches = await manager.searchBounded("ws_files", "needle", ".", 500);
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
     expect(write).toEqual({ bytesWritten: 7, created: true });
@@ -254,8 +256,12 @@ describe("WorkspaceManager", () => {
     expect(matches).toEqual([
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
+    expect(boundedMatches).toEqual({
+      matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }],
+      truncated: false
+    });
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-8)).toEqual([
+    expect(kernel.calls.slice(-9)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -286,7 +292,11 @@ describe("WorkspaceManager", () => {
       },
       {
         method: "file.search",
-        params: { capabilityId: "kc_fixture", path: ".", query: "needle" }
+        params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 200 }
+      },
+      {
+        method: "file.search",
+        params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 500 }
       }
     ]);
   });

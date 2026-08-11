@@ -13,7 +13,12 @@ import {
   MAX_SEARCH_MAX_RESULTS
 } from "./contracts.js";
 import { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
-import { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "./schemas.js";
+import {
+  CodeSearchInputSchema,
+  CodeSearchResultSchema,
+  WorkspaceInspectInputSchema,
+  WorkspaceInspectResultSchema
+} from "./schemas.js";
 
 describe("capability contracts", () => {
   it("pins public schema and bounded defaults", () => {
@@ -53,16 +58,56 @@ describe("capability contracts", () => {
     expect(() => WorkspaceInspectResultSchema.parse({ ...validResult, truncated: "no" })).toThrow();
   });
 
-  it("keeps unimplemented capability methods explicit and stable", async () => {
+  it("validates code.search inputs and structured results at runtime", () => {
+    expect(
+      CodeSearchInputSchema.parse({
+        workspaceId: "ws_1",
+        query: "needle",
+        mode: "definition",
+        path: "src",
+        maxResults: 500
+      })
+    ).toEqual({
+      workspaceId: "ws_1",
+      query: "needle",
+      mode: "definition",
+      path: "src",
+      maxResults: 500
+    });
+    expect(() =>
+      CodeSearchInputSchema.parse({ workspaceId: "ws_1", query: "x".repeat(513) })
+    ).toThrow();
+
+    const validResult = {
+      schemaVersion: 1 as const,
+      mode: "definition" as const,
+      precision: "heuristic" as const,
+      matches: [
+        {
+          path: "src/main.ts",
+          line: 1,
+          column: 10,
+          kind: "definition" as const,
+          preview: "function needle() {}"
+        }
+      ],
+      truncated: false
+    };
+    expect(CodeSearchResultSchema.parse(validResult)).toEqual(validResult);
+    expect(() => CodeSearchResultSchema.parse({ ...validResult, precision: "exact-ish" })).toThrow();
+  });
+
+  it("keeps remaining unimplemented capability methods explicit and stable", async () => {
     const service = new NativeCapabilityService({
-      workspaceInspection: {} as never
+      workspaceInspection: {} as never,
+      codeSearch: {} as never
     });
 
-    await expect(service.searchCode({ workspaceId: "ws_1", query: "needle" })).rejects.toEqual(
+    await expect(service.gitChanges({ workspaceId: "ws_1" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",
-        capability: "code.search"
+        capability: "git.changes"
       })
     );
   });

@@ -17,7 +17,7 @@ use crate::openat::{OpenatBoundaryError, open_directory_beneath, open_existing_b
 pub const INLINE_READ_MAX_BYTES: u64 = 1024 * 1024;
 pub const TREE_DEFAULT_MAX_ENTRIES: usize = 2_000;
 pub const TREE_MAX_ENTRIES: usize = 10_000;
-pub const SEARCH_MAX_MATCHES: usize = 200;
+pub const SEARCH_MAX_MATCHES: usize = 500;
 pub const SEARCH_MAX_SNIPPET_BYTES: usize = 256 * 1024;
 const SEARCH_FILE_MAX_BYTES: u64 = 1024 * 1024;
 
@@ -90,6 +90,13 @@ pub struct SearchMatch {
     pub path: String,
     pub line: u64,
     pub line_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResult {
+    pub matches: Vec<SearchMatch>,
+    pub truncated: bool,
 }
 
 pub fn read_file_beneath(
@@ -178,24 +185,25 @@ pub fn search_utf8_beneath(
     query: &str,
     max_matches: usize,
     max_snippet_bytes: usize,
-) -> Result<Vec<SearchMatch>, WorkspaceReadError> {
+) -> Result<SearchResult, WorkspaceReadError> {
     if query.is_empty()
+        || max_matches == 0
         || max_matches > SEARCH_MAX_MATCHES
+        || max_snippet_bytes == 0
         || max_snippet_bytes > SEARCH_MAX_SNIPPET_BYTES
     {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let entries = tree_beneath(root_fd, relative_path, TREE_DEFAULT_MAX_ENTRIES)?.entries;
+    let tree = tree_beneath(root_fd, relative_path, TREE_DEFAULT_MAX_ENTRIES)?;
     let mut matches = Vec::new();
     let mut snippet_bytes = 0usize;
+    let mut truncated = tree.truncated;
 
-    for entry in entries
+    'files: for entry in tree
+        .entries
         .into_iter()
         .filter(|entry| entry.kind == TreeEntryKind::File)
     {
-        if matches.len() >= max_matches || snippet_bytes >= max_snippet_bytes {
-            break;
-        }
         let path = Path::new(&entry.path);
         let fd = match open_existing_beneath(
             root_fd,
@@ -222,37 +230,24 @@ pub fn search_utf8_beneath(
             Ok(text) => text,
             Err(_) => continue,
         };
-        let mut file_matches = Vec::new();
         for (index, line) in text.lines().enumerate() {
             if !line.contains(query) {
                 continue;
             }
-            if matches.len() + file_matches.len() >= max_matches {
-                break;
+            if matches.len() >= max_matches || snippet_bytes.saturating_add(line.len()) > max_snippet_bytes {
+                truncated = true;
+                break 'files;
             }
-            let next_bytes = snippet_bytes
-                + file_matches
-                    .iter()
-                    .map(|item: &SearchMatch| item.line_text.len())
-                    .sum::<usize>()
-                + line.len();
-            if next_bytes > max_snippet_bytes {
-                break;
-            }
-            file_matches.push(SearchMatch {
+            snippet_bytes += line.len();
+            matches.push(SearchMatch {
                 path: entry.path.clone(),
                 line: (index + 1) as u64,
                 line_text: line.to_owned(),
             });
         }
-        snippet_bytes += file_matches
-            .iter()
-            .map(|item| item.line_text.len())
-            .sum::<usize>();
-        matches.extend(file_matches);
     }
 
-    Ok(matches)
+    Ok(SearchResult { matches, truncated })
 }
 
 struct TreeCandidate {
@@ -394,8 +389,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        INLINE_READ_MAX_BYTES, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES, TREE_MAX_ENTRIES,
-        TreeEntryKind, WorkspaceReadError, read_file_beneath, search_utf8_beneath, tree_beneath,
+        INLINE_READ_MAX_BYTES, SEARCH_MAX_MATCHES, SEARCH_MAX_SNIPPET_BYTES,
+        TREE_DEFAULT_MAX_ENTRIES, TREE_MAX_ENTRIES, TreeEntryKind, WorkspaceReadError,
+        read_file_beneath, search_utf8_beneath, tree_beneath,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -565,7 +561,7 @@ mod tests {
         fs::write(root.join("large.txt"), contents).expect("large search fixture written");
         let fd = root_fd(&root);
 
-        let matches = search_utf8_beneath(
+        let result = search_utf8_beneath(
             &fd,
             Path::new("."),
             "needle",
@@ -573,13 +569,15 @@ mod tests {
             SEARCH_MAX_SNIPPET_BYTES,
         )
         .expect("bounded search succeeds");
-        let snippets = matches
+        let snippets = result
+            .matches
             .iter()
             .map(|item| item.line_text.len())
             .sum::<usize>();
-        assert!(!matches.is_empty());
-        assert!(matches.len() < SEARCH_MAX_MATCHES);
+        assert!(!result.matches.is_empty());
+        assert!(result.matches.len() < SEARCH_MAX_MATCHES);
         assert!(snippets <= SEARCH_MAX_SNIPPET_BYTES);
+        assert!(result.truncated);
 
         fs::remove_dir_all(root).expect("root removed");
     }
@@ -597,7 +595,7 @@ mod tests {
         }
         let fd = root_fd(&root);
 
-        let matches = search_utf8_beneath(
+        let result = search_utf8_beneath(
             &fd,
             Path::new("src"),
             "needle",
@@ -605,15 +603,79 @@ mod tests {
             SEARCH_MAX_SNIPPET_BYTES,
         )
         .expect("search succeeds");
-        assert_eq!(matches.len(), SEARCH_MAX_MATCHES);
-        assert!(matches.iter().all(|item| !item.path.ends_with("b.bin")));
+        assert_eq!(result.matches.len(), SEARCH_MAX_MATCHES);
+        assert!(result.truncated);
         assert!(
-            matches
+            result
+                .matches
+                .iter()
+                .all(|item| !item.path.ends_with("b.bin"))
+        );
+        assert!(
+            result
+                .matches
                 .iter()
                 .map(|item| item.line_text.len())
                 .sum::<usize>()
                 <= SEARCH_MAX_SNIPPET_BYTES
         );
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn lexical_search_reports_exact_match_limit_without_truncation() {
+        let root = temporary_root("search-exact-limit");
+        fs::write(root.join("exact.txt"), "needle one\nneedle two\nneedle three\n")
+            .expect("exact search fixture written");
+        let fd = root_fd(&root);
+
+        let result = search_utf8_beneath(
+            &fd,
+            Path::new("."),
+            "needle",
+            3,
+            SEARCH_MAX_SNIPPET_BYTES,
+        )
+        .expect("exact bounded search succeeds");
+
+        assert_eq!(result.matches.len(), 3);
+        assert!(!result.truncated);
+
+        assert!(matches!(
+            search_utf8_beneath(
+                &fd,
+                Path::new("."),
+                "needle",
+                SEARCH_MAX_MATCHES + 1,
+                SEARCH_MAX_SNIPPET_BYTES,
+            ),
+            Err(WorkspaceReadError::LimitExceeded)
+        ));
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn lexical_search_propagates_underlying_tree_truncation() {
+        let root = temporary_root("search-tree-truncation");
+        for index in 0..(TREE_DEFAULT_MAX_ENTRIES + 1) {
+            fs::write(root.join(format!("f{index:04}.txt")), "no match\n")
+                .expect("tree truncation fixture written");
+        }
+        let fd = root_fd(&root);
+
+        let result = search_utf8_beneath(
+            &fd,
+            Path::new("."),
+            "needle",
+            SEARCH_MAX_MATCHES,
+            SEARCH_MAX_SNIPPET_BYTES,
+        )
+        .expect("bounded search succeeds");
+
+        assert!(result.matches.is_empty());
+        assert!(result.truncated);
 
         fs::remove_dir_all(root).expect("root removed");
     }

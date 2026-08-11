@@ -101,7 +101,8 @@ const fileSearchParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
     path: z.string(),
-    query: z.string().min(1)
+    query: z.string().min(1),
+    maxMatches: z.number().int().positive().max(500).safe()
   })
   .strict();
 

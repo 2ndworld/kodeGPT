@@ -51,6 +51,7 @@ export type {
 export type {
   CapabilityExecutionAdapter,
   CapabilitySearchMatch,
+  CapabilitySearchResult,
   CapabilityTreeEntry,
   CapabilityTreeEntryKind,
   CapabilityTreeResult,
@@ -64,4 +65,9 @@ export type {
 } from "./adapters.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
 export type { NativeCapabilityName } from "./native-capability-service.js";
-export { WorkspaceInspectInputSchema, WorkspaceInspectResultSchema } from "./schemas.js";
+export {
+  CodeSearchInputSchema,
+  CodeSearchResultSchema,
+  WorkspaceInspectInputSchema,
+  WorkspaceInspectResultSchema
+} from "./schemas.js";

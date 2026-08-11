@@ -483,12 +483,21 @@ git commit -m "fix(capabilities): stabilize workspace inspection contracts"
 **Files:**
 - Create: `packages/capabilities/src/code-search.ts`
 - Create: `packages/capabilities/src/code-search.test.ts`
-- Modify: `packages/capabilities/src/native-capability-service.ts`
-- Modify: `packages/mcp-server/src/tools.ts`
+- Modify: `packages/capabilities/src/adapters.ts`, `native-capability-service.ts`, `schemas.ts`, `index.ts`
+- Modify: `packages/protocol/src/runtime-types.ts`, `schemas/runtime/request.schema.json`, runtime search fixture
+- Modify: `crates/protocol/src/types.rs`
+- Modify: `crates/workspace-io/src/read.rs`, `lib.rs`, `registry.rs`
+- Modify: `crates/runtime/src/dispatcher.rs`
+- Modify: `packages/core/src/workspace-manager.ts` and focused tests
+- Modify: `packages/mcp-server/src/tools.ts` and MCP surface/result tests
+- Modify: `apps/cli/src/commands/start.ts` and production-stack fixtures
+- Modify: `tests/integration/full-stack.test.ts`
 
 **Interfaces:**
-- Consumes: `tree`, existing lexical `search`, bounded `readFile` only when a symbol-mode candidate needs line scanning.
-- Produces: `CodeSearchResult` and MCP `code.search`.
+- Consumes only `WorkspaceInspectionAdapter.tree` and `CodeSearchAdapter.search`.
+- Internal lexical search request: `{ capabilityId, path, query, maxMatches }`.
+- Internal lexical search result: `{ matches, truncated }`.
+- Produces schema-validated `CodeSearchResult` and production-usable MCP tool `code.search`.
 
 - [ ] **Step 1: Write failing tests for all five modes**
 
@@ -514,43 +523,77 @@ struct Foo
 trait Foo
 ```
 
-References must exclude the exact definition line when it is recognized.
+Symbol/reference classification uses whole-identifier boundaries. References exclude recognized definition lines.
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 2: Add RED tests for honest low-level truncation**
 
-```bash
-pnpm --filter @kodegpt/capabilities test -- code-search
+The internal retained-root lexical search must carry an explicit requested match limit and explicit `truncated` bit. Cover:
+
+```text
+exactly N lexical matches with limit N       → truncated=false
+an additional lexical match beyond limit N   → truncated=true
+aggregate snippet ceiling reached             → truncated=true
+underlying bounded tree truncated              → truncated=true
+requested maxMatches above 500                 → rejected by Rust authority
 ```
+
+`SEARCH_MAX_MATCHES` is the hard internal maximum `500`, aligned with public `MAX_SEARCH_MAX_RESULTS`. Preserve compatibility by keeping ordinary `WorkspaceManager.search()` at its historical default of `200`; add `searchBounded()` for capability callers.
 
 - [ ] **Step 3: Implement bounded search modes**
 
-Use the existing kernel lexical search for `text`. For `path`, filter the retained-root tree with case-sensitive substring matching. For symbol/definition/reference, first use lexical search for the query and then classify returned lines with language-specific anchored regular expressions.
+Use `searchBounded()` for `text`. For `path`, filter the retained-root bounded tree with case-sensitive substring matching. For `symbol`, `definition`, and `reference`, obtain bounded lexical candidate lines first and classify them using deterministic whole-identifier and declaration-prefix checks. Do not recursively reread source files and do not add filesystem/process/Git authority.
 
-Never label heuristic output as exact. Set `truncated` when the low-level result or configured result limit is reached.
+Never label heuristic output as exact. `truncated` is true when the low-level result is incomplete or when more classified/path matches exist than the configured `maxResults`; do not infer low-level truncation from array length.
 
-- [ ] **Step 4: Register MCP `code.search`**
+- [ ] **Step 4: Add shared runtime schemas**
 
-Schema:
+`packages/capabilities/src/schemas.ts` owns `CodeSearchInputSchema` and `CodeSearchResultSchema`. The input is closed and enforces query length `1..512` and `maxResults <= 500`; the output is closed and validates mode, precision, bounded match metadata, and `truncated`.
 
-```ts
-{
-  workspaceId: z.string().min(1),
-  query: z.string().min(1).max(512),
-  mode: z.enum(["text", "path", "symbol", "definition", "reference"]).optional(),
-  path: z.string().min(1).optional(),
-  maxResults: z.number().int().positive().max(500).optional()
-}
+- [ ] **Step 5: Production-wire before advertising**
+
+Extend the Task 3 `NativeCapabilityService` construction in `createProductionServiceStack` with only a `CodeSearchAdapter` backed by the existing `WorkspaceManager.searchBounded`. Do not create a second service, kernel, workspace manager, or filesystem authority.
+
+Add a full-stack production test proving a trusted/open workspace can call `code.search` through MCP and receive a structured definition result. The lifecycle remains:
+
+```text
+implemented
+→ production-wired
+→ E2E-tested
+→ advertised
 ```
 
-Annotations: read-only.
+- [ ] **Step 6: Register MCP `code.search`**
 
-- [ ] **Step 5: Run GREEN and commit**
+Use:
+
+```ts
+inputSchema: CodeSearchInputSchema
+outputSchema: CodeSearchResultSchema
+annotations: READ_ONLY_TOOL_ANNOTATIONS
+```
+
+Required public fields remain `workspaceId` and `query`; `mode`, `path`, and `maxResults` are optional. Retain equivalent JSON text fallback and `structuredContent`.
+
+Add `code.search` to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"`; Phase 1 capability additions do not independently bump the already-established Phase 1 surface version.
+
+- [ ] **Step 7: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
 pnpm --filter @kodegpt/mcp-server test
+pnpm test:protocol
+pnpm exec vitest run tests/integration/full-stack.test.ts --no-file-parallelism
+cargo test -p kodegpt-workspace-io
+cargo test -p kodegpt-runtime
 
-git add packages/capabilities packages/mcp-server
+pnpm test
+pnpm typecheck
+pnpm build
+pnpm verify:forbidden
+pnpm verify:package
+pnpm test:rust
+
+git add packages/capabilities packages/mcp-server packages/protocol packages/core apps/cli crates schemas tests docs
 
 git commit -m "feat(capabilities): add structured code search"
 ```

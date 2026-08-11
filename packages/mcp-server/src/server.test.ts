@@ -6,6 +6,7 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const LOCKED_SURFACE = [
   { name: "artifact.read", required: ["uri"] },
+  { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "extension.list", required: [] },
   {

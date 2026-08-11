@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   CAPABILITY_SCHEMA_VERSION,
+  CodeSearchInputSchema,
+  CodeSearchResultSchema,
   NativeCapabilityService,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "../../packages/capabilities/src/index.js";
 
 describe("native capability public package boundary", () => {
-  it("exports the Task 1–3 service and workspace.inspect runtime contracts from the package entrypoint", () => {
+  it("exports the Task 1–4 service and runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(typeof NativeCapabilityService).toBe("function");
     expect(
@@ -28,5 +30,18 @@ describe("native capability public package boundary", () => {
         truncated: false
       })
     ).toMatchObject({ workspaceId: "ws_public", truncated: false });
+    expect(CodeSearchInputSchema.parse({ workspaceId: "ws_public", query: "needle" })).toEqual({
+      workspaceId: "ws_public",
+      query: "needle"
+    });
+    expect(
+      CodeSearchResultSchema.parse({
+        schemaVersion: 1,
+        mode: "text",
+        precision: "exact",
+        matches: [],
+        truncated: false
+      })
+    ).toMatchObject({ mode: "text", precision: "exact", truncated: false });
   });
 });

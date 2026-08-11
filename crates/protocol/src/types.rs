@@ -131,6 +131,7 @@ pub struct FileSearchParams {
     pub capability_id: String,
     pub path: String,
     pub query: String,
+    pub max_matches: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

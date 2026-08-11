@@ -5,6 +5,7 @@
   "params": {
     "capabilityId": "kc_fixture_1",
     "path": ".",
-    "query": "needle"
+    "query": "needle",
+    "maxMatches": 100
   }
 }
