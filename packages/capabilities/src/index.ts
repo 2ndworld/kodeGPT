@@ -17,6 +17,7 @@ export type {
   CodeSearchMode,
   CodeSearchPrecision,
   CodeSearchResult,
+  CodeSearchTruncationReason,
   ContextBuildInput,
   ContextBuildResult,
   ContextIntent,

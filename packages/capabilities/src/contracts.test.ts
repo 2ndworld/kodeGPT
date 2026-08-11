@@ -112,7 +112,8 @@ describe("capability contracts", () => {
           preview: "function needle() {}"
         }
       ],
-      truncated: false
+      truncated: false,
+      truncationReasons: []
     };
     expect(CodeSearchResultSchema.parse(validResult)).toEqual(validResult);
     expect(() => CodeSearchResultSchema.parse({ ...validResult, precision: "exact-ish" })).toThrow();

@@ -74,7 +74,8 @@ const typedCodeSearchResult: CodeSearchResult = {
       preview: "function needle() {}"
     }
   ],
-  truncated: false
+  truncated: false,
+  truncationReasons: []
 };
 
 const typedGitChangesResult: GitChangesResult = {

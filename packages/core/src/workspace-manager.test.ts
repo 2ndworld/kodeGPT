@@ -54,6 +54,11 @@ class FakeKernel implements KernelTransport {
   profileRead: Promise<{ contents: string | null }> = Promise.resolve({ contents: null });
   activateResult: unknown = { ok: true };
   cancel: Promise<{ ok: true }> = Promise.resolve({ ok: true });
+  searchResult: unknown = {
+    matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }],
+    truncated: false,
+    truncationReasons: []
+  };
 
   async request<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
@@ -122,10 +127,7 @@ class FakeKernel implements KernelTransport {
           truncated: false
         } as T;
       case "file.search":
-        return {
-          matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }],
-          truncated: false
-        } as T;
+        return this.searchResult as T;
       case "workspace.restrict_policy":
       case "workspace.begin_close":
       case "workspace.unregister":
@@ -258,7 +260,8 @@ describe("WorkspaceManager", () => {
     ]);
     expect(boundedMatches).toEqual({
       matches: [{ path: "src/index.ts", line: 2, lineText: "const needle = true;" }],
-      truncated: false
+      truncated: false,
+      truncationReasons: []
     });
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
     expect(kernel.calls.slice(-9)).toEqual([
@@ -299,6 +302,47 @@ describe("WorkspaceManager", () => {
         params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 500 }
       }
     ]);
+  });
+
+  it("propagates closed search truncation reasons and rejects inconsistent runtime payloads", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_search_contract"
+    });
+    await manager.openWorkspace("/workspace");
+
+    kernel.searchResult = {
+      matches: [],
+      truncated: true,
+      truncationReasons: ["FILE_SIZE_LIMIT"]
+    };
+    await expect(
+      manager.searchBounded("ws_search_contract", "needle", ".", 10)
+    ).resolves.toEqual({
+      matches: [],
+      truncated: true,
+      truncationReasons: ["FILE_SIZE_LIMIT"]
+    });
+
+    kernel.searchResult = {
+      matches: [],
+      truncated: false,
+      truncationReasons: ["TREE_LIMIT"]
+    };
+    await expect(
+      manager.searchBounded("ws_search_contract", "needle", ".", 10)
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+
+    kernel.searchResult = {
+      matches: [],
+      truncated: true,
+      truncationReasons: ["UNKNOWN_REASON"]
+    };
+    await expect(
+      manager.searchBounded("ws_search_contract", "needle", ".", 10)
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
   });
 
   it("does not publish READY when workspace.activate returns a malformed acknowledgement", async () => {

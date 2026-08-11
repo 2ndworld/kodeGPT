@@ -1749,6 +1749,7 @@ mod tests {
         )
         .await;
         assert_eq!(search["result"]["truncated"], false);
+        assert_eq!(search["result"]["truncationReasons"], json!([]));
         let matches = search["result"]["matches"]
             .as_array()
             .expect("search returns matches");

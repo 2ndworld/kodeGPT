@@ -11,6 +11,12 @@ export const MAX_PATCH_HUNKS = 256;
 
 export type CodeSearchMode = "text" | "path" | "symbol" | "definition" | "reference";
 export type CodeSearchPrecision = "exact" | "lexical" | "heuristic";
+export type CodeSearchTruncationReason =
+  | "TREE_LIMIT"
+  | "FILE_SIZE_LIMIT"
+  | "SCAN_BYTE_LIMIT"
+  | "MATCH_LIMIT"
+  | "SNIPPET_BYTE_LIMIT";
 export type ContextIntent = "understand" | "implement" | "debug" | "review" | "verify";
 export type VerificationCategory =
   | "test"
@@ -101,6 +107,7 @@ export interface CodeSearchResult {
   precision: CodeSearchPrecision;
   matches: CodeSearchMatch[];
   truncated: boolean;
+  truncationReasons: CodeSearchTruncationReason[];
 }
 
 export interface GitChangesInput {

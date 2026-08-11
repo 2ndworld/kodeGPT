@@ -37,7 +37,7 @@ function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCap
       workspace: {
         inspection: workspaceInspection,
         search: {
-          search: async () => ({ matches: [], truncated: false })
+          search: async () => ({ matches: [], truncated: false, truncationReasons: [] })
         }
       }
     })

@@ -46,7 +46,8 @@ describe("native capability public package boundary", () => {
         mode: "text",
         precision: "exact",
         matches: [],
-        truncated: false
+        truncated: false,
+        truncationReasons: []
       })
     ).toMatchObject({ mode: "text", precision: "exact", truncated: false });
     expect(GitChangesInputSchema.parse({ workspaceId: "ws_public" })).toEqual({

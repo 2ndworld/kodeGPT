@@ -102,9 +102,17 @@ export interface WorkspaceSearchMatch {
   lineText: string;
 }
 
+export type WorkspaceSearchTruncationReason =
+  | "TREE_LIMIT"
+  | "FILE_SIZE_LIMIT"
+  | "SCAN_BYTE_LIMIT"
+  | "MATCH_LIMIT"
+  | "SNIPPET_BYTE_LIMIT";
+
 export interface WorkspaceSearchResult {
   matches: WorkspaceSearchMatch[];
   truncated: boolean;
+  truncationReasons: WorkspaceSearchTruncationReason[];
 }
 
 type WorkspacePhase = "OPENING" | "READY" | "CLOSING";
@@ -513,7 +521,10 @@ export class WorkspaceManager {
     if (
       !isRecord(result) ||
       !Array.isArray(result.matches) ||
-      typeof result.truncated !== "boolean"
+      typeof result.truncated !== "boolean" ||
+      !Array.isArray(result.truncationReasons) ||
+      !result.truncationReasons.every(isSearchTruncationReason) ||
+      result.truncated !== (result.truncationReasons.length > 0)
     ) {
       throw new WorkspaceManagerError(
         "RUNTIME_PROTOCOL_INVALID",
@@ -522,7 +533,8 @@ export class WorkspaceManager {
     }
     return {
       matches: result.matches.map(validateSearchMatch),
-      truncated: result.truncated
+      truncated: result.truncated,
+      truncationReasons: [...result.truncationReasons]
     };
   }
 
@@ -704,6 +716,16 @@ function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
 
 function isTreeEntryKind(value: unknown): value is WorkspaceTreeEntryKind {
   return value === "file" || value === "directory" || value === "symlink" || value === "other";
+}
+
+function isSearchTruncationReason(value: unknown): value is WorkspaceSearchTruncationReason {
+  return (
+    value === "TREE_LIMIT" ||
+    value === "FILE_SIZE_LIMIT" ||
+    value === "SCAN_BYTE_LIMIT" ||
+    value === "MATCH_LIMIT" ||
+    value === "SNIPPET_BYTE_LIMIT"
+  );
 }
 
 function validateSearchMatch(value: unknown): WorkspaceSearchMatch {

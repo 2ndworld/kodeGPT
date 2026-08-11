@@ -6,6 +6,7 @@ import type {
   CodeSearchAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
+import type { CodeSearchTruncationReason } from "./contracts.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
 import { createTestCapabilityDependencies } from "./test-support.js";
 
@@ -14,6 +15,7 @@ function service(options: {
   treeTruncated?: boolean;
   search?: CapabilitySearchMatch[];
   searchTruncated?: boolean;
+  searchTruncationReasons?: CodeSearchTruncationReason[];
 }): NativeCapabilityService {
   const workspaceInspection: WorkspaceInspectionAdapter = {
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
@@ -25,7 +27,8 @@ function service(options: {
   const codeSearch: CodeSearchAdapter = {
     search: async () => ({
       matches: options.search ?? [],
-      truncated: options.searchTruncated ?? false
+      truncated: options.searchTruncated ?? false,
+      truncationReasons: options.searchTruncationReasons ?? []
     })
   };
   return new NativeCapabilityService(
@@ -73,7 +76,8 @@ describe("code.search", () => {
           preview: "needle();"
         }
       ],
-      truncated: false
+      truncated: false,
+      truncationReasons: []
     });
   });
 
@@ -98,7 +102,8 @@ describe("code.search", () => {
       mode: "path",
       precision: "lexical",
       matches: [{ path: "src/foo.test.ts", kind: "path" }],
-      truncated: true
+      truncated: true,
+      truncationReasons: ["MATCH_LIMIT"]
     });
   });
 
@@ -187,7 +192,8 @@ describe("code.search", () => {
   it("propagates low-level truncation even when fewer classified matches survive", async () => {
     const capability = service({
       search: [{ path: "src/main.ts", line: 1, lineText: "foo();" }],
-      searchTruncated: true
+      searchTruncated: true,
+      searchTruncationReasons: ["FILE_SIZE_LIMIT"]
     });
 
     const result = await capability.searchCode({
@@ -199,5 +205,31 @@ describe("code.search", () => {
 
     expect(result.matches).toEqual([]);
     expect(result.truncated).toBe(true);
+    expect(result.truncationReasons).toEqual(["FILE_SIZE_LIMIT"]);
+  });
+
+  it("reports tree truncation separately in path mode", async () => {
+    const capability = service({
+      tree: [{ path: "src/foo.ts", kind: "file" }],
+      treeTruncated: true
+    });
+
+    await expect(
+      capability.searchCode({ workspaceId: "ws_path_tree", query: "foo", mode: "path" })
+    ).resolves.toMatchObject({
+      truncated: true,
+      truncationReasons: ["TREE_LIMIT"]
+    });
+  });
+
+  it("uses stable capability errors for invalid input and result limits", async () => {
+    const capability = service({});
+
+    await expect(capability.searchCode({ workspaceId: "", query: "needle" })).rejects.toMatchObject({
+      code: "CAPABILITY_INPUT_INVALID"
+    });
+    await expect(
+      capability.searchCode({ workspaceId: "ws_limit", query: "needle", maxResults: 501 })
+    ).rejects.toMatchObject({ code: "CAPABILITY_LIMIT_EXCEEDED" });
   });
 });

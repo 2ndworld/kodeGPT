@@ -1,5 +1,6 @@
 import type {
   CapabilityArtifactMetadata,
+  CodeSearchTruncationReason,
   PatchFileAction,
   VerificationOperationResult
 } from "./contracts.js";
@@ -25,6 +26,7 @@ export interface CapabilitySearchMatch {
 export interface CapabilitySearchResult {
   matches: CapabilitySearchMatch[];
   truncated: boolean;
+  truncationReasons: CodeSearchTruncationReason[];
 }
 
 export interface GitInspectionAdapterResult {

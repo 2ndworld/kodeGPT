@@ -11,8 +11,10 @@ import {
   type CodeSearchInput,
   type CodeSearchMatch,
   type CodeSearchMode,
-  type CodeSearchResult
+  type CodeSearchResult,
+  type CodeSearchTruncationReason
 } from "./contracts.js";
+import { CapabilityError } from "./errors.js";
 
 export async function searchCode(
   workspaceInspection: WorkspaceInspectionAdapter,
@@ -35,13 +37,18 @@ export async function searchCode(
     lowLevelMax
   );
   const classified = classifyMatches(lowLevel.matches, input.query, mode);
+  const truncationReasons = orderedReasons([
+    ...lowLevel.truncationReasons,
+    ...(classified.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+  ]);
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     mode,
     precision: mode === "text" ? "exact" : "heuristic",
     matches: classified.slice(0, maxResults),
-    truncated: lowLevel.truncated || classified.length > maxResults
+    truncated: truncationReasons.length > 0,
+    truncationReasons
   };
 }
 
@@ -59,13 +66,18 @@ async function searchPaths(
     .map(({ path }) => path)
     .filter((path) => path.includes(input.query))
     .sort(compareText);
+  const truncationReasons = orderedReasons([
+    ...(tree.truncated ? (["TREE_LIMIT"] as const) : []),
+    ...(matchingPaths.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+  ]);
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     mode: "path",
     precision: "lexical",
     matches: matchingPaths.slice(0, maxResults).map((path) => ({ path, kind: "path" })),
-    truncated: tree.truncated || matchingPaths.length > maxResults
+    truncated: truncationReasons.length > 0,
+    truncationReasons
   };
 }
 
@@ -165,13 +177,16 @@ function stripRustVisibility(value: string): string {
 
 function validateInput(input: CodeSearchInput): void {
   if (input.workspaceId.length === 0) {
-    throw new TypeError("code.search workspaceId must not be empty");
+    throw new CapabilityError("CAPABILITY_INPUT_INVALID", "code.search workspaceId must not be empty");
   }
   if (input.query.length === 0 || input.query.length > 512) {
-    throw new TypeError("code.search query must contain between 1 and 512 characters");
+    throw new CapabilityError(
+      "CAPABILITY_INPUT_INVALID",
+      "code.search query must contain between 1 and 512 characters"
+    );
   }
   if (input.path !== undefined && input.path.length === 0) {
-    throw new TypeError("code.search path must not be empty");
+    throw new CapabilityError("CAPABILITY_INPUT_INVALID", "code.search path must not be empty");
   }
   if (
     input.maxResults !== undefined &&
@@ -179,8 +194,24 @@ function validateInput(input: CodeSearchInput): void {
       input.maxResults <= 0 ||
       input.maxResults > MAX_SEARCH_MAX_RESULTS)
   ) {
-    throw new TypeError("code.search maxResults must be between 1 and 500");
+    throw new CapabilityError(
+      "CAPABILITY_LIMIT_EXCEEDED",
+      "code.search maxResults must be between 1 and 500"
+    );
   }
+}
+
+const TRUNCATION_REASON_ORDER: CodeSearchTruncationReason[] = [
+  "TREE_LIMIT",
+  "FILE_SIZE_LIMIT",
+  "SCAN_BYTE_LIMIT",
+  "MATCH_LIMIT",
+  "SNIPPET_BYTE_LIMIT"
+];
+
+function orderedReasons(reasons: readonly CodeSearchTruncationReason[]): CodeSearchTruncationReason[] {
+  const present = new Set(reasons);
+  return TRUNCATION_REASON_ORDER.filter((reason) => present.has(reason));
 }
 
 function compareText(left: string, right: string): number {

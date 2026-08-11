@@ -91,7 +91,7 @@ function dependencies(
     processStatus: async () => completedProcess,
     processCancel: async () => ({ ...completedProcess, state: "cancelled" as const }),
     search: async () => [],
-    searchBounded: async () => ({ matches: [], truncated: false }),
+    searchBounded: async () => ({ matches: [], truncated: false, truncationReasons: [] }),
     tree: async () => [],
     treeBounded: async () => ({ entries: [], truncated: false })
   };

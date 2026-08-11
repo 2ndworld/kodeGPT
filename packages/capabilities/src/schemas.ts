@@ -78,6 +78,13 @@ export const WorkspaceInspectResultSchema: z.ZodType<WorkspaceInspectResult> = z
 
 const codeSearchModeSchema = z.enum(["text", "path", "symbol", "definition", "reference"]);
 const codeSearchPrecisionSchema = z.enum(["exact", "lexical", "heuristic"]);
+const codeSearchTruncationReasonSchema = z.enum([
+  "TREE_LIMIT",
+  "FILE_SIZE_LIMIT",
+  "SCAN_BYTE_LIMIT",
+  "MATCH_LIMIT",
+  "SNIPPET_BYTE_LIMIT"
+]);
 
 export const CodeSearchInputSchema: z.ZodType<CodeSearchInput> = z
   .object({
@@ -105,7 +112,8 @@ export const CodeSearchResultSchema: z.ZodType<CodeSearchResult> = z
         })
         .strict()
     ),
-    truncated: z.boolean()
+    truncated: z.boolean(),
+    truncationReasons: z.array(codeSearchTruncationReasonSchema)
   })
   .strict();
 

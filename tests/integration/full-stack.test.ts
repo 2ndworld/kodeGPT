@@ -297,7 +297,8 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         schemaVersion: 1,
         mode: "definition",
         precision: "heuristic",
-        truncated: false
+        truncated: false,
+        truncationReasons: []
       });
       expect(codeSearch.matches).toEqual([
         {
