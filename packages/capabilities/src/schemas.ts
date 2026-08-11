@@ -7,6 +7,7 @@ import {
   type CodeSearchResult,
   type GitChangesInput,
   type GitChangesResult,
+  type VerificationRecipe,
   type VerifyListInput,
   type VerifyListResult,
   type VerifyRunInput,
@@ -166,19 +167,36 @@ export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
   })
   .strict();
 
-const verificationRecipeSchema = z
+const verificationRecipeSchema: z.ZodType<VerificationRecipe> = z
   .object({
     id: z.string().min(1),
     label: z.string().min(1),
     category: z.enum(["test", "lint", "typecheck", "build", "format-check", "custom"]),
-    logicalExecutable: z.string().min(1),
-    argv: z.array(z.string()),
-    cwd: z.string().min(1),
+    logicalExecutable: z.string().min(1).optional(),
+    argv: z.array(z.string()).optional(),
+    cwd: z.string().min(1).optional(),
     source: z.enum(["package-script", "cargo", "kodegpt-config"]),
     allowed: z.boolean(),
     blockedReason: z.string().min(1).optional()
   })
-  .strict();
+  .strict()
+  .superRefine((recipe, context) => {
+    const launchComplete =
+      recipe.logicalExecutable !== undefined && recipe.argv !== undefined && recipe.cwd !== undefined;
+    if (recipe.allowed && (!launchComplete || recipe.blockedReason !== undefined)) {
+      context.addIssue({ code: "custom", message: "allowed recipe requires a complete launch tuple" });
+    }
+    if (!recipe.allowed && recipe.blockedReason === undefined) {
+      context.addIssue({ code: "custom", message: "blocked recipe requires blockedReason" });
+    }
+    if (
+      (recipe.blockedReason === "PACKAGE_MANAGER_UNKNOWN" ||
+        recipe.blockedReason === "PACKAGE_MANAGER_CONFLICT") &&
+      (recipe.logicalExecutable !== undefined || recipe.argv !== undefined || recipe.cwd !== undefined)
+    ) {
+      context.addIssue({ code: "custom", message: "unresolved package manager must omit launch tuple" });
+    }
+  });
 
 const verificationOperationSchema = z
   .object({

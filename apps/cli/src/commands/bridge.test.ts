@@ -112,6 +112,11 @@ describe("bridge command unit tests", () => {
           closeWorkspace: async () => undefined,
           requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+          pathIdentity: async () => ({
+            schemaVersion: 1 as const,
+            exists: false,
+            hashTruncated: false
+          }),
           writeFile: async () => ({ bytesWritten: 0, created: true }),
           editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
           search: async () => [],
@@ -153,6 +158,12 @@ describe("bridge command unit tests", () => {
             artifact: processResult.artifact
           }),
           runProcess: async () => processResult,
+          inspectExecutable: async () => ({
+            schemaVersion: 1 as const,
+            executableAvailable: true,
+            sandboxAvailable: true
+          }),
+          runVerificationProcess: async () => processResult,
           processStatus: async () => processResult,
           processCancel: async () => ({ ...processResult, state: "cancelled" as const })
         }

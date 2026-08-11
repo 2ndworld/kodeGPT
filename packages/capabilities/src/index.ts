@@ -51,7 +51,6 @@ export type {
   WorkspaceInspectResult
 } from "./contracts.js";
 export type {
-  CapabilityExecutionAdapter,
   CapabilityGitCheckpointRecord,
   CapabilityGitCheckpointResult,
   CapabilityPathIdentityResult,
@@ -67,6 +66,8 @@ export type {
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,
+  VerificationAvailabilityAdapter,
+  VerificationExecutionAdapter,
   VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
@@ -86,4 +87,3 @@ export {
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema
 } from "./schemas.js";
-export { VerificationRecipeError } from "./verification.js";

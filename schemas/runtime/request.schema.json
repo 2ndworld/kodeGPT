@@ -408,6 +408,25 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "process.inspect_executable" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "logicalExecutable"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "logicalExecutable": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "process.run" },
         "params": {
           "type": "object",
@@ -425,6 +444,32 @@
               "type": "object",
               "additionalProperties": { "type": "string" }
             },
+            "background": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "verify.run" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "recipeId", "logicalExecutable", "argv", "cwd", "background"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "recipeId": { "type": "string", "minLength": 1 },
+            "logicalExecutable": { "type": "string", "minLength": 1 },
+            "argv": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "cwd": { "type": "string" },
             "background": { "type": "boolean" }
           }
         }

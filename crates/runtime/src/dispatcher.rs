@@ -5,10 +5,12 @@ use std::sync::{Arc, Mutex};
 use kodegpt_protocol::{
     ArtifactReadParams, FileEditParams, FileIdentityParams, FileReadParams, FileSearchParams,
     FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessOperationParams,
-    ProcessRunParams, ProfileName, RuntimePolicy, WorkspaceActivateParams,
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
+    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy, VerifyRunParams,
+    WorkspaceActivateParams,
     WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };
+use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
     FilesystemIdentity, SEARCH_MAX_MATCHES, TREE_MAX_ENTRIES, WorkspaceRegistry,
     WorkspaceRegistryError, inspect_root, probe_filesystem_boundary,
@@ -609,6 +611,26 @@ async fn dispatch_one(
             )
             .await
         }
+        "process.inspect_executable" => {
+            let params = match serde_json::from_value::<ProcessInspectExecutableParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && valid_logical_executable_name(&params.logical_executable) =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_process_inspect_executable(
+                &audit,
+                &workspace_registry,
+                request.id,
+                params,
+            )
+            .await
+        }
         "process.run" => {
             let params = match serde_json::from_value::<ProcessRunParams>(request.params) {
                 Ok(params)
@@ -623,6 +645,31 @@ async fn dispatch_one(
                 }
             };
             dispatch_process_run(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                &process_operations,
+                raw_spool,
+                request.id,
+                params,
+            )
+            .await
+        }
+        "verify.run" => {
+            let params = match serde_json::from_value::<VerifyRunParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && !params.recipe_id.is_empty()
+                        && valid_logical_executable_name(&params.logical_executable)
+                        && !params.argv.iter().any(|arg| arg.contains('\0')) =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_verify_run(
                 &audit,
                 &workspace_registry,
                 &execution_registry,
@@ -1094,6 +1141,128 @@ async fn dispatch_workspace_cancel_executions(
     }
 }
 
+fn valid_logical_executable_name(name: &str) -> bool {
+    !name.is_empty()
+        && !matches!(name, "." | "..")
+        && !name.contains('/')
+        && !name.contains('\0')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+async fn dispatch_process_inspect_executable(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    request_id: String,
+    params: ProcessInspectExecutableParams,
+) -> Value {
+    let capability_id = params.capability_id.clone();
+    let registry_ready = match registry.lock() {
+        Ok(registry) => registry.clone_ready_policy(&capability_id),
+        Err(_) => {
+            return error_response(
+                Some(request_id),
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    if let Err(error) = registry_ready {
+        let (code, message) = workspace_registry_error_contract(&error);
+        return error_response(Some(request_id), code, message);
+    }
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: format!("op_{operation_suffix}"),
+        capability_id: Some(capability_id),
+        action: AuditAction::ProcessInspectExecutable,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let executable_available = resolve_trusted_executable(&params.logical_executable).is_ok();
+    let sandbox_available = BubblewrapProvider::discover().is_ok();
+    if audit.outcome(&context, AuditOutcome::Success).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(
+        request_id,
+        json!({
+            "schemaVersion": 1,
+            "executableAvailable": executable_available,
+            "sandboxAvailable": sandbox_available
+        }),
+    )
+}
+
+async fn dispatch_verify_run(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    operations: &Arc<ProcessOperationRegistry>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    params: VerifyRunParams,
+) -> Value {
+    let operation_id = next_process_operation_id();
+    let semantic_context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(params.capability_id.clone()),
+        action: AuditAction::VerifyRun,
+    };
+    if audit
+        .decision(
+            &semantic_context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let process_params = ProcessRunParams {
+        capability_id: params.capability_id,
+        logical_executable: params.logical_executable,
+        argv: params.argv,
+        cwd: params.cwd,
+        env: Default::default(),
+        background: params.background,
+    };
+    let response = dispatch_process_run_with_operation_id(
+        audit,
+        registry,
+        executions,
+        operations,
+        raw_spool,
+        request_id.clone(),
+        process_params,
+        operation_id,
+    )
+    .await;
+    let semantic_outcome = if response.get("result").is_some() {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit.outcome(&semantic_context, semantic_outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    response
+}
+
 async fn dispatch_process_run(
     audit: &Arc<AuditSink>,
     registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
@@ -1103,8 +1272,31 @@ async fn dispatch_process_run(
     request_id: String,
     params: ProcessRunParams,
 ) -> Value {
-    let capability_id = params.capability_id.clone();
     let operation_id = next_process_operation_id();
+    dispatch_process_run_with_operation_id(
+        audit,
+        registry,
+        executions,
+        operations,
+        raw_spool,
+        request_id,
+        params,
+        operation_id,
+    )
+    .await
+}
+
+async fn dispatch_process_run_with_operation_id(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    operations: &Arc<ProcessOperationRegistry>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    params: ProcessRunParams,
+    operation_id: String,
+) -> Value {
+    let capability_id = params.capability_id.clone();
     let context = AuditContext {
         request_id: request_id.clone(),
         operation_id: operation_id.clone(),
@@ -1678,6 +1870,230 @@ mod tests {
             .await
             .expect("workspace response arrives")
             .expect("workspace response channel open")
+    }
+
+    async fn register_ready_workspace(
+        request_tx: &mpsc::UnboundedSender<Value>,
+        response_rx: &mut mpsc::UnboundedReceiver<Value>,
+        workspace: &std::path::Path,
+        policy: Value,
+        id_prefix: &str,
+    ) -> String {
+        let identity = kodegpt_workspace_io::inspect_root(workspace)
+            .expect("workspace inspected")
+            .identity;
+        let registered = next_response(
+            request_tx,
+            response_rx,
+            &format!("req_{id_prefix}_register"),
+            "workspace.register",
+            json!({
+                "rootPath": workspace.to_string_lossy(),
+                "expectedIdentity": identity,
+                "ceiling": policy.clone()
+            }),
+        )
+        .await;
+        let capability_id = registered["result"]["capabilityId"]
+            .as_str()
+            .expect("registration returns capability id")
+            .to_owned();
+        let restricted = next_response(
+            request_tx,
+            response_rx,
+            &format!("req_{id_prefix}_restrict"),
+            "workspace.restrict_policy",
+            json!({ "capabilityId": capability_id, "restriction": policy }),
+        )
+        .await;
+        assert_eq!(restricted["result"]["ok"], true);
+        let activated = next_response(
+            request_tx,
+            response_rx,
+            &format!("req_{id_prefix}_activate"),
+            "workspace.activate",
+            json!({ "capabilityId": capability_id }),
+        )
+        .await;
+        assert_eq!(activated["result"]["ok"], true);
+        capability_id
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn process_inspect_executable_reports_availability_without_host_paths() {
+        let (audit, audit_root) = audit_sink("process-inspect-executable");
+        let workspace = audit_root.with_extension("process-inspect-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            develop_policy(false),
+            "inspect_executable",
+        )
+        .await;
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_process_inspect_executable",
+            "process.inspect_executable",
+            json!({
+                "capabilityId": capability_id,
+                "logicalExecutable": "kodegpt-definitely-missing-executable"
+            }),
+        )
+        .await;
+        assert_eq!(response["result"]["schemaVersion"], 1);
+        assert_eq!(response["result"]["executableAvailable"], false);
+        assert!(response["result"]["sandboxAvailable"].is_boolean());
+        let serialized = response["result"].to_string();
+        assert!(!serialized.contains("/usr/"));
+        assert!(!serialized.contains("/home/"));
+        assert!(!serialized.contains("canonicalPath"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("process_inspect_executable"));
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn verify_run_wraps_the_existing_process_run_with_semantic_audit_order() {
+        let (audit, audit_root) = audit_sink("verify-run-audit");
+        let workspace = audit_root.with_extension("verify-run-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            develop_policy(false),
+            "verify_audit",
+        )
+        .await;
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_verify_audit",
+            "verify.run",
+            json!({
+                "capabilityId": capability_id,
+                "recipeId": "package:test",
+                "logicalExecutable": "python3",
+                "argv": ["-c", "print('VERIFY_AUDIT_SECRET_OUTPUT')"],
+                "cwd": ".",
+                "background": false
+            }),
+        )
+        .await;
+        assert!(response.get("result").is_some(), "verify.run failed: {response}");
+        assert!(response["result"]["operationId"].as_str().is_some());
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        let relevant = audit_text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|record| record["requestId"] == "req_verify_audit")
+            .filter(|record| {
+                record["action"] == "verify_run" || record["action"] == "process_run"
+            })
+            .map(|record| {
+                (
+                    record["phase"].as_str().unwrap().to_owned(),
+                    record["action"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            relevant,
+            vec![
+                ("decision".to_owned(), "verify_run".to_owned()),
+                ("decision".to_owned(), "process_run".to_owned()),
+                ("outcome".to_owned(), "process_run".to_owned()),
+                ("outcome".to_owned(), "verify_run".to_owned()),
+            ]
+        );
+        assert!(!audit_text.contains("VERIFY_AUDIT_SECRET_OUTPUT"));
+        assert!(!audit_text.contains("print('VERIFY_AUDIT_SECRET_OUTPUT')"));
+
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn verify_run_stops_before_process_dispatch_when_semantic_audit_decision_fails() {
+        let (audit, audit_root) = audit_sink("verify-run-audit-fail");
+        let workspace = audit_root.with_extension("verify-run-audit-fail-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            develop_policy(false),
+            "verify_audit_fail",
+        )
+        .await;
+        audit.inject_faults(AuditFaults {
+            fail_next_decision: true,
+            fail_next_outcome: false,
+        });
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_verify_audit_fail",
+            "verify.run",
+            json!({
+                "capabilityId": capability_id,
+                "recipeId": "package:test",
+                "logicalExecutable": "python3",
+                "argv": ["-c", "print('must-not-run')"],
+                "cwd": ".",
+                "background": false
+            }),
+        )
+        .await;
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        let request_records = audit_text
+            .lines()
+            .filter(|line| line.contains("req_verify_audit_fail"))
+            .collect::<Vec<_>>();
+        assert!(request_records.iter().all(|line| !line.contains("process_run")));
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

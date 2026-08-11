@@ -150,10 +150,12 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       JSON.stringify({
         name: "workspace-a",
         private: true,
+        packageManager: "pnpm@10.0.0",
         scripts: { test: "node -e \"console.log('verify-ok')\"" }
       }) + "\n"
     );
     await writeFile(join(workspaceA, "pnpm-workspace.yaml"), "packages: []\n");
+    await writeFile(join(workspaceA, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
     runGit(workspaceA, ["add", "tracked.txt"]);
@@ -327,8 +329,11 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         argv: ["run", "test"],
         cwd: ".",
         source: "package-script",
-        allowed: true
+        allowed: false,
+        blockedReason: "EXECUTABLE_UNAVAILABLE"
       });
+      expect(JSON.stringify(verifyList)).not.toContain("/home/");
+      expect(JSON.stringify(verifyList)).not.toContain("/usr/");
 
       const gitChangesResult = await callTool(
         port,
@@ -343,7 +348,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         schemaVersion: 1,
         workspaceId: openedA.id,
         clean: false,
-        summary: { changedFiles: 4 },
+        summary: { changedFiles: 5 },
         truncated: false
       });
       expect(gitChanges.fingerprint).toMatch(/^[a-f0-9]{64}$/);

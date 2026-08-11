@@ -129,23 +129,27 @@ export interface VerificationWorkspaceAdapter {
     path: string,
     options?: { offset?: number; maxBytes?: number }
   ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
-  tree(
-    workspaceId: string,
-    path: string | undefined,
-    maxEntries: number
-  ): Promise<CapabilityTreeResult>;
+  pathIdentity(workspaceId: string, path: string): Promise<CapabilityPathIdentityResult>;
   effectivePolicy(workspaceId: string): {
     allowProcess: boolean;
     allowedExecutableNames: string[];
   };
 }
 
-export interface CapabilityExecutionAdapter {
+export interface VerificationAvailabilityAdapter {
+  inspectExecutable(
+    workspaceId: string,
+    logicalExecutable: string
+  ): Promise<{ schemaVersion: 1; executableAvailable: boolean; sandboxAvailable: boolean }>;
+}
+
+export interface VerificationExecutionAdapter {
   run(input: {
     workspaceId: string;
+    recipeId: string;
     logicalExecutable: string;
     argv: string[];
-    cwd?: string;
+    cwd: string;
     background?: boolean;
   }): Promise<VerificationOperationResult>;
 }

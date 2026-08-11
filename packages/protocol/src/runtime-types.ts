@@ -20,7 +20,9 @@ export const RUNTIME_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "process.inspect_executable",
   "process.run",
+  "verify.run",
   "process.status",
   "process.cancel",
   "artifact.read"
@@ -141,6 +143,13 @@ const gitInspectionParamsSchema = z
   })
   .strict();
 
+const processInspectExecutableParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    logicalExecutable: z.string().min(1)
+  })
+  .strict();
+
 const processRunParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -148,6 +157,17 @@ const processRunParamsSchema = z
     argv: z.array(z.string()),
     cwd: z.string(),
     env: z.record(z.string(), z.string()),
+    background: z.boolean()
+  })
+  .strict();
+
+const verifyRunParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    recipeId: z.string().min(1),
+    logicalExecutable: z.string().min(1),
+    argv: z.array(z.string()),
+    cwd: z.string(),
     background: z.boolean()
   })
   .strict();
@@ -198,7 +218,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
+  requestSchema("process.inspect_executable", processInspectExecutableParamsSchema),
   requestSchema("process.run", processRunParamsSchema),
+  requestSchema("verify.run", verifyRunParamsSchema),
   requestSchema("process.status", processOperationParamsSchema),
   requestSchema("process.cancel", processOperationParamsSchema),
   requestSchema("artifact.read", artifactReadParamsSchema)

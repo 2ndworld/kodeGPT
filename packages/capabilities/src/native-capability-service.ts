@@ -1,7 +1,8 @@
 import type {
-  CapabilityExecutionAdapter,
   CodeSearchAdapter,
   GitCheckpointAdapter,
+  VerificationAvailabilityAdapter,
+  VerificationExecutionAdapter,
   VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
@@ -44,7 +45,8 @@ export interface NativeCapabilityDependencies {
   git: GitCheckpointAdapter;
   verification: {
     workspace: VerificationWorkspaceAdapter;
-    execution: CapabilityExecutionAdapter;
+    availability: VerificationAvailabilityAdapter;
+    execution: VerificationExecutionAdapter;
   };
 }
 
@@ -82,12 +84,17 @@ export class NativeCapabilityService {
   }
 
   async listVerifications(input: VerifyListInput): Promise<VerifyListResult> {
-    return listVerifications(this.#dependencies.verification.workspace, input);
+    return listVerifications(
+      this.#dependencies.verification.workspace,
+      this.#dependencies.verification.availability,
+      input
+    );
   }
 
   async runVerification(input: VerifyRunInput): Promise<VerifyRunResult> {
     return runVerification(
       this.#dependencies.verification.workspace,
+      this.#dependencies.verification.availability,
       this.#dependencies.verification.execution,
       input
     );

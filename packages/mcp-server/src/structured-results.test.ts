@@ -16,6 +16,7 @@ import {
   type WorkspaceInspectResult
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
+import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { describe, expect, it } from "vitest";
 import type { OpenWorkspace } from "../../core/src/index.js";
 import { PROCESS_RUN_TOOL_ANNOTATIONS, READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
@@ -330,7 +331,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, makeContext(), consoleState);
     const handler = handlers.get("verify.run");
     const definition = definitions.get("verify.run");
     expect(handler).toBeDefined();
@@ -344,6 +346,10 @@ describe("structured MCP tool results", () => {
     };
     expect(result.structuredContent).toEqual(typedVerifyRunResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).processes
+        .operations
+    ).toContainEqual(typedVerifyRunResult.operation);
   });
 
   it("redacts unknown native capability errors at the MCP boundary", async () => {

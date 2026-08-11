@@ -60,6 +60,9 @@ export interface ManagerBundle {
       | "searchBounded"
       | "gitCheckpoint"
       | "gitCheckpointPatch"
+      | "pathIdentity"
+      | "inspectExecutable"
+      | "runVerificationProcess"
     >;
 }
 
@@ -231,8 +234,17 @@ export async function createProductionServiceStack(
         workspace: {
           readFile: (workspaceId, path, readOptions) =>
             managers.workspaceManager.readFile(workspaceId, path, readOptions),
-          tree: (workspaceId, path, maxEntries) =>
-            managers.workspaceManager.treeBounded(workspaceId, path, maxEntries),
+          pathIdentity: async (workspaceId, path) => {
+            const result = await managers.workspaceManager.pathIdentity(workspaceId, path, {
+              includeSha256: false
+            });
+            return {
+              exists: result.exists,
+              ...(result.kind === undefined ? {} : { kind: result.kind }),
+              ...(result.sizeBytes === undefined ? {} : { sizeBytes: result.sizeBytes }),
+              hashTruncated: result.hashTruncated
+            };
+          },
           effectivePolicy: (workspaceId) => {
             const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
             return {
@@ -241,8 +253,12 @@ export async function createProductionServiceStack(
             };
           }
         },
+        availability: {
+          inspectExecutable: (workspaceId, logicalExecutable) =>
+            managers.workspaceManager.inspectExecutable(workspaceId, logicalExecutable)
+        },
         execution: {
-          run: (input) => managers.workspaceManager.runProcess(input)
+          run: (input) => managers.workspaceManager.runVerificationProcess(input)
         }
       }
     });

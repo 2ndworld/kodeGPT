@@ -161,6 +161,28 @@ describe("capability contracts", () => {
     expect(
       VerifyListResultSchema.parse({ schemaVersion: 1, workspaceId: "ws_1", recipes: [recipe] })
     ).toEqual({ schemaVersion: 1, workspaceId: "ws_1", recipes: [recipe] });
+    const unresolvedRecipe = {
+      id: "package:test",
+      label: "Package test",
+      category: "test" as const,
+      source: "package-script" as const,
+      allowed: false,
+      blockedReason: "PACKAGE_MANAGER_UNKNOWN"
+    };
+    expect(
+      VerifyListResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_1",
+        recipes: [unresolvedRecipe]
+      })
+    ).toEqual({ schemaVersion: 1, workspaceId: "ws_1", recipes: [unresolvedRecipe] });
+    expect(() =>
+      VerifyListResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_1",
+        recipes: [{ ...recipe, logicalExecutable: undefined }]
+      })
+    ).toThrow();
 
     const operation = {
       schemaVersion: 1 as const,

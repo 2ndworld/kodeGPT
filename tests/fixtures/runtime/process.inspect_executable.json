@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_process_inspect_executable",
+  "method": "process.inspect_executable",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "logicalExecutable": "cargo"
+  }
+}

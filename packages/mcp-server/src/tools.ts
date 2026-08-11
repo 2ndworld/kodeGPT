@@ -344,11 +344,13 @@ export function registerKodegptTools(
       annotations: PROCESS_RUN_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, recipeId, background }) =>
-      nativeCapabilityResult(async () =>
-        VerifyRunResultSchema.parse(
+      nativeCapabilityResult(async () => {
+        const value = VerifyRunResultSchema.parse(
           await context.verify.run({ workspaceId, recipeId, background })
-        )
-      )
+        );
+        consoleState.recordProcessOperation(value.operation);
+        return value;
+      })
   );
 
   server.registerTool(

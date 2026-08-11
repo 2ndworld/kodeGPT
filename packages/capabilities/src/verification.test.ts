@@ -1,128 +1,236 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  CapabilityExecutionAdapter,
+  CapabilityPathIdentityResult,
+  VerificationAvailabilityAdapter,
+  VerificationExecutionAdapter,
   VerificationWorkspaceAdapter
 } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
 import { createTestCapabilityDependencies } from "./test-support.js";
 
+const PACKAGE_JSON = "package.json";
+
+function presentFile(): CapabilityPathIdentityResult {
+  return { exists: true, kind: "file", sizeBytes: 1, hashTruncated: false };
+}
+
+function missing(): CapabilityPathIdentityResult {
+  return { exists: false, hashTruncated: false };
+}
+
 function service(options: {
-  packageJson?: string;
-  cargo?: boolean;
-  allowedExecutableNames?: string[];
+  packageJson?: Record<string, unknown>;
+  packageJsonText?: string;
+  files?: string[];
   allowProcess?: boolean;
-  run?: CapabilityExecutionAdapter["run"];
-}): NativeCapabilityService {
-  const verificationWorkspace: VerificationWorkspaceAdapter = {
-    tree: async () => ({
-      entries: [
-        ...(options.packageJson === undefined ? [] : [{ path: "package.json", kind: "file" as const }]),
-        ...(options.cargo === true ? [{ path: "Cargo.toml", kind: "file" as const }] : [])
-      ],
-      truncated: false
-    }),
-    readFile: async (_workspaceId, path, readOptions) => {
-      expect(readOptions?.maxBytes).toBe(64 * 1024);
-      if (path !== "package.json" || options.packageJson === undefined) {
-        throw new Error(`unexpected manifest read: ${path}`);
+  allowedExecutables?: readonly string[];
+  availability?: Partial<Record<string, { executableAvailable: boolean; sandboxAvailable: boolean }>>;
+  run?: VerificationExecutionAdapter["run"];
+  onPathIdentity?: (path: string) => void;
+  onRead?: (path: string) => void;
+} = {}): NativeCapabilityService {
+  const files = new Set(options.files ?? []);
+  if (options.packageJson !== undefined || options.packageJsonText !== undefined) files.add(PACKAGE_JSON);
+  const workspace: VerificationWorkspaceAdapter = {
+    readFile: async (_workspaceId, path) => {
+      options.onRead?.(path);
+      if (
+        path !== PACKAGE_JSON ||
+        (options.packageJson === undefined && options.packageJsonText === undefined)
+      ) {
+        throw new Error(`unexpected read: ${path}`);
       }
-      return {
-        contents: options.packageJson,
-        bytesRead: Buffer.byteLength(options.packageJson),
-        eof: true
-      };
+      const contents = options.packageJsonText ?? JSON.stringify(options.packageJson);
+      return { contents, bytesRead: Buffer.byteLength(contents), eof: true };
+    },
+    pathIdentity: async (_workspaceId, path) => {
+      options.onPathIdentity?.(path);
+      return files.has(path) ? presentFile() : missing();
     },
     effectivePolicy: () => ({
       allowProcess: options.allowProcess ?? true,
-      allowedExecutableNames: [...(options.allowedExecutableNames ?? [])]
+      allowedExecutableNames: [...(options.allowedExecutables ?? ["pnpm", "npm", "yarn", "bun", "cargo"])]
     })
+  };
+  const availability: VerificationAvailabilityAdapter = {
+    inspectExecutable: async (_workspaceId, logicalExecutable) => ({
+      schemaVersion: 1,
+      executableAvailable: options.availability?.[logicalExecutable]?.executableAvailable ?? true,
+      sandboxAvailable: options.availability?.[logicalExecutable]?.sandboxAvailable ?? true
+    })
+  };
+  const execution: VerificationExecutionAdapter = {
+    run:
+      options.run ??
+      (async () => {
+        throw new Error("verification discovery must not execute anything");
+      })
   };
 
   return new NativeCapabilityService(
     createTestCapabilityDependencies({
-      verification: {
-        workspace: verificationWorkspace,
-        execution: {
-          run:
-            options.run ??
-            (async () => {
-              throw new Error("verification discovery must not execute anything");
-            })
-        }
-      }
+      verification: { workspace, availability, execution }
     })
   );
 }
 
-describe("safe verification recipes", () => {
-  it("discovers supported package scripts without parsing or executing script bodies", async () => {
-    const capability = service({
-      packageJson: JSON.stringify({
-        scripts: {
-          test: "vitest run",
-          lint: "eslint .",
-          typecheck: "tsc --noEmit",
-          build: "echo build && rm -rf should-never-be-parsed",
-          dev: "vite"
-        }
-      }),
-      allowedExecutableNames: ["pnpm"]
-    });
+function packageFixture(packageManager?: string): Record<string, unknown> {
+  return {
+    name: "fixture",
+    ...(packageManager === undefined ? {} : { packageManager }),
+    scripts: {
+      test: "node -e \"require('child_process').execSync('echo malicious-looking')\"",
+      lint: "eslint ."
+    }
+  };
+}
 
-    await expect(capability.listVerifications({ workspaceId: "ws_pkg" })).resolves.toEqual({
-      schemaVersion: 1,
-      workspaceId: "ws_pkg",
-      recipes: [
-        {
-          id: "package:test",
-          label: "Package test",
-          category: "test",
-          logicalExecutable: "pnpm",
-          argv: ["run", "test"],
-          cwd: ".",
-          source: "package-script",
-          allowed: true
-        },
-        {
-          id: "package:lint",
-          label: "Package lint",
-          category: "lint",
-          logicalExecutable: "pnpm",
-          argv: ["run", "lint"],
-          cwd: ".",
-          source: "package-script",
-          allowed: true
-        },
-        {
-          id: "package:typecheck",
-          label: "Package typecheck",
-          category: "typecheck",
-          logicalExecutable: "pnpm",
-          argv: ["run", "typecheck"],
-          cwd: ".",
-          source: "package-script",
-          allowed: true
-        },
-        {
-          id: "package:build",
-          label: "Package build",
-          category: "build",
-          logicalExecutable: "pnpm",
-          argv: ["run", "build"],
-          cwd: ".",
-          source: "package-script",
-          allowed: true
-        }
-      ]
+describe("safe verification recipes", () => {
+  for (const [manager, lockfile] of [
+    ["pnpm", "pnpm-lock.yaml"],
+    ["npm", "package-lock.json"],
+    ["yarn", "yarn.lock"],
+    ["bun", "bun.lock"]
+  ] as const) {
+    it(`discovers ${manager} package recipes from explicit matching evidence`, async () => {
+      const capability = service({
+        packageJson: packageFixture(`${manager}@9.9.9`),
+        files: [lockfile]
+      });
+
+      const result = await capability.listVerifications({ workspaceId: `ws_${manager}` });
+      expect(result.recipes).toContainEqual({
+        id: "package:test",
+        label: "Package test",
+        category: "test",
+        logicalExecutable: manager,
+        argv: ["run", "test"],
+        cwd: ".",
+        source: "package-script",
+        allowed: true
+      });
+      expect(result.recipes.find((recipe) => recipe.id === "package:test")?.argv).not.toContain(
+        "node -e \"require('child_process').execSync('echo malicious-looking')\""
+      );
+    });
+  }
+
+  it("selects a manager from one lockfile when packageManager is absent", async () => {
+    const capability = service({ packageJson: packageFixture(), files: ["yarn.lock"] });
+    const result = await capability.listVerifications({ workspaceId: "ws_lock_only" });
+    expect(result.recipes.find((recipe) => recipe.id === "package:test")).toMatchObject({
+      logicalExecutable: "yarn",
+      argv: ["run", "test"],
+      allowed: true
     });
   });
 
-  it("discovers stable Cargo verification recipes", async () => {
-    const capability = service({ cargo: true, allowedExecutableNames: ["cargo"] });
+  it("fails closed on conflicting manager evidence without inventing launch fields", async () => {
+    const explicitConflict = service({
+      packageJson: packageFixture("pnpm@10"),
+      files: ["package-lock.json"]
+    });
+    const multipleLocks = service({
+      packageJson: packageFixture(),
+      files: ["pnpm-lock.yaml", "yarn.lock"]
+    });
 
+    for (const capability of [explicitConflict, multipleLocks]) {
+      const recipe = (await capability.listVerifications({ workspaceId: "ws_conflict" })).recipes.find(
+        (candidate) => candidate.id === "package:test"
+      );
+      expect(recipe).toEqual({
+        id: "package:test",
+        label: "Package test",
+        category: "test",
+        source: "package-script",
+        allowed: false,
+        blockedReason: "PACKAGE_MANAGER_CONFLICT"
+      });
+    }
+  });
+
+  it("keeps scripts discoverable but blocked when package manager evidence is absent", async () => {
+    const capability = service({ packageJson: packageFixture() });
+    const recipe = (await capability.listVerifications({ workspaceId: "ws_unknown" })).recipes.find(
+      (candidate) => candidate.id === "package:test"
+    );
+    expect(recipe).toEqual({
+      id: "package:test",
+      label: "Package test",
+      category: "test",
+      source: "package-script",
+      allowed: false,
+      blockedReason: "PACKAGE_MANAGER_UNKNOWN"
+    });
+  });
+
+  it("uses exact known-path probes and never recursive tree discovery", async () => {
+    const probed: string[] = [];
+    const capability = service({
+      packageJson: packageFixture("pnpm@10"),
+      files: ["pnpm-lock.yaml", "Cargo.toml"],
+      onPathIdentity: (path) => probed.push(path)
+    });
+
+    await capability.listVerifications({ workspaceId: "ws_probe" });
+    expect(probed).toEqual([
+      "package.json",
+      "Cargo.toml",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "npm-shrinkwrap.json",
+      "yarn.lock",
+      "bun.lock",
+      "bun.lockb"
+    ]);
+  });
+
+  it("applies policy and static availability in fail-closed precedence", async () => {
+    const cases = [
+      {
+        options: { allowProcess: false, allowedExecutables: ["pnpm"] },
+        reason: "PROCESS_NOT_ALLOWED"
+      },
+      {
+        options: { allowProcess: true, allowedExecutables: [] },
+        reason: "EXECUTABLE_NOT_ALLOWED"
+      },
+      {
+        options: {
+          allowProcess: true,
+          allowedExecutables: ["pnpm"],
+          availability: { pnpm: { executableAvailable: false, sandboxAvailable: true } }
+        },
+        reason: "EXECUTABLE_UNAVAILABLE"
+      },
+      {
+        options: {
+          allowProcess: true,
+          allowedExecutables: ["pnpm"],
+          availability: { pnpm: { executableAvailable: true, sandboxAvailable: false } }
+        },
+        reason: "SANDBOX_UNAVAILABLE"
+      }
+    ] as const;
+
+    for (const { options, reason } of cases) {
+      const capability = service({
+        packageJson: packageFixture("pnpm@10"),
+        files: ["pnpm-lock.yaml"],
+        ...options
+      });
+      const recipe = (await capability.listVerifications({ workspaceId: "ws_policy" })).recipes.find(
+        (candidate) => candidate.id === "package:test"
+      );
+      expect(recipe).toMatchObject({ allowed: false, blockedReason: reason });
+    }
+  });
+
+  it("discovers fixed Cargo recipes through exact manifest evidence and availability", async () => {
+    const capability = service({ files: ["Cargo.toml"] });
     const result = await capability.listVerifications({ workspaceId: "ws_cargo" });
-
     expect(result.recipes).toEqual([
       {
         id: "cargo:test",
@@ -157,72 +265,11 @@ describe("safe verification recipes", () => {
     ]);
   });
 
-  it("marks recipes blocked when the executable is absent from effective policy", async () => {
-    const capability = service({
-      packageJson: JSON.stringify({ scripts: { test: "vitest run" } }),
-      cargo: true,
-      allowedExecutableNames: ["cargo"]
-    });
-
-    const result = await capability.listVerifications({ workspaceId: "ws_policy" });
-
-    expect(result.recipes.find((recipe) => recipe.id === "package:test")).toMatchObject({
-      allowed: false,
-      blockedReason: "EXECUTABLE_NOT_ALLOWED"
-    });
-    expect(result.recipes.find((recipe) => recipe.id === "cargo:test")).toMatchObject({
-      allowed: true
-    });
-  });
-
-  it("marks recipes blocked when process authority is disabled even if executable remains allowlisted", async () => {
-    const capability = service({
-      packageJson: JSON.stringify({ scripts: { test: "vitest run" } }),
-      allowedExecutableNames: ["pnpm"],
-      allowProcess: false
-    });
-
-    const result = await capability.listVerifications({ workspaceId: "ws_no_process" });
-
-    expect(result.recipes.find((recipe) => recipe.id === "package:test")).toMatchObject({
-      allowed: false,
-      blockedReason: "PROCESS_NOT_ALLOWED"
-    });
-  });
-
-  it("fails closed when bounded manifest discovery is truncated", async () => {
-    let runCalls = 0;
-    const capability = new NativeCapabilityService(
-      createTestCapabilityDependencies({
-        verification: {
-          workspace: {
-            tree: async () => ({ entries: [], truncated: true }),
-            readFile: async () => {
-              throw new Error("truncated discovery must not read manifests");
-            },
-            effectivePolicy: () => ({ allowProcess: true, allowedExecutableNames: ["pnpm"] })
-          },
-          execution: {
-            run: async () => {
-              runCalls += 1;
-              throw new Error("truncated discovery must not execute");
-            }
-          }
-        }
-      })
-    );
-
-    await expect(
-      capability.listVerifications({ workspaceId: "ws_truncated" })
-    ).rejects.toThrow(/truncated/i);
-    expect(runCalls).toBe(0);
-  });
-
-  it("re-resolves the selected recipe and runs only its stored executable, argv, and cwd", async () => {
+  it("re-resolves discovery before run and executes only stored recipe fields including recipeId", async () => {
     const calls: unknown[] = [];
     const capability = service({
-      packageJson: JSON.stringify({ scripts: { test: "arbitrary shell body is metadata only" } }),
-      allowedExecutableNames: ["pnpm"],
+      packageJson: packageFixture("npm@11"),
+      files: ["package-lock.json"],
       run: async (input) => {
         calls.push(input);
         return {
@@ -230,17 +277,17 @@ describe("safe verification recipes", () => {
           operationId: "op_verify",
           state: "completed",
           exitCode: 0,
-          stdoutPreview: "ok\n",
+          stdoutPreview: "ok",
           stderrPreview: "",
           stdoutTruncated: false,
           stderrTruncated: false,
           sourceTruncated: false,
-          bytesSpooled: 3,
+          bytesSpooled: 2,
           artifact: {
             schemaVersion: 1,
             uri: "artifact://ka_verify",
             mediaType: "application/vnd.kodegpt.execution-stream",
-            sizeBytes: 3,
+            sizeBytes: 2,
             sourceTruncated: false
           }
         };
@@ -252,74 +299,37 @@ describe("safe verification recipes", () => {
       recipeId: "package:test",
       background: true
     });
-
+    expect(result.operation.operationId).toBe("op_verify");
     expect(calls).toEqual([
       {
         workspaceId: "ws_run",
-        logicalExecutable: "pnpm",
+        recipeId: "package:test",
+        logicalExecutable: "npm",
         argv: ["run", "test"],
         cwd: ".",
         background: true
       }
     ]);
-    expect(result).toMatchObject({
-      schemaVersion: 1,
-      workspaceId: "ws_run",
-      recipe: { id: "package:test", allowed: true },
-      operation: { schemaVersion: 1, operationId: "op_verify", state: "completed" }
-    });
   });
 
-  it("re-checks current policy before run and rejects a now-blocked recipe", async () => {
-    let allowed = true;
-    let runCalls = 0;
-    const packageJson = JSON.stringify({ scripts: { test: "vitest run" } });
-    const verificationWorkspace: VerificationWorkspaceAdapter = {
-      tree: async () => ({ entries: [{ path: "package.json", kind: "file" }], truncated: false }),
-      readFile: async () => ({ contents: packageJson, bytesRead: packageJson.length, eof: true }),
-      effectivePolicy: () => ({
-        allowProcess: true,
-        allowedExecutableNames: allowed ? ["pnpm"] : []
-      })
-    };
-    const capability = new NativeCapabilityService(
-      createTestCapabilityDependencies({
-        verification: {
-          workspace: verificationWorkspace,
-          execution: {
-            run: async () => {
-              runCalls += 1;
-              throw new Error("blocked recipe must not execute");
-            }
-          }
-        }
-      })
-    );
-
-    const listed = await capability.listVerifications({ workspaceId: "ws_recheck" });
-    expect(listed.recipes[0]?.allowed).toBe(true);
-    allowed = false;
-
-    await expect(
-      capability.runVerification({ workspaceId: "ws_recheck", recipeId: "package:test" })
-    ).rejects.toMatchObject({ code: "VERIFICATION_RECIPE_BLOCKED" });
-    expect(runCalls).toBe(0);
-  });
-
-  it("rejects unknown recipe IDs without invoking execution", async () => {
-    let runCalls = 0;
-    const capability = service({
-      packageJson: JSON.stringify({ scripts: { test: "vitest run" } }),
-      allowedExecutableNames: ["pnpm"],
-      run: async () => {
-        runCalls += 1;
-        throw new Error("unknown recipe must not execute");
-      }
+  it("uses stable errors for invalid, missing, blocked, and invalid manifest discovery", async () => {
+    const capability = service({ packageJson: packageFixture() });
+    await expect(capability.listVerifications({ workspaceId: "" })).rejects.toMatchObject({
+      code: "CAPABILITY_INPUT_INVALID"
     });
-
     await expect(
-      capability.runVerification({ workspaceId: "ws_unknown", recipeId: "package:missing" })
-    ).rejects.toMatchObject({ code: "VERIFICATION_RECIPE_NOT_FOUND" });
-    expect(runCalls).toBe(0);
+      capability.runVerification({ workspaceId: "ws_missing", recipeId: "missing" })
+    ).rejects.toMatchObject({ code: "VERIFICATION_NOT_FOUND" });
+    await expect(
+      capability.runVerification({ workspaceId: "ws_blocked", recipeId: "package:test" })
+    ).rejects.toMatchObject({ code: "VERIFICATION_NOT_ALLOWED" });
+
+    const malformed = service({ packageJsonText: "{not-json" });
+    await expect(
+      malformed.listVerifications({ workspaceId: "ws_malformed" })
+    ).rejects.toMatchObject({
+      code: "VERIFICATION_DISCOVERY_INVALID",
+      message: "Verification discovery is invalid"
+    });
   });
 });

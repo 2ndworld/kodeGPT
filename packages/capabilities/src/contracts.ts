@@ -155,9 +155,9 @@ export interface VerificationRecipe {
   id: string;
   label: string;
   category: VerificationCategory;
-  logicalExecutable: string;
-  argv: string[];
-  cwd: string;
+  logicalExecutable?: string;
+  argv?: string[];
+  cwd?: string;
   source: VerificationSource;
   allowed: boolean;
   blockedReason?: string;

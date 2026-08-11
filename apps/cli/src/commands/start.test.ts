@@ -83,6 +83,7 @@ function dependencies(
     closeWorkspace: async () => undefined,
     requireReady: () => readyWorkspace,
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+    pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
     writeFile: async () => ({ bytesWritten: 0, created: true }),
     editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
     gitStatus: async () => gitInspection,
@@ -90,6 +91,12 @@ function dependencies(
     gitCheckpointPatch: async () => gitInspection,
     gitDiff: async () => gitInspection,
     runProcess: async () => completedProcess,
+    inspectExecutable: async () => ({
+      schemaVersion: 1 as const,
+      executableAvailable: true,
+      sandboxAvailable: true
+    }),
+    runVerificationProcess: async () => completedProcess,
     processStatus: async () => completedProcess,
     processCancel: async () => ({ ...completedProcess, state: "cancelled" as const }),
     search: async () => [],
@@ -246,7 +253,10 @@ describe("kodegpt start orchestration", () => {
     const runInputs: unknown[] = [];
     deps.createManagers = (options) => {
       const managers = originalCreateManagers(options);
-      const packageJson = JSON.stringify({ scripts: { test: "metadata only" } });
+      const packageJson = JSON.stringify({
+        packageManager: "pnpm@10.0.0",
+        scripts: { test: "metadata only" }
+      });
       Object.assign(managers.workspaceManager, {
         requireReady: () => ({
           id: "ws_test",
@@ -261,12 +271,21 @@ describe("kodegpt start orchestration", () => {
             envAllowlist: []
           }
         }),
-        treeBounded: async () => ({
-          entries: [{ path: "package.json", kind: "file" as const }],
-          truncated: false
+        pathIdentity: async (_workspaceId: string, path: string) => ({
+          schemaVersion: 1 as const,
+          exists: path === "package.json" || path === "pnpm-lock.yaml",
+          ...(path === "package.json" || path === "pnpm-lock.yaml"
+            ? { kind: "file" as const, sizeBytes: 1 }
+            : {}),
+          hashTruncated: false
         }),
         readFile: async () => ({ contents: packageJson, bytesRead: packageJson.length, eof: true }),
-        runProcess: async (input: unknown) => {
+        inspectExecutable: async () => ({
+          schemaVersion: 1 as const,
+          executableAvailable: true,
+          sandboxAvailable: true
+        }),
+        runVerificationProcess: async (input: unknown) => {
           runInputs.push(input);
           return {
             schemaVersion: 1 as const,
@@ -312,6 +331,7 @@ describe("kodegpt start orchestration", () => {
       expect(runInputs).toEqual([
         {
           workspaceId: "ws_test",
+          recipeId: "package:test",
           logicalExecutable: "pnpm",
           argv: ["run", "test"],
           cwd: ".",

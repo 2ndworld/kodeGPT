@@ -170,6 +170,28 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "process.inspect_executable":
+        return { schemaVersion: 1, executableAvailable: true, sandboxAvailable: true } as T;
+      case "verify.run":
+        return {
+          schemaVersion: 1,
+          operationId: "op_verify_fixture",
+          state: "completed",
+          exitCode: 0,
+          stdoutPreview: "verify ok\n",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 10,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_verify_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 10,
+            sourceTruncated: false
+          }
+        } as T;
       case "file.tree":
         return {
           entries: [
@@ -397,6 +419,55 @@ describe("WorkspaceManager", () => {
         params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 500 }
       }
     ]);
+  });
+
+  it("routes verification availability and semantic execution through closed internal runtime methods", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_verify_runtime"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const availability = await manager.inspectExecutable("ws_verify_runtime", "cargo");
+    const operation = await manager.runVerificationProcess({
+      workspaceId: "ws_verify_runtime",
+      recipeId: "cargo:test",
+      logicalExecutable: "cargo",
+      argv: ["test", "--workspace"],
+      cwd: ".",
+      background: true
+    });
+
+    expect(availability).toEqual({
+      schemaVersion: 1,
+      executableAvailable: true,
+      sandboxAvailable: true
+    });
+    expect(operation).toMatchObject({
+      schemaVersion: 1,
+      operationId: "op_verify_fixture",
+      state: "completed"
+    });
+    expect(kernel.calls.slice(-2)).toEqual([
+      {
+        method: "process.inspect_executable",
+        params: { capabilityId: "kc_fixture", logicalExecutable: "cargo" }
+      },
+      {
+        method: "verify.run",
+        params: {
+          capabilityId: "kc_fixture",
+          recipeId: "cargo:test",
+          logicalExecutable: "cargo",
+          argv: ["test", "--workspace"],
+          cwd: ".",
+          background: true
+        }
+      }
+    ]);
+    expect(JSON.stringify({ availability, operation })).not.toContain("/home/");
   });
 
   it("propagates closed search truncation reasons and rejects inconsistent runtime payloads", async () => {

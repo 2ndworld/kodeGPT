@@ -185,6 +185,24 @@ pub struct ProcessRunParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessInspectExecutableParams {
+    pub capability_id: String,
+    pub logical_executable: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyRunParams {
+    pub capability_id: String,
+    pub recipe_id: String,
+    pub logical_executable: String,
+    pub argv: Vec<String>,
+    pub cwd: String,
+    pub background: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessOperationParams {
     pub capability_id: String,
     pub operation_id: String,
@@ -315,11 +333,23 @@ pub enum RuntimeRequest {
         id: String,
         params: GitDiffParams,
     },
+    #[serde(rename = "process.inspect_executable")]
+    ProcessInspectExecutable {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: ProcessInspectExecutableParams,
+    },
     #[serde(rename = "process.run")]
     ProcessRun {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: ProcessRunParams,
+    },
+    #[serde(rename = "verify.run")]
+    VerifyRun {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: VerifyRunParams,
     },
     #[serde(rename = "process.status")]
     ProcessStatus {

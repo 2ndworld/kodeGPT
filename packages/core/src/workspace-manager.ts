@@ -118,6 +118,21 @@ export interface WorkspaceProcessRunInput {
   background?: boolean;
 }
 
+export interface WorkspaceExecutableAvailabilityResult {
+  schemaVersion: 1;
+  executableAvailable: boolean;
+  sandboxAvailable: boolean;
+}
+
+export interface WorkspaceVerificationRunInput {
+  workspaceId: string;
+  recipeId: string;
+  logicalExecutable: string;
+  argv: string[];
+  cwd: string;
+  background?: boolean;
+}
+
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface WorkspaceTreeEntry {
@@ -518,6 +533,57 @@ export class WorkspaceManager {
       background: input.background ?? false
     });
     return validateProcessOperation(result, "process.run");
+  }
+
+  async inspectExecutable(
+    workspaceId: string,
+    logicalExecutable: string
+  ): Promise<WorkspaceExecutableAvailabilityResult> {
+    if (logicalExecutable.length === 0) {
+      throw new TypeError("Process logical executable must not be empty");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("process.inspect_executable", {
+      capabilityId: state.capabilityId,
+      logicalExecutable
+    });
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      typeof result.executableAvailable !== "boolean" ||
+      typeof result.sandboxAvailable !== "boolean" ||
+      Object.keys(result).some(
+        (key) => !["schemaVersion", "executableAvailable", "sandboxAvailable"].includes(key)
+      )
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "process.inspect_executable returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      executableAvailable: result.executableAvailable,
+      sandboxAvailable: result.sandboxAvailable
+    };
+  }
+
+  async runVerificationProcess(
+    input: WorkspaceVerificationRunInput
+  ): Promise<WorkspaceProcessOperationResult> {
+    if (input.recipeId.length === 0 || input.logicalExecutable.length === 0 || input.cwd.length === 0) {
+      throw new TypeError("Verification run fields must not be empty");
+    }
+    const state = this.#requireReadyState(input.workspaceId);
+    const result = await this.#kernel.request<unknown>("verify.run", {
+      capabilityId: state.capabilityId,
+      recipeId: input.recipeId,
+      logicalExecutable: input.logicalExecutable,
+      argv: input.argv,
+      cwd: input.cwd,
+      background: input.background ?? false
+    });
+    return validateProcessOperation(result, "verify.run");
   }
 
   async processStatus(
@@ -967,7 +1033,7 @@ function validateSearchMatch(value: unknown): WorkspaceSearchMatch {
 
 function validateProcessOperation(
   value: unknown,
-  method: "process.run" | "process.status" | "process.cancel"
+  method: "process.run" | "verify.run" | "process.status" | "process.cancel"
 ): WorkspaceProcessOperationResult {
   if (
     !isRecord(value) ||

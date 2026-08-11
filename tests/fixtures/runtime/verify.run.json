@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_verify_run",
+  "method": "verify.run",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "recipeId": "cargo:test",
+    "logicalExecutable": "cargo",
+    "argv": ["test", "--workspace"],
+    "cwd": ".",
+    "background": false
+  }
+}

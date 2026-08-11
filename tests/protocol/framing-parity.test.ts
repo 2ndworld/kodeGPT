@@ -31,7 +31,9 @@ const FIXTURE_NAMES = [
   "git.checkpoint.json",
   "git.checkpoint_patch.json",
   "git.diff.json",
+  "process.inspect_executable.json",
   "process.run.json",
+  "verify.run.json",
   "process.status.json",
   "process.cancel.json",
   "artifact.read.json"
@@ -57,7 +59,9 @@ const EXPECTED_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "process.inspect_executable",
   "process.run",
+  "verify.run",
   "process.status",
   "process.cancel",
   "artifact.read"
