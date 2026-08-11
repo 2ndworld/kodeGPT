@@ -18,8 +18,8 @@ use crate::read::{
     read_file_beneath, search_utf8_beneath, tree_beneath,
 };
 use crate::write::{
-    EditFileResult, WorkspaceWriteError, WriteFileResult, edit_file_exact_beneath,
-    write_file_atomic_beneath,
+    EditFileResult, PatchFileAction, PatchFileCommitResult, WorkspaceWriteError, WriteFileResult,
+    commit_patch_file_beneath, edit_file_exact_beneath, write_file_atomic_beneath,
 };
 
 static NEXT_CAPABILITY_ID: AtomicU64 = AtomicU64::new(1);
@@ -67,6 +67,8 @@ pub enum WorkspaceRegistryError {
     FileReadFailed,
     FileWriteConflict,
     FileWriteFailed,
+    PatchPreconditionFailed,
+    PatchTargetExists,
     CapabilityNotFound,
 }
 
@@ -102,6 +104,8 @@ impl fmt::Display for WorkspaceRegistryError {
                 formatter.write_str("workspace file edit conflicted with expected replacements")
             }
             Self::FileWriteFailed => formatter.write_str("workspace file mutation failed"),
+            Self::PatchPreconditionFailed => formatter.write_str("workspace patch precondition failed"),
+            Self::PatchTargetExists => formatter.write_str("workspace patch create target already exists"),
             Self::CapabilityNotFound => formatter.write_str("workspace capability was not found"),
         }
     }
@@ -365,6 +369,32 @@ impl<P> WorkspaceRegistry<P> {
         .map_err(map_workspace_write_error)
     }
 
+    pub fn commit_patch_file_with_policy<F>(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        action: PatchFileAction,
+        expected_sha256: Option<&str>,
+        content: Option<&[u8]>,
+        authorize: F,
+    ) -> Result<PatchFileCommitResult, WorkspaceRegistryError>
+    where
+        F: FnOnce(&P) -> bool,
+    {
+        let context = self.ready_context(capability_id)?;
+        if !authorize(&context.effective_policy) {
+            return Err(WorkspaceRegistryError::FileAccessDenied);
+        }
+        commit_patch_file_beneath(
+            &context.root_fd,
+            relative_path,
+            action,
+            expected_sha256,
+            content,
+        )
+        .map_err(map_workspace_write_error)
+    }
+
     pub fn require_ready(&self, capability_id: &str) -> Result<(), WorkspaceRegistryError> {
         self.ready_context(capability_id).map(|_| ())
     }
@@ -498,6 +528,8 @@ fn map_workspace_write_error(error: WorkspaceWriteError) -> WorkspaceRegistryErr
         WorkspaceWriteError::NotFound => WorkspaceRegistryError::FileNotFound,
         WorkspaceWriteError::InvalidUtf8 => WorkspaceRegistryError::FileInvalidUtf8,
         WorkspaceWriteError::Conflict => WorkspaceRegistryError::FileWriteConflict,
+        WorkspaceWriteError::PreconditionFailed => WorkspaceRegistryError::PatchPreconditionFailed,
+        WorkspaceWriteError::TargetExists => WorkspaceRegistryError::PatchTargetExists,
         WorkspaceWriteError::NotRegularFile | WorkspaceWriteError::Io(_) => {
             WorkspaceRegistryError::FileWriteFailed
         }

@@ -16,6 +16,7 @@ export const RUNTIME_METHODS = [
   "file.identity",
   "file.write",
   "file.edit",
+  "file.commit_patch_file",
   "git.status",
   "git.checkpoint",
   "git.checkpoint_patch",
@@ -137,6 +138,38 @@ const fileEditParamsSchema = z
   })
   .strict();
 
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+const fileCommitPatchParamsSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      path: z.string().min(1),
+      action: z.literal("create"),
+      expectedSha256: z.null(),
+      content: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      path: z.string().min(1),
+      action: z.literal("update"),
+      expectedSha256: sha256Schema,
+      content: z.string()
+    })
+    .strict(),
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      path: z.string().min(1),
+      action: z.literal("delete"),
+      expectedSha256: sha256Schema,
+      content: z.null()
+    })
+    .strict()
+]);
+
 const gitInspectionParamsSchema = z
   .object({
     capabilityId: z.string().min(1)
@@ -214,6 +247,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.identity", fileIdentityParamsSchema),
   requestSchema("file.write", fileWriteParamsSchema),
   requestSchema("file.edit", fileEditParamsSchema),
+  requestSchema("file.commit_patch_file", fileCommitPatchParamsSchema),
   requestSchema("git.status", gitInspectionParamsSchema),
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),

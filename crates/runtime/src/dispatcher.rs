@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use kodegpt_protocol::{
-    ArtifactReadParams, FileEditParams, FileIdentityParams, FileReadParams, FileSearchParams,
-    FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
+    ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
+    FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy, VerifyRunParams,
     WorkspaceActivateParams,
@@ -12,7 +12,7 @@ use kodegpt_protocol::{
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
-    FilesystemIdentity, SEARCH_MAX_MATCHES, TREE_MAX_ENTRIES, WorkspaceRegistry,
+    FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, TREE_MAX_ENTRIES, WorkspaceRegistry,
     WorkspaceRegistryError, inspect_root, probe_filesystem_boundary,
 };
 use serde::Deserialize;
@@ -529,6 +529,74 @@ async fn dispatch_one(
                         &old_text,
                         &new_text,
                         expected_replacements,
+                        mutation_allowed,
+                    )?;
+                    Ok(json!(result))
+                },
+            )
+        }
+        "file.commit_patch_file" => {
+            let parsed = match serde_json::from_value::<FileCommitPatchParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let (capability_id, path, action, expected_sha256, content) = match parsed {
+                FileCommitPatchParams::Create {
+                    capability_id,
+                    path,
+                    expected_sha256: (),
+                    content,
+                } if !capability_id.is_empty() && !path.is_empty() => (
+                    capability_id,
+                    PathBuf::from(path),
+                    PatchFileAction::Create,
+                    None,
+                    Some(content),
+                ),
+                FileCommitPatchParams::Update {
+                    capability_id,
+                    path,
+                    expected_sha256,
+                    content,
+                } if !capability_id.is_empty()
+                    && !path.is_empty()
+                    && valid_sha256_hex(&expected_sha256) => (
+                    capability_id,
+                    PathBuf::from(path),
+                    PatchFileAction::Update,
+                    Some(expected_sha256),
+                    Some(content),
+                ),
+                FileCommitPatchParams::Delete {
+                    capability_id,
+                    path,
+                    expected_sha256,
+                    content: (),
+                } if !capability_id.is_empty()
+                    && !path.is_empty()
+                    && valid_sha256_hex(&expected_sha256) => (
+                    capability_id,
+                    PathBuf::from(path),
+                    PatchFileAction::Delete,
+                    Some(expected_sha256),
+                    None,
+                ),
+                _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let audit_capability_id = capability_id.clone();
+            audited_workspace_operation(
+                &audit,
+                &workspace_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::FileCommitPatchFile,
+                move |registry| {
+                    let result = registry.commit_patch_file_with_policy(
+                        &capability_id,
+                        &path,
+                        action,
+                        expected_sha256.as_deref(),
+                        content.as_deref().map(str::as_bytes),
                         mutation_allowed,
                     )?;
                     Ok(json!(result))
@@ -1550,6 +1618,13 @@ fn mutation_allowed(policy: &RuntimePolicy) -> bool {
     policy.allow_write && policy.name != ProfileName::Observe
 }
 
+fn valid_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'static str) {
     match error {
         WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
@@ -1571,6 +1646,8 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
         WorkspaceRegistryError::FileWriteConflict => (-32036, "FILE_EDIT_CONFLICT"),
         WorkspaceRegistryError::FileWriteFailed => (-32037, "FILE_WRITE_FAILED"),
+        WorkspaceRegistryError::PatchPreconditionFailed => (-32038, "PATCH_PRECONDITION_FAILED"),
+        WorkspaceRegistryError::PatchTargetExists => (-32039, "PATCH_TARGET_EXISTS"),
         WorkspaceRegistryError::CapabilityNotFound => (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND"),
     }
 }
@@ -2838,6 +2915,148 @@ mod tests {
         ] {
             fs::remove_dir_all(workspace).expect("workspace removed");
         }
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn conditional_patch_commit_enforces_policy_preconditions_and_audit_before_mutation() {
+        let (audit, audit_root) = audit_sink("conditional-patch-commit");
+        let writable_workspace = audit_root.with_extension("patch-writable-workspace");
+        let denied_workspace = audit_root.with_extension("patch-denied-workspace");
+        fs::create_dir_all(&writable_workspace).expect("writable workspace created");
+        fs::create_dir_all(&denied_workspace).expect("denied workspace created");
+        fs::write(writable_workspace.join("target.txt"), "before\n").expect("target written");
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let writable_cap = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &writable_workspace,
+            develop_policy(true),
+            "patch_writable",
+        )
+        .await;
+        let denied_cap = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &denied_workspace,
+            develop_policy(false),
+            "patch_denied",
+        )
+        .await;
+
+        let updated = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_patch_update",
+            "file.commit_patch_file",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "target.txt",
+                "action": "update",
+                "expectedSha256": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+                "content": "after\n"
+            }),
+        )
+        .await;
+        assert_eq!(updated["result"]["schemaVersion"], 1);
+        assert_eq!(updated["result"]["action"], "update");
+        assert_eq!(updated["result"]["bytesWritten"], 6);
+        assert_eq!(
+            updated["result"]["sha256"],
+            "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
+        );
+        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+
+        let stale = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_patch_stale",
+            "file.commit_patch_file",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "target.txt",
+                "action": "update",
+                "expectedSha256": "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+                "content": "must-not-write\n"
+            }),
+        )
+        .await;
+        assert_eq!(stale["error"]["message"], "PATCH_PRECONDITION_FAILED");
+        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+
+        let exists = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_patch_exists",
+            "file.commit_patch_file",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "target.txt",
+                "action": "create",
+                "expectedSha256": null,
+                "content": "must-not-clobber\n"
+            }),
+        )
+        .await;
+        assert_eq!(exists["error"]["message"], "PATCH_TARGET_EXISTS");
+        assert_eq!(fs::read_to_string(writable_workspace.join("target.txt")).unwrap(), "after\n");
+
+        let denied = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_patch_denied",
+            "file.commit_patch_file",
+            json!({
+                "capabilityId": denied_cap,
+                "path": "blocked.txt",
+                "action": "create",
+                "expectedSha256": null,
+                "content": "must-not-exist\n"
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["message"], "FILE_ACCESS_DENIED");
+        assert!(!denied_workspace.join("blocked.txt").exists());
+
+        audit.inject_faults(AuditFaults {
+            fail_next_decision: true,
+            fail_next_outcome: false,
+        });
+        let audit_blocked = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_patch_audit_blocked",
+            "file.commit_patch_file",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "audit-blocked.txt",
+                "action": "create",
+                "expectedSha256": null,
+                "content": "must-not-exist\n"
+            }),
+        )
+        .await;
+        assert_eq!(audit_blocked["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!writable_workspace.join("audit-blocked.txt").exists());
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("file_commit_patch_file"));
+        for secret in ["after\\n", "must-not-write", "must-not-clobber", "must-not-exist"] {
+            assert!(!audit_text.contains(secret));
+        }
+
+        fs::remove_dir_all(writable_workspace).expect("writable workspace removed");
+        fs::remove_dir_all(denied_workspace).expect("denied workspace removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 }

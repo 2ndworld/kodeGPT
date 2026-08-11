@@ -8,10 +8,12 @@ use std::path::Path;
 
 use getrandom::fill as fill_random;
 use rustix::fs::{
-    AtFlags, FileType, Mode, OFlags, fchmod, fstat, fsync, openat, renameat, statat, unlinkat,
+    AtFlags, FileType, Mode, OFlags, RenameFlags, fchmod, fstat, fsync, openat, renameat,
+    renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::openat::{OpenatBoundaryError, open_existing_beneath, open_parent_beneath};
 
@@ -24,6 +26,8 @@ pub enum WorkspaceWriteError {
     NotRegularFile,
     InvalidUtf8,
     Conflict,
+    PreconditionFailed,
+    TargetExists,
     Io(Errno),
 }
 
@@ -43,6 +47,8 @@ impl fmt::Display for WorkspaceWriteError {
             }
             Self::InvalidUtf8 => formatter.write_str("workspace edit target is not valid UTF-8"),
             Self::Conflict => formatter.write_str("workspace edit replacement count conflict"),
+            Self::PreconditionFailed => formatter.write_str("workspace patch precondition failed"),
+            Self::TargetExists => formatter.write_str("workspace patch create target already exists"),
             Self::Io(error) => write!(formatter, "workspace mutation failed: {error}"),
         }
     }
@@ -62,6 +68,23 @@ pub struct WriteFileResult {
 pub struct EditFileResult {
     pub bytes_written: u64,
     pub replacements: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PatchFileAction {
+    Create,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchFileCommitResult {
+    pub schema_version: u32,
+    pub action: PatchFileAction,
+    pub bytes_written: u64,
+    pub sha256: Option<String>,
 }
 
 pub fn write_file_atomic_beneath(
@@ -136,6 +159,193 @@ pub fn edit_file_exact_beneath(
         bytes_written: result.bytes_written,
         replacements,
     })
+}
+
+pub fn commit_patch_file_beneath(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    action: PatchFileAction,
+    expected_sha256: Option<&str>,
+    content: Option<&[u8]>,
+) -> Result<PatchFileCommitResult, WorkspaceWriteError> {
+    match action {
+        PatchFileAction::Create => {
+            if expected_sha256.is_some() || content.is_none() {
+                return Err(WorkspaceWriteError::PreconditionFailed);
+            }
+            commit_patch_create(root_fd, relative_path, content.expect("validated create content"))
+        }
+        PatchFileAction::Update => {
+            let expected = expected_sha256.ok_or(WorkspaceWriteError::PreconditionFailed)?;
+            let content = content.ok_or(WorkspaceWriteError::PreconditionFailed)?;
+            if !is_sha256_hex(expected) {
+                return Err(WorkspaceWriteError::PreconditionFailed);
+            }
+            commit_patch_update(root_fd, relative_path, expected, content)
+        }
+        PatchFileAction::Delete => {
+            let expected = expected_sha256.ok_or(WorkspaceWriteError::PreconditionFailed)?;
+            if content.is_some() || !is_sha256_hex(expected) {
+                return Err(WorkspaceWriteError::PreconditionFailed);
+            }
+            commit_patch_delete(root_fd, relative_path, expected)
+        }
+    }
+}
+
+fn commit_patch_create(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    contents: &[u8],
+) -> Result<PatchFileCommitResult, WorkspaceWriteError> {
+    let parent = open_parent_beneath(root_fd, relative_path).map_err(map_boundary_error)?;
+    let (temp_name, temp_fd) = create_random_temp(parent.parent_fd(), Mode::RUSR | Mode::WUSR)?;
+    let mut cleanup = true;
+    let result = (|| {
+        let mut file = File::from(temp_fd);
+        file.write_all(contents).map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+        drop(file);
+        match renameat_with(
+            parent.parent_fd(),
+            temp_name.as_os_str(),
+            parent.parent_fd(),
+            parent.leaf_name(),
+            RenameFlags::NOREPLACE,
+        ) {
+            Ok(()) => {}
+            Err(Errno::EXIST) => return Err(WorkspaceWriteError::TargetExists),
+            Err(error) => return Err(WorkspaceWriteError::Io(error)),
+        }
+        cleanup = false;
+        fsync(parent.parent_fd()).map_err(WorkspaceWriteError::Io)?;
+        Ok(PatchFileCommitResult {
+            schema_version: 1,
+            action: PatchFileAction::Create,
+            bytes_written: contents.len() as u64,
+            sha256: Some(sha256_hex(contents)),
+        })
+    })();
+    if cleanup {
+        let _ = unlinkat(parent.parent_fd(), temp_name.as_os_str(), AtFlags::empty());
+    }
+    result
+}
+
+fn commit_patch_update(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    expected_sha256: &str,
+    contents: &[u8],
+) -> Result<PatchFileCommitResult, WorkspaceWriteError> {
+    let parent = open_parent_beneath(root_fd, relative_path).map_err(map_boundary_error)?;
+    verify_patch_target(parent.parent_fd(), parent.leaf_name(), expected_sha256)?;
+    let (temp_name, temp_fd) = create_random_temp(parent.parent_fd(), Mode::RUSR | Mode::WUSR)?;
+    let mut cleanup = true;
+    let result = (|| {
+        let mut file = File::from(temp_fd);
+        file.write_all(contents).map_err(io_error)?;
+        file.sync_all().map_err(io_error)?;
+
+        let mode = verify_patch_target(parent.parent_fd(), parent.leaf_name(), expected_sha256)?;
+        fchmod(&file, mode).map_err(WorkspaceWriteError::Io)?;
+        file.sync_all().map_err(io_error)?;
+        drop(file);
+
+        renameat(
+            parent.parent_fd(),
+            temp_name.as_os_str(),
+            parent.parent_fd(),
+            parent.leaf_name(),
+        )
+        .map_err(WorkspaceWriteError::Io)?;
+        cleanup = false;
+        fsync(parent.parent_fd()).map_err(WorkspaceWriteError::Io)?;
+        Ok(PatchFileCommitResult {
+            schema_version: 1,
+            action: PatchFileAction::Update,
+            bytes_written: contents.len() as u64,
+            sha256: Some(sha256_hex(contents)),
+        })
+    })();
+    if cleanup {
+        let _ = unlinkat(parent.parent_fd(), temp_name.as_os_str(), AtFlags::empty());
+    }
+    result
+}
+
+fn commit_patch_delete(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    expected_sha256: &str,
+) -> Result<PatchFileCommitResult, WorkspaceWriteError> {
+    let parent = open_parent_beneath(root_fd, relative_path).map_err(map_boundary_error)?;
+    verify_patch_target(parent.parent_fd(), parent.leaf_name(), expected_sha256)?;
+    unlinkat(parent.parent_fd(), parent.leaf_name(), AtFlags::empty()).map_err(|error| match error {
+        Errno::NOENT => WorkspaceWriteError::PreconditionFailed,
+        error => WorkspaceWriteError::Io(error),
+    })?;
+    fsync(parent.parent_fd()).map_err(WorkspaceWriteError::Io)?;
+    Ok(PatchFileCommitResult {
+        schema_version: 1,
+        action: PatchFileAction::Delete,
+        bytes_written: 0,
+        sha256: None,
+    })
+}
+
+fn verify_patch_target(
+    parent_fd: std::os::fd::BorrowedFd<'_>,
+    leaf_name: &std::ffi::OsStr,
+    expected_sha256: &str,
+) -> Result<Mode, WorkspaceWriteError> {
+    let fd = openat(
+        parent_fd,
+        leaf_name,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| match error {
+        Errno::NOENT => WorkspaceWriteError::NotFound,
+        Errno::LOOP => WorkspaceWriteError::BoundaryViolation,
+        error => WorkspaceWriteError::Io(error),
+    })?;
+    let opened_stat = fstat(&fd).map_err(WorkspaceWriteError::Io)?;
+    if FileType::from_raw_mode(opened_stat.st_mode) != FileType::RegularFile {
+        return Err(WorkspaceWriteError::NotRegularFile);
+    }
+    let mut bytes = Vec::new();
+    File::from(fd).read_to_end(&mut bytes).map_err(io_error)?;
+    std::str::from_utf8(&bytes).map_err(|_| WorkspaceWriteError::InvalidUtf8)?;
+    if sha256_hex(&bytes) != expected_sha256 {
+        return Err(WorkspaceWriteError::PreconditionFailed);
+    }
+
+    let current_stat = statat(parent_fd, leaf_name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+        if error == Errno::NOENT {
+            WorkspaceWriteError::PreconditionFailed
+        } else {
+            WorkspaceWriteError::Io(error)
+        }
+    })?;
+    if FileType::from_raw_mode(current_stat.st_mode) != FileType::RegularFile
+        || current_stat.st_dev != opened_stat.st_dev
+        || current_stat.st_ino != opened_stat.st_ino
+    {
+        return Err(WorkspaceWriteError::PreconditionFailed);
+    }
+    Ok(Mode::from_bits_truncate((current_stat.st_mode & 0o777) as _))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn destination_mode(
@@ -228,7 +438,12 @@ mod tests {
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{WorkspaceWriteError, edit_file_exact_beneath, write_file_atomic_beneath};
+    use sha2::{Digest, Sha256};
+
+    use super::{
+        PatchFileAction, WorkspaceWriteError, commit_patch_file_beneath, edit_file_exact_beneath,
+        write_file_atomic_beneath,
+    };
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -245,6 +460,143 @@ mod tests {
 
     fn root_fd(path: &Path) -> OwnedFd {
         File::open(path).expect("root directory opens").into()
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    #[test]
+    fn conditional_patch_create_is_no_clobber_and_returns_new_digest() {
+        let root = temporary_root("patch-create");
+        let fd = root_fd(&root);
+
+        let created = commit_patch_file_beneath(
+            &fd,
+            Path::new("created.txt"),
+            PatchFileAction::Create,
+            None,
+            Some(b"created\n"),
+        )
+        .expect("create succeeds");
+        assert_eq!(created.action, PatchFileAction::Create);
+        assert_eq!(created.bytes_written, 8);
+        assert_eq!(created.sha256.as_deref(), Some(sha256_hex(b"created\n").as_str()));
+        assert_eq!(fs::read(root.join("created.txt")).unwrap(), b"created\n");
+
+        let conflict = commit_patch_file_beneath(
+            &fd,
+            Path::new("created.txt"),
+            PatchFileAction::Create,
+            None,
+            Some(b"clobber\n"),
+        );
+        assert!(matches!(conflict, Err(WorkspaceWriteError::TargetExists)));
+        assert_eq!(fs::read(root.join("created.txt")).unwrap(), b"created\n");
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn conditional_patch_update_requires_matching_digest_and_preserves_stale_content() {
+        let root = temporary_root("patch-update");
+        fs::write(root.join("target.txt"), b"before\n").expect("source written");
+        let fd = root_fd(&root);
+        let before_digest = sha256_hex(b"before\n");
+
+        let updated = commit_patch_file_beneath(
+            &fd,
+            Path::new("target.txt"),
+            PatchFileAction::Update,
+            Some(&before_digest),
+            Some(b"after\n"),
+        )
+        .expect("matching update succeeds");
+        assert_eq!(updated.bytes_written, 6);
+        assert_eq!(updated.sha256.as_deref(), Some(sha256_hex(b"after\n").as_str()));
+        assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"after\n");
+
+        let stale = commit_patch_file_beneath(
+            &fd,
+            Path::new("target.txt"),
+            PatchFileAction::Update,
+            Some(&before_digest),
+            Some(b"must-not-write\n"),
+        );
+        assert!(matches!(stale, Err(WorkspaceWriteError::PreconditionFailed)));
+        assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"after\n");
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn conditional_patch_delete_requires_matching_digest_and_preserves_stale_target() {
+        let root = temporary_root("patch-delete");
+        fs::write(root.join("target.txt"), b"delete-me\n").expect("source written");
+        let fd = root_fd(&root);
+        let digest = sha256_hex(b"delete-me\n");
+
+        let stale = commit_patch_file_beneath(
+            &fd,
+            Path::new("target.txt"),
+            PatchFileAction::Delete,
+            Some(&"0".repeat(64)),
+            None,
+        );
+        assert!(matches!(stale, Err(WorkspaceWriteError::PreconditionFailed)));
+        assert_eq!(fs::read(root.join("target.txt")).unwrap(), b"delete-me\n");
+
+        let deleted = commit_patch_file_beneath(
+            &fd,
+            Path::new("target.txt"),
+            PatchFileAction::Delete,
+            Some(&digest),
+            None,
+        )
+        .expect("matching delete succeeds");
+        assert_eq!(deleted.action, PatchFileAction::Delete);
+        assert_eq!(deleted.bytes_written, 0);
+        assert_eq!(deleted.sha256, None);
+        assert!(!root.join("target.txt").exists());
+
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn conditional_patch_reuses_retained_root_boundary_for_traversal_and_symlink_escape() {
+        let root = temporary_root("patch-boundary");
+        let outside = temporary_root("patch-outside");
+        fs::write(outside.join("secret.txt"), b"outside\n").expect("outside written");
+        symlink(outside.join("secret.txt"), root.join("link.txt")).expect("symlink created");
+        let fd = root_fd(&root);
+
+        let traversal = commit_patch_file_beneath(
+            &fd,
+            Path::new("../escape.txt"),
+            PatchFileAction::Create,
+            None,
+            Some(b"escape\n"),
+        );
+        assert!(matches!(
+            traversal,
+            Err(WorkspaceWriteError::InvalidPath | WorkspaceWriteError::BoundaryViolation)
+        ));
+
+        let symlink_update = commit_patch_file_beneath(
+            &fd,
+            Path::new("link.txt"),
+            PatchFileAction::Update,
+            Some(&sha256_hex(b"outside\n")),
+            Some(b"overwrite\n"),
+        );
+        assert!(matches!(
+            symlink_update,
+            Err(WorkspaceWriteError::BoundaryViolation | WorkspaceWriteError::NotRegularFile)
+        ));
+        assert_eq!(fs::read(outside.join("secret.txt")).unwrap(), b"outside\n");
+
+        fs::remove_dir_all(root).expect("root removed");
+        fs::remove_dir_all(outside).expect("outside removed");
     }
 
     #[test]

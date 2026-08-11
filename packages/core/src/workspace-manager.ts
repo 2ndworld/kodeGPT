@@ -49,6 +49,23 @@ export interface WorkspaceFileEditResult {
   replacements: number;
 }
 
+export type WorkspacePatchFileAction = "create" | "update" | "delete";
+
+export interface WorkspacePatchFileCommitInput {
+  workspaceId: string;
+  path: string;
+  action: WorkspacePatchFileAction;
+  expectedSha256: string | null;
+  content: string | null;
+}
+
+export interface WorkspacePatchFileCommitResult {
+  schemaVersion: 1;
+  action: WorkspacePatchFileAction;
+  bytesWritten: number;
+  sha256: string | null;
+}
+
 export interface WorkspacePathIdentityResult {
   schemaVersion: 1;
   exists: boolean;
@@ -486,6 +503,63 @@ export class WorkspaceManager {
     return {
       bytesWritten: result.bytesWritten as number,
       replacements: result.replacements as number
+    };
+  }
+
+  async commitPatchFile(
+    input: WorkspacePatchFileCommitInput
+  ): Promise<WorkspacePatchFileCommitResult> {
+    if (input.path.length === 0) {
+      throw new TypeError("Workspace patch path must not be empty");
+    }
+    const sha256 = /^[a-f0-9]{64}$/;
+    const validInput =
+      (input.action === "create" && input.expectedSha256 === null && typeof input.content === "string") ||
+      (input.action === "update" &&
+        typeof input.expectedSha256 === "string" &&
+        sha256.test(input.expectedSha256) &&
+        typeof input.content === "string") ||
+      (input.action === "delete" &&
+        typeof input.expectedSha256 === "string" &&
+        sha256.test(input.expectedSha256) &&
+        input.content === null);
+    if (!validInput) {
+      throw new TypeError("Workspace patch action, digest, and content are inconsistent");
+    }
+
+    const state = this.#requireReadyState(input.workspaceId);
+    const result = await this.#kernel.request<unknown>("file.commit_patch_file", {
+      capabilityId: state.capabilityId,
+      path: input.path,
+      action: input.action,
+      expectedSha256: input.expectedSha256,
+      content: input.content
+    });
+    const resultKeys = isRecord(result) ? Object.keys(result) : [];
+    const resultShaValid =
+      input.action === "delete"
+        ? isRecord(result) && result.sha256 === null
+        : isRecord(result) && typeof result.sha256 === "string" && sha256.test(result.sha256);
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.action !== input.action ||
+      !Number.isSafeInteger(result.bytesWritten) ||
+      (result.bytesWritten as number) < 0 ||
+      !resultShaValid ||
+      resultKeys.length !== 4 ||
+      resultKeys.some((key) => !["schemaVersion", "action", "bytesWritten", "sha256"].includes(key))
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.commit_patch_file returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      action: input.action,
+      bytesWritten: result.bytesWritten as number,
+      sha256: result.sha256 as string | null
     };
   }
 

@@ -25,6 +25,6 @@ pub use read::{
 };
 pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
 pub use write::{
-    EditFileResult, WorkspaceWriteError, WriteFileResult, edit_file_exact_beneath,
-    write_file_atomic_beneath,
+    EditFileResult, PatchFileAction, PatchFileCommitResult, WorkspaceWriteError, WriteFileResult,
+    commit_patch_file_beneath, edit_file_exact_beneath, write_file_atomic_beneath,
 };

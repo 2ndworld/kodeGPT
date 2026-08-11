@@ -336,6 +336,56 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "file.commit_patch_file" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "path", "action", "expectedSha256", "content"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string", "minLength": 1 },
+            "action": { "enum": ["create", "update", "delete"] },
+            "expectedSha256": {
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              ]
+            },
+            "content": { "type": ["string", "null"] }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "action": { "const": "create" },
+                "expectedSha256": { "type": "null" },
+                "content": { "type": "string" }
+              }
+            },
+            {
+              "properties": {
+                "action": { "const": "update" },
+                "expectedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "content": { "type": "string" }
+              }
+            },
+            {
+              "properties": {
+                "action": { "const": "delete" },
+                "expectedSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "content": { "type": "null" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "git.status" },
         "params": {
           "type": "object",

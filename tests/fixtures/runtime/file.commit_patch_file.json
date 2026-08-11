@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_file_commit_patch_file",
+  "method": "file.commit_patch_file",
+  "params": {
+    "capabilityId": "kc_fixture_1",
+    "path": "src/example.txt",
+    "action": "update",
+    "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "content": "next contents\n"
+  }
+}

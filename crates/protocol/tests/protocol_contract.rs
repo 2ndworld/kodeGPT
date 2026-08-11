@@ -73,6 +73,7 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "file.tree.json",
         "file.search.json",
         "file.identity.json",
+        "file.commit_patch_file.json",
         "git.checkpoint.json",
         "git.checkpoint_patch.json",
         "process.inspect_executable.json",
@@ -96,6 +97,23 @@ fn security_sensitive_params_reject_unknown_fields() {
     let error =
         serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
     assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn patch_commit_params_reject_cross_field_action_mismatches() {
+    let base = fixture("file.commit_patch_file.json");
+
+    let mut create_with_digest = base.clone();
+    create_with_digest["params"]["action"] = json!("create");
+    create_with_digest["params"]["expectedSha256"] = json!("a".repeat(64));
+    serde_json::from_value::<RuntimeRequest>(create_with_digest)
+        .expect_err("create digest must be null");
+
+    let mut delete_with_content = base;
+    delete_with_content["params"]["action"] = json!("delete");
+    delete_with_content["params"]["content"] = json!("must-not-be-accepted");
+    serde_json::from_value::<RuntimeRequest>(delete_with_content)
+        .expect_err("delete content must be null");
 }
 
 #[test]

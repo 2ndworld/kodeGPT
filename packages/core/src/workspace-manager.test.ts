@@ -59,6 +59,12 @@ class FakeKernel implements KernelTransport {
     truncated: false,
     truncationReasons: []
   };
+  patchCommitResult: unknown = {
+    schemaVersion: 1,
+    action: "update",
+    bytesWritten: 6,
+    sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
+  };
 
   async request<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
@@ -91,6 +97,8 @@ class FakeKernel implements KernelTransport {
         return { bytesWritten: 7, created: true } as T;
       case "file.edit":
         return { bytesWritten: 11, replacements: 2 } as T;
+      case "file.commit_patch_file":
+        return this.patchCommitResult as T;
       case "git.status":
         return {
           schemaVersion: 1,
@@ -419,6 +427,54 @@ describe("WorkspaceManager", () => {
         params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 500 }
       }
     ]);
+  });
+
+  it("routes conditional patch commits through the private runtime capability and rejects leaked fields", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_patch_commit"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const committed = await manager.commitPatchFile({
+      workspaceId: "ws_patch_commit",
+      path: "src/example.txt",
+      action: "update",
+      expectedSha256: "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+      content: "after\n"
+    });
+    expect(committed).toEqual({
+      schemaVersion: 1,
+      action: "update",
+      bytesWritten: 6,
+      sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
+    });
+    expect(kernel.calls.at(-1)).toEqual({
+      method: "file.commit_patch_file",
+      params: {
+        capabilityId: "kc_fixture",
+        path: "src/example.txt",
+        action: "update",
+        expectedSha256: "9160d4be34c8695bd172a76c7c7966587ea5a4d991ad22c87b2b91af54aa9ebb",
+        content: "after\n"
+      }
+    });
+
+    kernel.patchCommitResult = {
+      ...kernel.patchCommitResult as Record<string, unknown>,
+      hostPath: "/home/sauron/secret"
+    };
+    await expect(
+      manager.commitPatchFile({
+        workspaceId: "ws_patch_commit",
+        path: "src/example.txt",
+        action: "delete",
+        expectedSha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919",
+        content: null
+      })
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
   });
 
   it("routes verification availability and semantic execution through closed internal runtime methods", async () => {
