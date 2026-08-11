@@ -131,7 +131,7 @@ describe("CLI stdio bridge integration flow", () => {
       const toolsRes = await toolsPromise;
       expect(toolsRes.error).toBeUndefined();
       const tools = toolsRes.result.tools as Array<{ name: string; description?: string }>;
-      expect(tools.length).toBe(21);
+      expect(tools.length).toBe(22);
       const toolNames = tools.map((t) => t.name).sort();
       expect(toolNames).toEqual([
         "artifact.read",
@@ -153,6 +153,7 @@ describe("CLI stdio bridge integration flow", () => {
         "system.health",
         "workspace.close",
         "workspace.info",
+        "workspace.inspect",
         "workspace.list",
         "workspace.open"
       ]);

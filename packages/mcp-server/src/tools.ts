@@ -37,6 +37,7 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "system.health", required: [] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
+  { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
   { name: "workspace.open", required: ["rootPath"] }
 ] as const);
@@ -145,6 +146,21 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId }) => structuredToolResult(await context.workspace.info({ workspaceId }))
+  );
+
+  server.registerTool(
+    "workspace.inspect",
+    {
+      description: "Build a bounded deterministic evidence-based map of a READY workspace.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        path: z.string().min(1).optional(),
+        maxEntries: z.number().int().positive().max(10_000).safe().optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, path, maxEntries }) =>
+      structuredToolResult(await context.workspace.inspect({ workspaceId, path, maxEntries }))
   );
 
   server.registerTool(

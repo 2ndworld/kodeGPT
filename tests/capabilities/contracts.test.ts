@@ -38,11 +38,11 @@ describe("native capability contracts", () => {
     });
 
     await expect(
-      service.inspectWorkspace({ workspaceId: "ws_1" })
+      service.searchCode({ workspaceId: "ws_1", query: "needle" })
     ).rejects.toMatchObject<Partial<CapabilityNotImplementedError>>({
       name: "CapabilityNotImplementedError",
       code: "CAPABILITY_NOT_IMPLEMENTED",
-      capability: "workspace.inspect"
+      capability: "code.search"
     });
   });
 });

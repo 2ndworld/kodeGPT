@@ -24,13 +24,14 @@ const expectedTools = [
   "system.health",
   "workspace.close",
   "workspace.info",
+  "workspace.inspect",
   "workspace.list",
   "workspace.open"
 ] as const;
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.1");
+    expect(MCP_SURFACE_VERSION).toBe("0.2");
     expect(listSurfaceTools()).toEqual([
       { name: "artifact.read", required: ["uri"] },
       { name: "console.state", required: [] },
@@ -54,6 +55,7 @@ describe("KodeGPT MCP semantic surface", () => {
       { name: "system.health", required: [] },
       { name: "workspace.close", required: ["workspaceId"] },
       { name: "workspace.info", required: ["workspaceId"] },
+      { name: "workspace.inspect", required: ["workspaceId"] },
       { name: "workspace.list", required: [] },
       { name: "workspace.open", required: ["rootPath"] }
     ]);
@@ -66,6 +68,7 @@ describe("KodeGPT MCP semantic surface", () => {
         open: async () => ({}),
         close: async () => undefined,
         info: async () => ({}),
+        inspect: async () => ({}),
         readFile: async () => ({}),
         writeFile: async () => ({}),
         editFile: async () => ({}),

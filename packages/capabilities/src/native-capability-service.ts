@@ -1,4 +1,5 @@
 import type { CapabilityExecutionAdapter, CapabilityWorkspaceAdapter } from "./adapters.js";
+import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
   CodeSearchResult,
@@ -49,9 +50,7 @@ export class NativeCapabilityService {
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
-    void input;
-    void this.#workspace;
-    throw new CapabilityNotImplementedError("workspace.inspect");
+    return inspectWorkspace(this.#workspace, input);
   }
 
   async searchCode(input: CodeSearchInput): Promise<CodeSearchResult> {

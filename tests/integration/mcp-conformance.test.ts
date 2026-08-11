@@ -40,14 +40,15 @@ const LOCKED_SURFACE = [
   { name: "system.health", required: [] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
+  { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
   { name: "workspace.open", required: ["rootPath"] }
 ] as const;
 
 describe("MCP 2026 + semantic surface conformance", () => {
-  it("locks protocol 2026-07-28 and semantic surface version 0.1", () => {
+  it("locks protocol 2026-07-28 and semantic surface version 0.2", () => {
     expect(MCP_PROTOCOL_VERSION).toBe("2026-07-28");
-    expect(MCP_SURFACE_VERSION).toBe("0.1");
+    expect(MCP_SURFACE_VERSION).toBe("0.2");
     expect(listSurfaceTools()).toEqual(LOCKED_SURFACE);
     expect(listSurfaceTools().some((tool) => tool.name.includes("trust"))).toBe(false);
     expect(listSurfaceTools().some((tool) => tool.name === "shell.run")).toBe(false);

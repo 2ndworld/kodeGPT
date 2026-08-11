@@ -413,6 +413,7 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
         "system.health",
         "workspace.close",
         "workspace.info",
+        "workspace.inspect",
         "workspace.list",
         "workspace.open"
       ]);

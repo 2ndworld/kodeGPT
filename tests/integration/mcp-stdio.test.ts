@@ -205,6 +205,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "system.health",
         "workspace.close",
         "workspace.info",
+        "workspace.inspect",
         "workspace.list",
         "workspace.open"
       ]);
@@ -247,6 +248,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         "system.health": [],
         "workspace.close": ["workspaceId"],
         "workspace.info": ["workspaceId"],
+        "workspace.inspect": ["workspaceId"],
         "workspace.list": [],
         "workspace.open": ["rootPath"]
       });

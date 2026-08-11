@@ -184,7 +184,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       );
       expect(capabilities).toMatchObject({
         mcpProtocolVersion: PROTOCOL_VERSION,
-        mcpSurfaceVersion: "0.1",
+        mcpSurfaceVersion: "0.2",
         filesystemBoundaryAvailable: true
       });
 

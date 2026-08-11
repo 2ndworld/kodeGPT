@@ -34,11 +34,11 @@ describe("capability contracts", () => {
       execution: {} as never
     });
 
-    await expect(service.inspectWorkspace({ workspaceId: "ws_1" })).rejects.toEqual(
+    await expect(service.searchCode({ workspaceId: "ws_1", query: "needle" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",
-        capability: "workspace.inspect"
+        capability: "code.search"
       })
     );
   });

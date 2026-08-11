@@ -127,7 +127,7 @@ function makeDependencies(options: {
           host: "127.0.0.1",
           port: startOptions.port ?? 43121,
           protocolVersion: "2026-07-28",
-          surfaceVersion: "0.1",
+          surfaceVersion: "0.2",
           runtimeVersion: "0.1.0",
           auditHealthy: true,
           filesystemBoundaryAvailable: true
@@ -278,7 +278,7 @@ describe("kodegpt expose zrok", () => {
         host: "127.0.0.1",
         port: 43121,
         protocolVersion: "2026-07-28",
-        surfaceVersion: "0.1",
+        surfaceVersion: "0.2",
         runtimeVersion: "0.1.0",
         auditHealthy: true,
         filesystemBoundaryAvailable: true
