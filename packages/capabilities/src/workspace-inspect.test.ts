@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
+import { createTestCapabilityDependencies } from "./test-support.js";
 
 function makeWorkspaceAdapter(
   entries: CapabilityTreeEntry[],
@@ -31,18 +32,16 @@ function makeWorkspaceAdapter(
 }
 
 function makeService(workspaceInspection: WorkspaceInspectionAdapter): NativeCapabilityService {
-  return new NativeCapabilityService({
-    workspaceInspection,
-    codeSearch: {
-      search: async () => ({ matches: [], truncated: false })
-    },
-    gitInspection: {
-      gitStatus: async () => ({} as never),
-      gitDiff: async () => ({} as never)
-    },
-    verificationWorkspace: {} as never,
-    execution: {} as never
-  });
+  return new NativeCapabilityService(
+    createTestCapabilityDependencies({
+      workspace: {
+        inspection: workspaceInspection,
+        search: {
+          search: async () => ({ matches: [], truncated: false })
+        }
+      }
+    })
+  );
 }
 
 describe("workspace.inspect", () => {

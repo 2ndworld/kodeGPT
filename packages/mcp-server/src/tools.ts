@@ -8,7 +8,8 @@ import {
   VerifyRunInputSchema,
   VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
-  WorkspaceInspectResultSchema
+  WorkspaceInspectResultSchema,
+  toPublicCapabilityError
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
@@ -173,7 +174,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, path, maxEntries }) =>
-      structuredToolResult(
+      nativeCapabilityResult(async () =>
         WorkspaceInspectResultSchema.parse(
           await context.workspace.inspect({ workspaceId, path, maxEntries })
         )
@@ -189,7 +190,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, query, mode, path, maxResults }) =>
-      structuredToolResult(
+      nativeCapabilityResult(async () =>
         CodeSearchResultSchema.parse(
           await context.code.search({ workspaceId, query, mode, path, maxResults })
         )
@@ -291,7 +292,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, includePatch }) =>
-      structuredToolResult(
+      nativeCapabilityResult(async () =>
         GitChangesResultSchema.parse(await context.git.changes({ workspaceId, includePatch }))
       )
   );
@@ -329,7 +330,7 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId }) =>
-      structuredToolResult(
+      nativeCapabilityResult(async () =>
         VerifyListResultSchema.parse(await context.verify.list({ workspaceId }))
       )
   );
@@ -343,7 +344,7 @@ export function registerKodegptTools(
       annotations: PROCESS_RUN_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, recipeId, background }) =>
-      structuredToolResult(
+      nativeCapabilityResult(async () =>
         VerifyRunResultSchema.parse(
           await context.verify.run({ workspaceId, recipeId, background })
         )
@@ -451,6 +452,15 @@ export function registerKodegptTools(
     },
     async () => structuredToolResult(await context.system.health())
   );
+}
+
+async function nativeCapabilityResult<T>(operation: () => Promise<T>) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    const safe = toPublicCapabilityError(error);
+    throw new Error(`${safe.code}: ${safe.message}`);
+  }
 }
 
 export function structuredToolResult<T>(value: T) {

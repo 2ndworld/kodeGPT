@@ -64,8 +64,10 @@ export type {
   VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
+export { CapabilityError, toPublicCapabilityError } from "./errors.js";
+export type { CapabilityErrorCode } from "./errors.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
-export type { NativeCapabilityName } from "./native-capability-service.js";
+export type { NativeCapabilityDependencies, NativeCapabilityName } from "./native-capability-service.js";
 export {
   CodeSearchInputSchema,
   CodeSearchResultSchema,

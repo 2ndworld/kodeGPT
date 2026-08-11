@@ -5,6 +5,7 @@ import type {
   VerificationWorkspaceAdapter
 } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
+import { createTestCapabilityDependencies } from "./test-support.js";
 
 function service(options: {
   packageJson?: string;
@@ -38,19 +39,20 @@ function service(options: {
     })
   };
 
-  return new NativeCapabilityService({
-    workspaceInspection: {} as never,
-    codeSearch: {} as never,
-    gitInspection: {} as never,
-    verificationWorkspace,
-    execution: {
-      run:
-        options.run ??
-        (async () => {
-          throw new Error("verification discovery must not execute anything");
-        })
-    }
-  } as never);
+  return new NativeCapabilityService(
+    createTestCapabilityDependencies({
+      verification: {
+        workspace: verificationWorkspace,
+        execution: {
+          run:
+            options.run ??
+            (async () => {
+              throw new Error("verification discovery must not execute anything");
+            })
+        }
+      }
+    })
+  );
 }
 
 describe("safe verification recipes", () => {
@@ -190,22 +192,25 @@ describe("safe verification recipes", () => {
 
   it("fails closed when bounded manifest discovery is truncated", async () => {
     let runCalls = 0;
-    const capability = new NativeCapabilityService({
-      workspaceInspection: {} as never,
-      codeSearch: {} as never,
-      gitInspection: {} as never,
-      verificationWorkspace: {
-        tree: async () => ({ entries: [], truncated: true }),
-        readFile: async () => ({} as never),
-        effectivePolicy: () => ({ allowProcess: true, allowedExecutableNames: ["pnpm"] })
-      },
-      execution: {
-        run: async () => {
-          runCalls += 1;
-          throw new Error("truncated discovery must not execute");
+    const capability = new NativeCapabilityService(
+      createTestCapabilityDependencies({
+        verification: {
+          workspace: {
+            tree: async () => ({ entries: [], truncated: true }),
+            readFile: async () => {
+              throw new Error("truncated discovery must not read manifests");
+            },
+            effectivePolicy: () => ({ allowProcess: true, allowedExecutableNames: ["pnpm"] })
+          },
+          execution: {
+            run: async () => {
+              runCalls += 1;
+              throw new Error("truncated discovery must not execute");
+            }
+          }
         }
-      }
-    });
+      })
+    );
 
     await expect(
       capability.listVerifications({ workspaceId: "ws_truncated" })
@@ -277,18 +282,19 @@ describe("safe verification recipes", () => {
         allowedExecutableNames: allowed ? ["pnpm"] : []
       })
     };
-    const capability = new NativeCapabilityService({
-      workspaceInspection: {} as never,
-      codeSearch: {} as never,
-      gitInspection: {} as never,
-      verificationWorkspace,
-      execution: {
-        run: async () => {
-          runCalls += 1;
-          throw new Error("blocked recipe must not execute");
+    const capability = new NativeCapabilityService(
+      createTestCapabilityDependencies({
+        verification: {
+          workspace: verificationWorkspace,
+          execution: {
+            run: async () => {
+              runCalls += 1;
+              throw new Error("blocked recipe must not execute");
+            }
+          }
         }
-      }
-    } as never);
+      })
+    );
 
     const listed = await capability.listVerifications({ workspaceId: "ws_recheck" });
     expect(listed.recipes[0]?.allowed).toBe(true);

@@ -183,35 +183,39 @@ export async function createProductionServiceStack(
     const artifactStore = new ArtifactStore(kernel);
     const auditReader = new AuditReader(stateRoot);
     const nativeCapabilities = new NativeCapabilityService({
-      workspaceInspection: {
-        readFile: (workspaceId, path, readOptions) =>
-          managers.workspaceManager.readFile(workspaceId, path, readOptions),
-        tree: (workspaceId, path, maxEntries) =>
-          managers.workspaceManager.treeBounded(workspaceId, path, maxEntries)
+      workspace: {
+        inspection: {
+          readFile: (workspaceId, path, readOptions) =>
+            managers.workspaceManager.readFile(workspaceId, path, readOptions),
+          tree: (workspaceId, path, maxEntries) =>
+            managers.workspaceManager.treeBounded(workspaceId, path, maxEntries)
+        },
+        search: {
+          search: (workspaceId, query, path, maxMatches) =>
+            managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches)
+        }
       },
-      codeSearch: {
-        search: (workspaceId, query, path, maxMatches) =>
-          managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches)
-      },
-      gitInspection: {
+      git: {
         gitStatus: (workspaceId) => managers.workspaceManager.gitStatus(workspaceId),
         gitDiff: (workspaceId) => managers.workspaceManager.gitDiff(workspaceId)
       },
-      verificationWorkspace: {
-        readFile: (workspaceId, path, readOptions) =>
-          managers.workspaceManager.readFile(workspaceId, path, readOptions),
-        tree: (workspaceId, path, maxEntries) =>
-          managers.workspaceManager.treeBounded(workspaceId, path, maxEntries),
-        effectivePolicy: (workspaceId) => {
-          const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
-          return {
-            allowProcess: policy.allowProcess,
-            allowedExecutableNames: [...policy.allowedExecutableNames]
-          };
+      verification: {
+        workspace: {
+          readFile: (workspaceId, path, readOptions) =>
+            managers.workspaceManager.readFile(workspaceId, path, readOptions),
+          tree: (workspaceId, path, maxEntries) =>
+            managers.workspaceManager.treeBounded(workspaceId, path, maxEntries),
+          effectivePolicy: (workspaceId) => {
+            const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
+            return {
+              allowProcess: policy.allowProcess,
+              allowedExecutableNames: [...policy.allowedExecutableNames]
+            };
+          }
+        },
+        execution: {
+          run: (input) => managers.workspaceManager.runProcess(input)
         }
-      },
-      execution: {
-        run: (input) => managers.workspaceManager.runProcess(input)
       }
     });
     const toolContext = createKodegptToolContext({

@@ -12,7 +12,9 @@ import {
   MAX_PATCH_HUNKS,
   MAX_SEARCH_MAX_RESULTS
 } from "./contracts.js";
+import { CapabilityError, toPublicCapabilityError } from "./errors.js";
 import { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
+import { createTestCapabilityDependencies } from "./test-support.js";
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
@@ -27,6 +29,19 @@ import {
 } from "./schemas.js";
 
 describe("capability contracts", () => {
+  it("maps known capability errors and redacts unknown host errors", () => {
+    expect(
+      toPublicCapabilityError(
+        new CapabilityError("CAPABILITY_LIMIT_EXCEEDED", "Search limit exceeded")
+      )
+    ).toEqual({ code: "CAPABILITY_LIMIT_EXCEEDED", message: "Search limit exceeded" });
+
+    expect(toPublicCapabilityError(new Error("ENOENT /home/sauron/private-secret"))).toEqual({
+      code: "CAPABILITY_INTERNAL",
+      message: "Native capability failed"
+    });
+  });
+
   it("pins public schema and bounded defaults", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(DEFAULT_CONTEXT_MAX_BYTES).toBe(256 * 1024);
@@ -176,13 +191,7 @@ describe("capability contracts", () => {
   });
 
   it("keeps remaining unimplemented capability methods explicit and stable", async () => {
-    const service = new NativeCapabilityService({
-      workspaceInspection: {} as never,
-      codeSearch: {} as never,
-      gitInspection: {} as never,
-      verificationWorkspace: {} as never,
-      execution: {} as never
-    });
+    const service = new NativeCapabilityService(createTestCapabilityDependencies());
 
     await expect(service.patchFile({ workspaceId: "ws_1", patch: "" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({

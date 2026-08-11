@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  CodeSearchAdapter,
-  GitInspectionAdapter,
-  GitInspectionAdapterResult,
-  WorkspaceInspectionAdapter
-} from "./adapters.js";
+import type { GitInspectionAdapter, GitInspectionAdapterResult } from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
+import { createTestCapabilityDependencies } from "./test-support.js";
 
 function inspection(
   stdoutPreview: string,
@@ -38,13 +34,6 @@ function service(options: {
   onStatus?: () => void;
   onDiff?: () => void;
 }): NativeCapabilityService {
-  const workspaceInspection: WorkspaceInspectionAdapter = {
-    readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
-    tree: async () => ({ entries: [], truncated: false })
-  };
-  const codeSearch: CodeSearchAdapter = {
-    search: async () => ({ matches: [], truncated: false })
-  };
   const gitInspection: GitInspectionAdapter = {
     gitStatus: async () => {
       options.onStatus?.();
@@ -56,13 +45,9 @@ function service(options: {
     }
   };
 
-  return new NativeCapabilityService({
-    workspaceInspection,
-    codeSearch,
-    gitInspection,
-    verificationWorkspace: {} as never,
-    execution: {} as never
-  });
+  return new NativeCapabilityService(
+    createTestCapabilityDependencies({ git: gitInspection })
+  );
 }
 
 describe("git.changes", () => {

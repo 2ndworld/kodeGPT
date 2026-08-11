@@ -6,9 +6,6 @@ import type {
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 import { searchCode } from "./code-search.js";
-import { gitChanges } from "./git-changes.js";
-import { listVerifications, runVerification } from "./verification.js";
-import { inspectWorkspace } from "./workspace-inspect.js";
 import type {
   CodeSearchInput,
   CodeSearchResult,
@@ -25,6 +22,10 @@ import type {
   WorkspaceInspectInput,
   WorkspaceInspectResult
 } from "./contracts.js";
+import { CapabilityError } from "./errors.js";
+import { gitChanges } from "./git-changes.js";
+import { listVerifications, runVerification } from "./verification.js";
+import { inspectWorkspace } from "./workspace-inspect.js";
 
 export type NativeCapabilityName =
   | "workspace.inspect"
@@ -35,56 +36,61 @@ export type NativeCapabilityName =
   | "file.patch"
   | "context.build";
 
-export class CapabilityNotImplementedError extends Error {
-  readonly code = "CAPABILITY_NOT_IMPLEMENTED" as const;
+export interface NativeCapabilityDependencies {
+  workspace: {
+    inspection: WorkspaceInspectionAdapter;
+    search: CodeSearchAdapter;
+  };
+  git: GitInspectionAdapter;
+  verification: {
+    workspace: VerificationWorkspaceAdapter;
+    execution: CapabilityExecutionAdapter;
+  };
+}
+
+export class CapabilityNotImplementedError extends CapabilityError {
   readonly capability: NativeCapabilityName;
 
   constructor(capability: NativeCapabilityName) {
-    super(`Native capability is not implemented yet: ${capability}`);
+    super("CAPABILITY_NOT_IMPLEMENTED", `Native capability is not implemented yet: ${capability}`);
     this.name = "CapabilityNotImplementedError";
     this.capability = capability;
   }
 }
 
 export class NativeCapabilityService {
-  readonly #workspaceInspection: WorkspaceInspectionAdapter;
-  readonly #codeSearch: CodeSearchAdapter;
-  readonly #gitInspection: GitInspectionAdapter;
-  readonly #verificationWorkspace: VerificationWorkspaceAdapter;
-  readonly #execution: CapabilityExecutionAdapter;
+  readonly #dependencies: NativeCapabilityDependencies;
 
-  constructor(options: {
-    workspaceInspection: WorkspaceInspectionAdapter;
-    codeSearch: CodeSearchAdapter;
-    gitInspection: GitInspectionAdapter;
-    verificationWorkspace: VerificationWorkspaceAdapter;
-    execution: CapabilityExecutionAdapter;
-  }) {
-    this.#workspaceInspection = options.workspaceInspection;
-    this.#codeSearch = options.codeSearch;
-    this.#gitInspection = options.gitInspection;
-    this.#verificationWorkspace = options.verificationWorkspace;
-    this.#execution = options.execution;
+  constructor(dependencies: NativeCapabilityDependencies) {
+    this.#dependencies = dependencies;
   }
 
   async inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult> {
-    return inspectWorkspace(this.#workspaceInspection, input);
+    return inspectWorkspace(this.#dependencies.workspace.inspection, input);
   }
 
   async searchCode(input: CodeSearchInput): Promise<CodeSearchResult> {
-    return searchCode(this.#workspaceInspection, this.#codeSearch, input);
+    return searchCode(
+      this.#dependencies.workspace.inspection,
+      this.#dependencies.workspace.search,
+      input
+    );
   }
 
   async gitChanges(input: GitChangesInput): Promise<GitChangesResult> {
-    return gitChanges(this.#gitInspection, input);
+    return gitChanges(this.#dependencies.git, input);
   }
 
   async listVerifications(input: VerifyListInput): Promise<VerifyListResult> {
-    return listVerifications(this.#verificationWorkspace, input);
+    return listVerifications(this.#dependencies.verification.workspace, input);
   }
 
   async runVerification(input: VerifyRunInput): Promise<VerifyRunResult> {
-    return runVerification(this.#verificationWorkspace, this.#execution, input);
+    return runVerification(
+      this.#dependencies.verification.workspace,
+      this.#dependencies.verification.execution,
+      input
+    );
   }
 
   async patchFile(input: FilePatchInput): Promise<FilePatchResult> {

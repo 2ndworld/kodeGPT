@@ -341,4 +341,34 @@ describe("structured MCP tool results", () => {
     expect(result.structuredContent).toEqual(typedVerifyRunResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
+
+  it("redacts unknown native capability errors at the MCP boundary", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+    const context = makeContext();
+    context.code.search = async () => {
+      throw new Error("ENOENT /home/sauron/private-secret");
+    };
+
+    registerKodegptTools(server, context);
+    const handler = handlers.get("code.search");
+    expect(handler).toBeDefined();
+
+    await expect(
+      handler!({ workspaceId: "ws_1", query: "needle", mode: "text" } as never)
+    ).rejects.toThrow("CAPABILITY_INTERNAL: Native capability failed");
+
+    try {
+      await handler!({ workspaceId: "ws_1", query: "needle", mode: "text" } as never);
+    } catch (error) {
+      const message = String((error as Error).message);
+      expect(message).not.toContain("/home/");
+      expect(message).not.toContain("ENOENT");
+      expect(message).not.toContain("private-secret");
+    }
+  });
 });
