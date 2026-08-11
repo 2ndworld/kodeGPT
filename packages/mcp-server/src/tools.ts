@@ -1,6 +1,8 @@
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  FilePatchInputSchema,
+  FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
   VerifyListInputSchema,
@@ -37,6 +39,7 @@ const SURFACE_TOOLS = Object.freeze([
     required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
   },
   { name: "file.read", required: ["workspaceId", "path"] },
+  { name: "file.patch", required: ["workspaceId", "patch"] },
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
@@ -220,6 +223,21 @@ export function registerKodegptTools(
           newText,
           expectedReplacements
         })
+      )
+  );
+
+  server.registerTool(
+    "file.patch",
+    {
+      description:
+        "Check or apply a bounded unified text patch with full preflight and conditional per-file commits.",
+      inputSchema: FilePatchInputSchema,
+      outputSchema: FilePatchResultSchema,
+      annotations: MUTATING_FILE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, patch, mode }) =>
+      nativeCapabilityResult(async () =>
+        FilePatchResultSchema.parse(await context.file.patch({ workspaceId, patch, mode }))
       )
   );
 
@@ -461,7 +479,8 @@ async function nativeCapabilityResult<T>(operation: () => Promise<T>) {
     return structuredToolResult(await operation());
   } catch (error) {
     const safe = toPublicCapabilityError(error);
-    throw new Error(`${safe.code}: ${safe.message}`);
+    const details = safe.details === undefined ? "" : ` ${JSON.stringify(safe.details)}`;
+    throw new Error(`${safe.code}: ${safe.message}${details}`);
   }
 }
 

@@ -117,6 +117,12 @@ describe("bridge command unit tests", () => {
             exists: false,
             hashTruncated: false
           }),
+          commitPatchFile: async (input: { action: "create" | "update" | "delete"; content: string | null }) => ({
+            schemaVersion: 1 as const,
+            action: input.action,
+            bytesWritten: input.content === null ? 0 : Buffer.byteLength(input.content),
+            sha256: input.content === null ? null : "a".repeat(64)
+          }),
           writeFile: async () => ({ bytesWritten: 0, created: true }),
           editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
           search: async () => [],

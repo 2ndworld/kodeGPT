@@ -1,6 +1,8 @@
 import type {
   CodeSearchAdapter,
   GitCheckpointAdapter,
+  PatchCommitAdapter,
+  PatchWorkspaceAdapter,
   VerificationAvailabilityAdapter,
   VerificationExecutionAdapter,
   VerificationWorkspaceAdapter,
@@ -25,6 +27,7 @@ import type {
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
 import { gitChanges } from "./git-changes.js";
+import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
 
@@ -43,6 +46,10 @@ export interface NativeCapabilityDependencies {
     search: CodeSearchAdapter;
   };
   git: GitCheckpointAdapter;
+  patch: {
+    workspace: PatchWorkspaceAdapter;
+    commit: PatchCommitAdapter;
+  };
   verification: {
     workspace: VerificationWorkspaceAdapter;
     availability: VerificationAvailabilityAdapter;
@@ -101,8 +108,7 @@ export class NativeCapabilityService {
   }
 
   async patchFile(input: FilePatchInput): Promise<FilePatchResult> {
-    void input;
-    throw new CapabilityNotImplementedError("file.patch");
+    return patchFile(this.#dependencies.patch.workspace, this.#dependencies.patch.commit, input);
   }
 
   async buildContext(input: ContextBuildInput): Promise<ContextBuildResult> {

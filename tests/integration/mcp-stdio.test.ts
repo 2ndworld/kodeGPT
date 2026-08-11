@@ -195,7 +195,11 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       for (const tool of tools) {
         if (tool.name === "workspace.open" || tool.name === "workspace.close") {
           expect(tool.annotations).toEqual(lifecycleAnnotations);
-        } else if (tool.name === "file.write" || tool.name === "file.edit") {
+        } else if (
+          tool.name === "file.write" ||
+          tool.name === "file.edit" ||
+          tool.name === "file.patch"
+        ) {
           expect(tool.annotations).toEqual(mutatingFileAnnotations);
         } else if (tool.name === "process.run" || tool.name === "verify.run") {
           expect(tool.annotations).toEqual(processRunAnnotations);

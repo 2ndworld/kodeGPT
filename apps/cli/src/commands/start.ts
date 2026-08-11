@@ -61,6 +61,7 @@ export interface ManagerBundle {
       | "gitCheckpoint"
       | "gitCheckpointPatch"
       | "pathIdentity"
+      | "commitPatchFile"
       | "inspectExecutable"
       | "runVerificationProcess"
     >;
@@ -229,6 +230,26 @@ export async function createProductionServiceStack(
           };
         },
         checkpointPatch: (workspaceId) => managers.workspaceManager.gitCheckpointPatch(workspaceId)
+      },
+      patch: {
+        workspace: {
+          readFile: (workspaceId, path, readOptions) =>
+            managers.workspaceManager.readFile(workspaceId, path, readOptions),
+          pathIdentity: async (workspaceId, path) => {
+            const result = await managers.workspaceManager.pathIdentity(workspaceId, path, {
+              includeSha256: false
+            });
+            return {
+              exists: result.exists,
+              ...(result.kind === undefined ? {} : { kind: result.kind }),
+              ...(result.sizeBytes === undefined ? {} : { sizeBytes: result.sizeBytes }),
+              hashTruncated: result.hashTruncated
+            };
+          }
+        },
+        commit: {
+          commitPatchFile: (input) => managers.workspaceManager.commitPatchFile(input)
+        }
       },
       verification: {
         workspace: {

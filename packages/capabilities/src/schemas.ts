@@ -2,9 +2,12 @@ import { z } from "zod";
 
 import {
   MAX_INSPECT_MAX_ENTRIES,
+  MAX_PATCH_BYTES,
   MAX_SEARCH_MAX_RESULTS,
   type CodeSearchInput,
   type CodeSearchResult,
+  type FilePatchInput,
+  type FilePatchResult,
   type GitChangesInput,
   type GitChangesResult,
   type VerificationRecipe,
@@ -115,6 +118,35 @@ export const CodeSearchResultSchema: z.ZodType<CodeSearchResult> = z
     ),
     truncated: z.boolean(),
     truncationReasons: z.array(codeSearchTruncationReasonSchema)
+  })
+  .strict();
+
+export const FilePatchInputSchema: z.ZodType<FilePatchInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    patch: z.string().min(1).max(MAX_PATCH_BYTES),
+    mode: z.enum(["check", "apply"]).optional()
+  })
+  .strict();
+
+export const FilePatchResultSchema: z.ZodType<FilePatchResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    mode: z.enum(["check", "apply"]),
+    files: z.array(
+      z
+        .object({
+          path: z.string().min(1),
+          action: z.enum(["create", "update", "delete"]),
+          expectedSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+          resultingSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+          bytes: z.number().int().nonnegative().safe(),
+          committed: z.boolean()
+        })
+        .strict()
+    ),
+    committedPaths: z.array(z.string().min(1))
   })
   .strict();
 

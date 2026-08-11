@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { MCP_SURFACE_VERSION } from "@kodegpt/mcp-server";
 import { describe, expect, it } from "vitest";
 
@@ -84,6 +86,12 @@ function dependencies(
     requireReady: () => readyWorkspace,
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
     pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
+    commitPatchFile: async (input: { action: "create" | "update" | "delete"; content: string | null }) => ({
+      schemaVersion: 1 as const,
+      action: input.action,
+      bytesWritten: input.content === null ? 0 : Buffer.byteLength(input.content),
+      sha256: input.content === null ? null : "a".repeat(64)
+    }),
     writeFile: async () => ({ bytesWritten: 0, created: true }),
     editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
     gitStatus: async () => gitInspection,
@@ -343,6 +351,77 @@ describe("kodegpt start orchestration", () => {
         workspaceId: "ws_test",
         recipe: { id: "package:test", allowed: true },
         operation: { operationId: "op_verify", state: "completed", exitCode: 0 }
+      });
+    } finally {
+      await started.close();
+    }
+  });
+
+  it("production-wires file.patch apply through the existing workspace manager commit authority", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    const commitInputs: unknown[] = [];
+    deps.createManagers = (options) => {
+      const managers = originalCreateManagers(options);
+      Object.assign(managers.workspaceManager, {
+        pathIdentity: async () => ({
+          schemaVersion: 1 as const,
+          exists: true,
+          kind: "file" as const,
+          sizeBytes: 4,
+          hashTruncated: false
+        }),
+        readFile: async () => ({ contents: "old\n", bytesRead: 4, eof: true }),
+        commitPatchFile: async (input: { action: "create" | "update" | "delete"; content: string | null }) => {
+          commitInputs.push(input);
+          const sha256 =
+            input.content === null
+              ? null
+              : createHash("sha256").update(input.content, "utf8").digest("hex");
+          return {
+            schemaVersion: 1 as const,
+            action: input.action,
+            bytesWritten: input.content === null ? 0 : Buffer.byteLength(input.content),
+            sha256
+          };
+        }
+      });
+      return managers;
+    };
+
+    const originalCreateMcp = deps.createMcp;
+    let toolContext: Parameters<StartDependencies["createMcp"]>[0]["toolContext"] | undefined;
+    deps.createMcp = (options) => {
+      toolContext = options.toolContext;
+      return originalCreateMcp(options);
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    try {
+      const result = await toolContext!.file.patch({
+        workspaceId: "ws_test",
+        patch: "--- a/target.txt\n+++ b/target.txt\n@@ -1 +1 @@\n-old\n+new\n",
+        mode: "apply"
+      });
+      expect(commitInputs).toEqual([
+        {
+          workspaceId: "ws_test",
+          path: "target.txt",
+          action: "update",
+          expectedSha256: createHash("sha256").update("old\n", "utf8").digest("hex"),
+          content: "new\n"
+        }
+      ]);
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: "ws_test",
+        mode: "apply",
+        committedPaths: ["target.txt"],
+        files: [{ path: "target.txt", action: "update", committed: true }]
       });
     } finally {
       await started.close();

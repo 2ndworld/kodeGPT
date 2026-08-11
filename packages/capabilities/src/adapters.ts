@@ -119,6 +119,15 @@ export interface GitCheckpointAdapter {
   checkpointPatch(workspaceId: string): Promise<GitInspectionAdapterResult>;
 }
 
+export interface PatchWorkspaceAdapter {
+  readFile(
+    workspaceId: string,
+    path: string,
+    options?: { offset?: number; maxBytes?: number }
+  ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
+  pathIdentity(workspaceId: string, path: string): Promise<CapabilityPathIdentityResult>;
+}
+
 export interface PatchCommitAdapter {
   commitPatchFile(input: PatchCommitAdapterInput): Promise<PatchCommitAdapterResult>;
 }

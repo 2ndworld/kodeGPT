@@ -1,6 +1,9 @@
 import {
+  CapabilityError,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  FilePatchInputSchema,
+  FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
   VerifyListInputSchema,
@@ -10,6 +13,7 @@ import {
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
   type CodeSearchResult,
+  type FilePatchResult,
   type GitChangesResult,
   type VerifyListResult,
   type VerifyRunResult,
@@ -19,7 +23,11 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { describe, expect, it } from "vitest";
 import type { OpenWorkspace } from "../../core/src/index.js";
-import { PROCESS_RUN_TOOL_ANNOTATIONS, READ_ONLY_TOOL_ANNOTATIONS } from "./annotations.js";
+import {
+  MUTATING_FILE_TOOL_ANNOTATIONS,
+  PROCESS_RUN_TOOL_ANNOTATIONS,
+  READ_ONLY_TOOL_ANNOTATIONS
+} from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
 import { registerKodegptTools } from "./tools.js";
 
@@ -134,6 +142,23 @@ const typedVerifyRunResult: VerifyRunResult = {
   }
 };
 
+const typedFilePatchResult: FilePatchResult = {
+  schemaVersion: 1,
+  workspaceId: "ws_1",
+  mode: "check",
+  files: [
+    {
+      path: "src/main.ts",
+      action: "update",
+      expectedSha256: "a".repeat(64),
+      resultingSha256: "b".repeat(64),
+      bytes: 12,
+      committed: false
+    }
+  ],
+  committedPaths: []
+};
+
 function makeContext(): KodegptToolContext {
   return {
     workspace: {
@@ -176,7 +201,7 @@ function makeContext(): KodegptToolContext {
       search: async () => typedCodeSearchResult
     },
     file: {
-      patch: async () => ({} as never)
+      patch: async () => typedFilePatchResult
     },
     verify: {
       list: async () => typedVerifyListResult,
@@ -268,6 +293,35 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
+  it("keeps file.patch schemas, mutating annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("file.patch");
+    const definition = definitions.get("file.patch");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(FilePatchInputSchema);
+    expect(definition?.outputSchema).toBe(FilePatchResultSchema);
+    expect(definition?.annotations).toEqual(MUTATING_FILE_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      patch: "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new\n"
+    } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(result.structuredContent).toEqual(typedFilePatchResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
   it("keeps git.changes schemas, annotations, and structured fallback aligned", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
@@ -350,6 +404,31 @@ describe("structured MCP tool results", () => {
       consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).processes
         .operations
     ).toContainEqual(typedVerifyRunResult.operation);
+  });
+
+  it("preserves only safe partial-commit details at the MCP boundary", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+    const context = makeContext();
+    context.file.patch = async () => {
+      throw new CapabilityError(
+        "PATCH_COMMIT_INCOMPLETE",
+        "Patch commit stopped before all files were committed",
+        { committedPaths: ["a.txt"], failedPath: "b.txt" }
+      );
+    };
+
+    registerKodegptTools(server, context);
+    const handler = handlers.get("file.patch");
+    await expect(
+      handler!({ workspaceId: "ws_1", patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n" } as never)
+    ).rejects.toThrow(
+      'PATCH_COMMIT_INCOMPLETE: Patch commit stopped before all files were committed {"committedPaths":["a.txt"],"failedPath":"b.txt"}'
+    );
   });
 
   it("redacts unknown native capability errors at the MCP boundary", async () => {

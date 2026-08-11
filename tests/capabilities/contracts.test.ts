@@ -4,6 +4,8 @@ import {
   CAPABILITY_SCHEMA_VERSION,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  FilePatchInputSchema,
+  FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
   NativeCapabilityService,
@@ -16,7 +18,7 @@ import {
 } from "../../packages/capabilities/src/index.js";
 
 describe("native capability public package boundary", () => {
-  it("exports the Task 1–6 service and runtime contracts from the package entrypoint", () => {
+  it("exports the Task 1–8 service and runtime contracts from the package entrypoint", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(typeof NativeCapabilityService).toBe("function");
     expect(
@@ -70,6 +72,30 @@ describe("native capability public package boundary", () => {
       patchCoverage: { staged: true, worktree: true, untracked: false },
       truncated: false
     });
+    expect(
+      FilePatchInputSchema.parse({
+        workspaceId: "ws_public",
+        patch: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"
+      })
+    ).toMatchObject({ workspaceId: "ws_public" });
+    expect(
+      FilePatchResultSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "ws_public",
+        mode: "check",
+        files: [
+          {
+            path: "a.txt",
+            action: "update",
+            expectedSha256: "a".repeat(64),
+            resultingSha256: "b".repeat(64),
+            bytes: 4,
+            committed: false
+          }
+        ],
+        committedPaths: []
+      })
+    ).toMatchObject({ workspaceId: "ws_public", mode: "check", committedPaths: [] });
     expect(VerifyListInputSchema.parse({ workspaceId: "ws_public" })).toEqual({
       workspaceId: "ws_public"
     });

@@ -40,6 +40,14 @@ describe("capability contracts", () => {
       code: "CAPABILITY_INTERNAL",
       message: "Native capability failed"
     });
+    expect(
+      toPublicCapabilityError(
+        new CapabilityError("PATCH_COMMIT_INCOMPLETE", "partial", {
+          committedPaths: ["safe.txt"],
+          failedPath: "/home/sauron/private-secret"
+        })
+      )
+    ).toEqual({ code: "PATCH_COMMIT_INCOMPLETE", message: "partial" });
   });
 
   it("pins public schema and bounded defaults", () => {
@@ -216,11 +224,11 @@ describe("capability contracts", () => {
   it("keeps remaining unimplemented capability methods explicit and stable", async () => {
     const service = new NativeCapabilityService(createTestCapabilityDependencies());
 
-    await expect(service.patchFile({ workspaceId: "ws_1", patch: "" })).rejects.toEqual(
+    await expect(service.buildContext({ workspaceId: "ws_1", intent: "understand" })).rejects.toEqual(
       expect.objectContaining<Partial<CapabilityNotImplementedError>>({
         name: "CapabilityNotImplementedError",
         code: "CAPABILITY_NOT_IMPLEMENTED",
-        capability: "file.patch"
+        capability: "context.build"
       })
     );
   });

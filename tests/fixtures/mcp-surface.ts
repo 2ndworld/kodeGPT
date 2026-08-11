@@ -8,6 +8,7 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
     required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
   },
   { name: "file.read", required: ["workspaceId", "path"] },
+  { name: "file.patch", required: ["workspaceId", "patch"] },
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },

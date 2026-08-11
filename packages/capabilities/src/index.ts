@@ -66,6 +66,7 @@ export type {
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,
+  PatchWorkspaceAdapter,
   VerificationAvailabilityAdapter,
   VerificationExecutionAdapter,
   VerificationWorkspaceAdapter,
@@ -78,6 +79,8 @@ export type { NativeCapabilityDependencies, NativeCapabilityName } from "./nativ
 export {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  FilePatchInputSchema,
+  FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
   VerifyListInputSchema,
