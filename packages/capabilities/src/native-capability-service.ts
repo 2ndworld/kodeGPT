@@ -1,7 +1,7 @@
 import type {
   CapabilityExecutionAdapter,
   CodeSearchAdapter,
-  GitInspectionAdapter,
+  GitCheckpointAdapter,
   VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
@@ -41,7 +41,7 @@ export interface NativeCapabilityDependencies {
     inspection: WorkspaceInspectionAdapter;
     search: CodeSearchAdapter;
   };
-  git: GitInspectionAdapter;
+  git: GitCheckpointAdapter;
   verification: {
     workspace: VerificationWorkspaceAdapter;
     execution: CapabilityExecutionAdapter;

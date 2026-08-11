@@ -24,8 +24,8 @@ export function createTestCapabilityDependencies(
       }
     },
     git: {
-      gitStatus: async () => unexpected("git.gitStatus"),
-      gitDiff: async () => unexpected("git.gitDiff")
+      checkpoint: async () => unexpected("git.checkpoint"),
+      checkpointPatch: async () => unexpected("git.checkpointPatch")
     },
     verification: {
       workspace: {

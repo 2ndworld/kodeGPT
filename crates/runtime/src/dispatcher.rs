@@ -22,7 +22,10 @@ use crate::audit::{
     AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink,
 };
 use crate::execution::ExecutionRegistry;
-use crate::git::{GitOperation, run_git_inspection};
+use crate::git::{
+    GitInspectionError, GitOperation, run_git_checkpoint, run_git_checkpoint_patch,
+    run_git_inspection,
+};
 use crate::process::{
     ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
     run_process,
@@ -549,6 +552,44 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.checkpoint" => {
+            let params = match serde_json::from_value::<GitStatusParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_git_checkpoint(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                params.capability_id,
+                false,
+                AuditAction::GitCheckpoint,
+            )
+            .await
+        }
+        "git.checkpoint_patch" => {
+            let params = match serde_json::from_value::<GitStatusParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_git_checkpoint(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                params.capability_id,
+                true,
+                AuditAction::GitCheckpointPatch,
+            )
+            .await
+        }
         "git.diff" => {
             let params = match serde_json::from_value::<GitDiffParams>(request.params) {
                 Ok(params) if !params.capability_id.is_empty() => params,
@@ -882,6 +923,107 @@ async fn dispatch_git_operation(
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     success_response(request_id, json!(result))
+}
+
+async fn dispatch_git_checkpoint(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    patch: bool,
+    action: AuditAction,
+) -> Value {
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32038,
+            "GIT_INSPECTION_UNAVAILABLE",
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        if patch {
+            run_git_checkpoint_patch(
+                &root_fd,
+                &capability_for_run,
+                &request_for_run,
+                &operation_for_run,
+                &raw_spool,
+                &executions,
+            )
+            .map(|result| json!(result))
+        } else {
+            run_git_checkpoint(
+                &root_fd,
+                &capability_for_run,
+                &request_for_run,
+                &operation_for_run,
+                &raw_spool,
+                &executions,
+            )
+            .map(|result| json!(result))
+        }
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::InvalidCheckpointStatus)) if !patch => {
+            return audited_failure(audit, &context, request_id, -32049, "GIT_STATUS_INVALID");
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_failure(audit, &context, request_id, -32039, "GIT_INSPECTION_FAILED");
+        }
+    };
+    if audit.outcome(&context, AuditOutcome::Success).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, result)
 }
 
 async fn dispatch_workspace_cancel_executions(

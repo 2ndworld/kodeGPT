@@ -86,6 +86,8 @@ function dependencies(
     writeFile: async () => ({ bytesWritten: 0, created: true }),
     editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
     gitStatus: async () => gitInspection,
+    gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+    gitCheckpointPatch: async () => gitInspection,
     gitDiff: async () => gitInspection,
     runProcess: async () => completedProcess,
     processStatus: async () => completedProcess,

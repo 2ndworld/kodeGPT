@@ -53,7 +53,13 @@ export interface ManagerBundle {
   workspaceManager: WorkspaceManagerToolAdapter &
     Pick<
       WorkspaceManager,
-      "runProcess" | "processStatus" | "processCancel" | "treeBounded" | "searchBounded"
+      | "runProcess"
+      | "processStatus"
+      | "processCancel"
+      | "treeBounded"
+      | "searchBounded"
+      | "gitCheckpoint"
+      | "gitCheckpointPatch"
     >;
 }
 
@@ -196,8 +202,30 @@ export async function createProductionServiceStack(
         }
       },
       git: {
-        gitStatus: (workspaceId) => managers.workspaceManager.gitStatus(workspaceId),
-        gitDiff: (workspaceId) => managers.workspaceManager.gitDiff(workspaceId)
+        checkpoint: async (workspaceId) => {
+          const result = await managers.workspaceManager.gitCheckpoint(workspaceId);
+          return {
+            schemaVersion: 1,
+            truncated: result.truncated,
+            records: result.records.map((record) => ({
+              ...record,
+              ...(record.currentIdentity
+                ? {
+                    currentIdentity: {
+                      exists: record.currentIdentity.exists,
+                      ...(record.currentIdentity.kind ? { kind: record.currentIdentity.kind } : {}),
+                      ...(record.currentIdentity.sizeBytes === undefined
+                        ? {}
+                        : { sizeBytes: record.currentIdentity.sizeBytes }),
+                      ...(record.currentIdentity.sha256 ? { sha256: record.currentIdentity.sha256 } : {}),
+                      hashTruncated: record.currentIdentity.hashTruncated
+                    }
+                  }
+                : {})
+            }))
+          };
+        },
+        checkpointPatch: (workspaceId) => managers.workspaceManager.gitCheckpointPatch(workspaceId)
       },
       verification: {
         workspace: {

@@ -84,6 +84,9 @@ const typedGitChangesResult: GitChangesResult = {
   clean: false,
   changedPaths: [{ path: "src/main.ts", worktreeStatus: "M" }],
   summary: { changedFiles: 1 },
+  patchPreview: "=== KODEGPT STAGED DIFF ===\n\n=== KODEGPT WORKTREE DIFF ===\n",
+  patchArtifact: { uri: "artifact://ka_git_changes_fixture", bytes: 64 },
+  patchCoverage: { staged: true, worktree: true, untracked: false },
   truncated: false,
   fingerprint: "a".repeat(64)
 };

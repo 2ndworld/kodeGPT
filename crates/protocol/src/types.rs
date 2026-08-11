@@ -297,6 +297,18 @@ pub enum RuntimeRequest {
         id: String,
         params: GitStatusParams,
     },
+    #[serde(rename = "git.checkpoint")]
+    GitCheckpoint {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitStatusParams,
+    },
+    #[serde(rename = "git.checkpoint_patch")]
+    GitCheckpointPatch {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitStatusParams,
+    },
     #[serde(rename = "git.diff")]
     GitDiff {
         jsonrpc: JsonRpcVersion,

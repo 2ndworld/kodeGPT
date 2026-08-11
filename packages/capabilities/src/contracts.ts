@@ -132,6 +132,12 @@ export interface GitPatchArtifact {
   bytes: number;
 }
 
+export interface GitPatchCoverage {
+  staged: true;
+  worktree: true;
+  untracked: false;
+}
+
 export interface GitChangesResult {
   schemaVersion: 1;
   workspaceId: string;
@@ -140,6 +146,7 @@ export interface GitChangesResult {
   summary: GitChangesSummary;
   patchPreview?: string;
   patchArtifact?: GitPatchArtifact;
+  patchCoverage?: GitPatchCoverage;
   truncated: boolean;
   fingerprint: string;
 }

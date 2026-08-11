@@ -91,6 +91,34 @@ export interface GitInspectionAdapter {
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
 }
 
+export interface CapabilityGitCheckpointRecord {
+  recordType: "ordinary" | "rename" | "unmerged" | "untracked";
+  path: string;
+  originalPath?: string;
+  indexStatus?: string;
+  worktreeStatus?: string;
+  headMode?: string;
+  indexMode?: string;
+  worktreeMode?: string;
+  headOid?: string;
+  indexOid?: string;
+  stage1Oid?: string;
+  stage2Oid?: string;
+  stage3Oid?: string;
+  currentIdentity?: CapabilityPathIdentityResult;
+}
+
+export interface CapabilityGitCheckpointResult {
+  schemaVersion: 1;
+  records: CapabilityGitCheckpointRecord[];
+  truncated: boolean;
+}
+
+export interface GitCheckpointAdapter {
+  checkpoint(workspaceId: string): Promise<CapabilityGitCheckpointResult>;
+  checkpointPatch(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
 export interface PatchCommitAdapter {
   commitPatchFile(input: PatchCommitAdapterInput): Promise<PatchCommitAdapterResult>;
 }

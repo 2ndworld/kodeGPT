@@ -354,7 +354,35 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       });
       expect(gitChanges.patchPreview).toContain("tracked.txt");
       expect(gitChanges.patchArtifact.uri).toMatch(/^artifact:\/\/ka_/);
+      expect(gitChanges.patchCoverage).toEqual({
+        staged: true,
+        worktree: true,
+        untracked: false
+      });
       expect(JSON.stringify(gitChanges)).not.toContain(workspaceA);
+
+      await callTool(
+        port,
+        credential.token,
+        "file.write",
+        { workspaceId: openedA.id, path: "tracked.txt", content: "after second\n" },
+        "req_full_write_second"
+      );
+      const gitChangesAfterContent = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "git.changes",
+          { workspaceId: openedA.id },
+          "req_full_git_changes_after_content"
+        )
+      );
+      expect(gitChangesAfterContent.changedPaths).toContainEqual({
+        path: "tracked.txt",
+        indexStatus: "A",
+        worktreeStatus: "M"
+      });
+      expect(gitChangesAfterContent.fingerprint).not.toBe(gitChanges.fingerprint);
 
       const gitStatus = textJson(
         await callTool(

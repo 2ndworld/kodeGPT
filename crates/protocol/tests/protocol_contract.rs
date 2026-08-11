@@ -73,6 +73,8 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "file.tree.json",
         "file.search.json",
         "file.identity.json",
+        "git.checkpoint.json",
+        "git.checkpoint_patch.json",
         "process.run.json",
         "process.status.json",
         "process.cancel.json",

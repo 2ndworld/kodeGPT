@@ -153,6 +153,14 @@ export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
       })
       .strict()
       .optional(),
+    patchCoverage: z
+      .object({
+        staged: z.literal(true),
+        worktree: z.literal(true),
+        untracked: z.literal(false)
+      })
+      .strict()
+      .optional(),
     truncated: z.boolean(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
   })

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { GitInspectionAdapter, GitInspectionAdapterResult } from "./adapters.js";
+import type {
+  CapabilityGitCheckpointRecord,
+  CapabilityGitCheckpointResult,
+  GitCheckpointAdapter,
+  GitInspectionAdapterResult
+} from "./adapters.js";
 import { NativeCapabilityService } from "./native-capability-service.js";
 import { createTestCapabilityDependencies } from "./test-support.js";
 
@@ -19,7 +24,7 @@ function inspection(
     bytesSpooled: Buffer.byteLength(stdoutPreview),
     artifact: {
       schemaVersion: 1,
-      uri: "artifact://ka_git_fixture",
+      uri: "artifact://ka_git_checkpoint_patch",
       mediaType: "application/vnd.kodegpt.execution-stream",
       sizeBytes: Buffer.byteLength(stdoutPreview),
       sourceTruncated: false
@@ -28,137 +33,227 @@ function inspection(
   };
 }
 
+function identity(sha256: string, sizeBytes = 7) {
+  return {
+    exists: true,
+    kind: "file" as const,
+    sizeBytes,
+    sha256,
+    hashTruncated: false
+  };
+}
+
+function checkpoint(
+  records: CapabilityGitCheckpointRecord[],
+  truncated = false
+): CapabilityGitCheckpointResult {
+  return { schemaVersion: 1, records, truncated };
+}
+
 function service(options: {
-  status: GitInspectionAdapterResult;
-  diff?: GitInspectionAdapterResult;
-  onStatus?: () => void;
-  onDiff?: () => void;
+  checkpoint: CapabilityGitCheckpointResult | (() => Promise<CapabilityGitCheckpointResult>);
+  patch?: GitInspectionAdapterResult;
+  onCheckpoint?: () => void;
+  onPatch?: () => void;
 }): NativeCapabilityService {
-  const gitInspection: GitInspectionAdapter = {
-    gitStatus: async () => {
-      options.onStatus?.();
-      return options.status;
+  const git: GitCheckpointAdapter = {
+    checkpoint: async () => {
+      options.onCheckpoint?.();
+      return typeof options.checkpoint === "function"
+        ? options.checkpoint()
+        : options.checkpoint;
     },
-    gitDiff: async () => {
-      options.onDiff?.();
-      return options.diff ?? inspection("");
+    checkpointPatch: async () => {
+      options.onPatch?.();
+      return options.patch ?? inspection("");
     }
   };
+  return new NativeCapabilityService(createTestCapabilityDependencies({ git }));
+}
 
-  return new NativeCapabilityService(
-    createTestCapabilityDependencies({ git: gitInspection })
-  );
+const oidA = "1".repeat(40);
+const oidB = "2".repeat(40);
+const shaA = "a".repeat(64);
+const shaB = "b".repeat(64);
+
+function ordinary(
+  path: string,
+  options: Partial<CapabilityGitCheckpointRecord> = {}
+): CapabilityGitCheckpointRecord {
+  return {
+    recordType: "ordinary",
+    path,
+    headMode: "100644",
+    indexMode: "100644",
+    worktreeMode: "100644",
+    headOid: oidA,
+    indexOid: oidA,
+    ...options
+  };
 }
 
 describe("git.changes", () => {
-  it("normalizes staged, worktree, both-side, added, deleted, renamed, and untracked paths", async () => {
+  it("derives deterministic changed paths from structured checkpoint records", async () => {
     const capability = service({
-      status: inspection(
-        [
-          "M  staged.ts",
-          " M worktree.ts",
-          "MM both.ts",
-          "A  added.ts",
-          " D deleted.ts",
-          "R  old-name.ts -> renamed.ts",
-          "?? untracked.ts"
-        ].join("\n") + "\n"
-      )
+      checkpoint: checkpoint([
+        ordinary("worktree.ts", { worktreeStatus: "M", currentIdentity: identity(shaA) }),
+        ordinary("staged.ts", { indexStatus: "M", indexOid: oidB }),
+        ordinary("both.ts", {
+          indexStatus: "M",
+          worktreeStatus: "M",
+          indexOid: oidB,
+          currentIdentity: identity(shaB)
+        }),
+        {
+          recordType: "rename",
+          path: "renamed.ts",
+          originalPath: "old -> quoted name.ts",
+          indexStatus: "R",
+          headMode: "100644",
+          indexMode: "100644",
+          worktreeMode: "100644",
+          headOid: oidA,
+          indexOid: oidB
+        },
+        {
+          recordType: "untracked",
+          path: "untracked -> \"é.ts",
+          worktreeStatus: "?",
+          currentIdentity: identity(shaA)
+        }
+      ])
     });
 
     const result = await capability.gitChanges({ workspaceId: "ws_git" });
 
-    expect(result).toEqual({
-      schemaVersion: 1,
-      workspaceId: "ws_git",
-      clean: false,
-      changedPaths: [
-        { path: "added.ts", indexStatus: "A" },
-        { path: "both.ts", indexStatus: "M", worktreeStatus: "M" },
-        { path: "deleted.ts", worktreeStatus: "D" },
-        { path: "renamed.ts", indexStatus: "R" },
-        { path: "staged.ts", indexStatus: "M" },
-        { path: "untracked.ts", worktreeStatus: "?" },
-        { path: "worktree.ts", worktreeStatus: "M" }
-      ],
-      summary: { changedFiles: 7 },
-      truncated: false,
-      fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
-    });
-  });
-
-  it("normalizes worktree-only renames to the destination path", async () => {
-    const capability = service({
-      status: inspection(" R old-worktree.ts -> renamed-worktree.ts\n")
-    });
-
-    const result = await capability.gitChanges({ workspaceId: "ws_worktree_rename" });
-
     expect(result.changedPaths).toEqual([
-      { path: "renamed-worktree.ts", worktreeStatus: "R" }
+      { path: "both.ts", indexStatus: "M", worktreeStatus: "M" },
+      { path: "renamed.ts", indexStatus: "R" },
+      { path: "staged.ts", indexStatus: "M" },
+      { path: "untracked -> \"é.ts", worktreeStatus: "?" },
+      { path: "worktree.ts", worktreeStatus: "M" }
     ]);
+    expect(result.clean).toBe(false);
+    expect(result.summary).toEqual({ changedFiles: 5 });
+    expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("decodes Git C-quoted UTF-8 paths before normalization", async () => {
+  it("returns a deterministic clean checkpoint without generating patch presentation", async () => {
+    let patchCalls = 0;
     const capability = service({
-      status: inspection(' M "caf\\303\\251.ts"\n')
-    });
-
-    const result = await capability.gitChanges({ workspaceId: "ws_quoted" });
-
-    expect(result.changedPaths).toEqual([{ path: "café.ts", worktreeStatus: "M" }]);
-  });
-
-  it("returns a deterministic clean checkpoint without running git diff when patch is omitted", async () => {
-    let statusCalls = 0;
-    let diffCalls = 0;
-    const capability = service({
-      status: inspection(""),
-      onStatus: () => statusCalls++,
-      onDiff: () => diffCalls++
+      checkpoint: checkpoint([]),
+      onPatch: () => patchCalls++
     });
 
     const first = await capability.gitChanges({ workspaceId: "ws_clean" });
     const second = await capability.gitChanges({ workspaceId: "ws_clean" });
 
-    expect(first).toEqual({
-      schemaVersion: 1,
-      workspaceId: "ws_clean",
-      clean: true,
-      changedPaths: [],
-      summary: { changedFiles: 0 },
-      truncated: false,
-      fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
-    });
-    expect(second.fingerprint).toBe(first.fingerprint);
-    expect(statusCalls).toBe(2);
-    expect(diffCalls).toBe(0);
+    expect(first.clean).toBe(true);
+    expect(first.truncated).toBe(false);
+    expect(first.fingerprint).toBe(second.fingerprint);
+    expect(patchCalls).toBe(0);
   });
 
-  it("produces the same fingerprint for semantically identical status lines in different order", async () => {
+  it("changes fingerprint when worktree content changes despite identical status", async () => {
     const first = service({
-      status: inspection(" M zeta.ts\nA  alpha.ts\nMM middle.ts\n")
+      checkpoint: checkpoint([
+        ordinary("file.ts", { worktreeStatus: "M", currentIdentity: identity(shaA) })
+      ])
     });
     const second = service({
-      status: inspection("MM middle.ts\n M zeta.ts\nA  alpha.ts\n")
+      checkpoint: checkpoint([
+        ordinary("file.ts", { worktreeStatus: "M", currentIdentity: identity(shaB) })
+      ])
     });
 
-    const firstResult = await first.gitChanges({ workspaceId: "ws_order" });
-    const secondResult = await second.gitChanges({ workspaceId: "ws_order" });
-
-    expect(firstResult.changedPaths).toEqual(secondResult.changedPaths);
-    expect(firstResult.fingerprint).toBe(secondResult.fingerprint);
+    const firstResult = await first.gitChanges({ workspaceId: "ws_content" });
+    const secondResult = await second.gitChanges({ workspaceId: "ws_content" });
+    expect(secondResult.fingerprint).not.toBe(firstResult.fingerprint);
   });
 
-  it("includes bounded patch preview and artifact metadata when requested", async () => {
-    const patch = "diff --git a/file.ts b/file.ts\n@@ -1 +1 @@\n-old\n+new\n";
+  it("changes fingerprint when staged index object changes", async () => {
+    const first = service({
+      checkpoint: checkpoint([ordinary("file.ts", { indexStatus: "M", indexOid: oidA })])
+    });
+    const second = service({
+      checkpoint: checkpoint([ordinary("file.ts", { indexStatus: "M", indexOid: oidB })])
+    });
+
+    expect((await first.gitChanges({ workspaceId: "ws_index" })).fingerprint).not.toBe(
+      (await second.gitChanges({ workspaceId: "ws_index" })).fingerprint
+    );
+  });
+
+  it("changes fingerprint when untracked content changes", async () => {
+    const first = service({
+      checkpoint: checkpoint([
+        {
+          recordType: "untracked",
+          path: "new.txt",
+          worktreeStatus: "?",
+          currentIdentity: identity(shaA)
+        }
+      ])
+    });
+    const second = service({
+      checkpoint: checkpoint([
+        {
+          recordType: "untracked",
+          path: "new.txt",
+          worktreeStatus: "?",
+          currentIdentity: identity(shaB)
+        }
+      ])
+    });
+
+    expect((await first.gitChanges({ workspaceId: "ws_untracked" })).fingerprint).not.toBe(
+      (await second.gitChanges({ workspaceId: "ws_untracked" })).fingerprint
+    );
+  });
+
+  it("keeps fingerprint invariant when patch presentation is requested", async () => {
+    const state = checkpoint([
+      ordinary("file.ts", { worktreeStatus: "M", currentIdentity: identity(shaA) })
+    ]);
     const capability = service({
-      status: inspection(" M file.ts\n"),
-      diff: inspection(patch, {
+      checkpoint: state,
+      patch: inspection(
+        "=== KODEGPT STAGED DIFF ===\n=== KODEGPT WORKTREE DIFF ===\ndiff --git a/file.ts b/file.ts\n"
+      )
+    });
+
+    const compact = await capability.gitChanges({ workspaceId: "ws_option_invariant" });
+    const withPatch = await capability.gitChanges({
+      workspaceId: "ws_option_invariant",
+      includePatch: true
+    });
+
+    expect(withPatch.fingerprint).toBe(compact.fingerprint);
+    expect(withPatch.patchCoverage).toEqual({ staged: true, worktree: true, untracked: false });
+  });
+
+  it("produces the same fingerprint for semantically identical records in different order", async () => {
+    const alpha = ordinary("alpha.ts", { indexStatus: "A", indexOid: oidB });
+    const zeta = ordinary("zeta.ts", { worktreeStatus: "M", currentIdentity: identity(shaA) });
+    const first = service({ checkpoint: checkpoint([zeta, alpha]) });
+    const second = service({ checkpoint: checkpoint([alpha, zeta]) });
+
+    expect((await first.gitChanges({ workspaceId: "ws_order" })).fingerprint).toBe(
+      (await second.gitChanges({ workspaceId: "ws_order" })).fingerprint
+    );
+  });
+
+  it("returns bounded combined patch metadata and explicit coverage when requested", async () => {
+    const patch =
+      "=== KODEGPT STAGED DIFF ===\ndiff --git a/staged.ts b/staged.ts\n" +
+      "=== KODEGPT WORKTREE DIFF ===\ndiff --git a/worktree.ts b/worktree.ts\n";
+    const capability = service({
+      checkpoint: checkpoint([ordinary("staged.ts", { indexStatus: "A", indexOid: oidB })]),
+      patch: inspection(patch, {
         bytesSpooled: 123,
         artifact: {
           schemaVersion: 1,
-          uri: "artifact://ka_diff_fixture",
+          uri: "artifact://ka_combined_patch",
           mediaType: "application/vnd.kodegpt.execution-stream",
           sizeBytes: 123,
           sourceTruncated: false
@@ -167,51 +262,47 @@ describe("git.changes", () => {
     });
 
     const result = await capability.gitChanges({ workspaceId: "ws_patch", includePatch: true });
-
-    expect(result).toMatchObject({
-      schemaVersion: 1,
-      workspaceId: "ws_patch",
-      clean: false,
-      patchPreview: patch,
-      patchArtifact: { uri: "artifact://ka_diff_fixture", bytes: 123 },
-      truncated: false
-    });
-    expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.patchPreview).toBe(patch);
+    expect(result.patchArtifact).toEqual({ uri: "artifact://ka_combined_patch", bytes: 123 });
+    expect(result.patchCoverage).toEqual({ staged: true, worktree: true, untracked: false });
+    expect(result.truncated).toBe(false);
   });
 
-  it("propagates status truncation without claiming a complete changed-path set", async () => {
-    const capability = service({
-      status: inspection(" M partial.ts\n", { stdoutTruncated: true, sourceTruncated: true })
-    });
+  it("propagates checkpoint and patch truncation without claiming clean state", async () => {
+    const checkpointTruncated = service({ checkpoint: checkpoint([], true) });
+    const checkpointResult = await checkpointTruncated.gitChanges({ workspaceId: "ws_truncated" });
+    expect(checkpointResult.clean).toBe(false);
+    expect(checkpointResult.truncated).toBe(true);
 
-    const result = await capability.gitChanges({ workspaceId: "ws_status_truncated" });
-
-    expect(result.changedPaths).toEqual([{ path: "partial.ts", worktreeStatus: "M" }]);
-    expect(result.truncated).toBe(true);
-  });
-
-  it("propagates patch truncation when patch output is requested", async () => {
-    const capability = service({
-      status: inspection(" M file.ts\n"),
-      diff: inspection("diff --git a/file.ts b/file.ts\n", {
+    const patchTruncated = service({
+      checkpoint: checkpoint([ordinary("file.ts", { indexStatus: "M", indexOid: oidB })]),
+      patch: inspection("=== KODEGPT STAGED DIFF ===\n", {
         stdoutTruncated: true,
-        sourceTruncated: true,
-        artifact: {
-          schemaVersion: 1,
-          uri: "artifact://ka_truncated_diff",
-          mediaType: "application/vnd.kodegpt.execution-stream",
-          sizeBytes: 65_536,
-          sourceTruncated: true
-        }
+        sourceTruncated: true
       })
     });
+    expect(
+      (await patchTruncated.gitChanges({ workspaceId: "ws_patch_truncated", includePatch: true }))
+        .truncated
+    ).toBe(true);
+  });
 
-    const result = await capability.gitChanges({
-      workspaceId: "ws_patch_truncated",
-      includePatch: true
+  it("maps invalid input and runtime checkpoint failures to stable capability errors", async () => {
+    const capability = service({ checkpoint: checkpoint([]) });
+    await expect(capability.gitChanges({ workspaceId: "" })).rejects.toMatchObject({
+      code: "CAPABILITY_INPUT_INVALID"
     });
 
-    expect(result.truncated).toBe(true);
-    expect(result.patchArtifact).toEqual({ uri: "artifact://ka_truncated_diff", bytes: 65_536 });
+    const invalid = service({
+      checkpoint: async () => {
+        throw Object.assign(new Error("host path /home/private"), {
+          code: "RUNTIME_PROTOCOL_INVALID"
+        });
+      }
+    });
+    await expect(invalid.gitChanges({ workspaceId: "ws_invalid" })).rejects.toMatchObject({
+      code: "GIT_STATUS_INVALID",
+      message: "Git checkpoint status is invalid"
+    });
   });
 });

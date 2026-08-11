@@ -109,6 +109,49 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "git.checkpoint":
+        return {
+          schemaVersion: 1,
+          records: [
+            {
+              recordType: "ordinary",
+              path: "tracked.txt",
+              worktreeStatus: "M",
+              headMode: "100644",
+              indexMode: "100644",
+              worktreeMode: "100644",
+              headOid: "1".repeat(40),
+              indexOid: "1".repeat(40),
+              currentIdentity: {
+                schemaVersion: 1,
+                exists: true,
+                kind: "file",
+                sizeBytes: 9,
+                sha256: "b".repeat(64),
+                hashTruncated: false
+              }
+            }
+          ],
+          truncated: false
+        } as T;
+      case "git.checkpoint_patch":
+        return {
+          schemaVersion: 1,
+          exitCode: 0,
+          stdoutPreview: "=== KODEGPT STAGED DIFF ===\n=== KODEGPT WORKTREE DIFF ===\n",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 58,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_checkpoint_patch_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 58,
+            sourceTruncated: false
+          }
+        } as T;
       case "git.diff":
         return {
           schemaVersion: 1,
@@ -208,6 +251,8 @@ describe("WorkspaceManager", () => {
     const write = await manager.writeFile("ws_files", "created.txt", "created");
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
     const gitStatus = await manager.gitStatus("ws_files");
+    const gitCheckpoint = await manager.gitCheckpoint("ws_files");
+    const gitCheckpointPatch = await manager.gitCheckpointPatch("ws_files");
     const gitDiff = await manager.gitDiff("ws_files");
     const tree = await manager.tree("ws_files", ".");
     const boundedTree = await manager.treeBounded("ws_files", ".", 10_000);
@@ -242,6 +287,32 @@ describe("WorkspaceManager", () => {
         sourceTruncated: false
       }
     });
+    expect(gitCheckpoint).toEqual({
+      schemaVersion: 1,
+      records: [
+        {
+          recordType: "ordinary",
+          path: "tracked.txt",
+          worktreeStatus: "M",
+          headMode: "100644",
+          indexMode: "100644",
+          worktreeMode: "100644",
+          headOid: "1".repeat(40),
+          indexOid: "1".repeat(40),
+          currentIdentity: {
+            schemaVersion: 1,
+            exists: true,
+            kind: "file",
+            sizeBytes: 9,
+            sha256: "b".repeat(64),
+            hashTruncated: false
+          }
+        }
+      ],
+      truncated: false
+    });
+    expect(gitCheckpointPatch.stdoutPreview).toContain("KODEGPT STAGED DIFF");
+    expect(gitCheckpointPatch.artifact.uri).toBe("artifact://ka_checkpoint_patch_fixture");
     expect(gitDiff).toEqual({
       schemaVersion: 1,
       exitCode: 0,
@@ -282,7 +353,7 @@ describe("WorkspaceManager", () => {
       truncationReasons: []
     });
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-10)).toEqual([
+    expect(kernel.calls.slice(-12)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -306,6 +377,8 @@ describe("WorkspaceManager", () => {
         }
       },
       { method: "git.status", params: { capabilityId: "kc_fixture" } },
+      { method: "git.checkpoint", params: { capabilityId: "kc_fixture" } },
+      { method: "git.checkpoint_patch", params: { capabilityId: "kc_fixture" } },
       { method: "git.diff", params: { capabilityId: "kc_fixture" } },
       {
         method: "file.tree",

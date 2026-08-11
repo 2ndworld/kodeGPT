@@ -354,6 +354,42 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.checkpoint" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.checkpoint_patch" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "git.diff" },
         "params": {
           "type": "object",

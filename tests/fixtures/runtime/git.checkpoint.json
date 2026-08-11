@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_fixture_git_checkpoint",
+  "method": "git.checkpoint",
+  "params": {
+    "capabilityId": "kc_fixture_1"
+  }
+}

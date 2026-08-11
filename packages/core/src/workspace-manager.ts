@@ -14,6 +14,8 @@ import type {
   TrustedWorkspaceEntry
 } from "@kodegpt/trust";
 
+import { KernelRpcError } from "./kernel-client.js";
+
 export interface KernelTransport {
   request<T>(method: RuntimeMethod, params: Record<string, unknown>): Promise<T>;
 }
@@ -66,6 +68,29 @@ export interface WorkspaceGitInspectionResult {
   sourceTruncated: boolean;
   bytesSpooled: number;
   artifact: ArtifactMetadata;
+}
+
+export interface WorkspaceGitCheckpointRecord {
+  recordType: "ordinary" | "rename" | "unmerged" | "untracked";
+  path: string;
+  originalPath?: string;
+  indexStatus?: string;
+  worktreeStatus?: string;
+  headMode?: string;
+  indexMode?: string;
+  worktreeMode?: string;
+  headOid?: string;
+  indexOid?: string;
+  stage1Oid?: string;
+  stage2Oid?: string;
+  stage3Oid?: string;
+  currentIdentity?: WorkspacePathIdentityResult;
+}
+
+export interface WorkspaceGitCheckpointResult {
+  schemaVersion: 1;
+  records: WorkspaceGitCheckpointRecord[];
+  truncated: boolean;
 }
 
 export type ProcessOperationState = "running" | "completed" | "failed" | "cancelled";
@@ -453,6 +478,28 @@ export class WorkspaceManager {
     return this.#gitInspection(workspaceId, "git.status");
   }
 
+  async gitCheckpoint(workspaceId: string): Promise<WorkspaceGitCheckpointResult> {
+    const state = this.#requireReadyState(workspaceId);
+    try {
+      const result = await this.#kernel.request<unknown>("git.checkpoint", {
+        capabilityId: state.capabilityId
+      });
+      return validateGitCheckpoint(result);
+    } catch (error) {
+      if (error instanceof KernelRpcError && error.message === "GIT_STATUS_INVALID") {
+        throw new WorkspaceManagerError(
+          "GIT_STATUS_INVALID",
+          "git.checkpoint returned invalid status"
+        );
+      }
+      throw error;
+    }
+  }
+
+  async gitCheckpointPatch(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
+    return this.#gitInspection(workspaceId, "git.checkpoint_patch");
+  }
+
   async gitDiff(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
     return this.#gitInspection(workspaceId, "git.diff");
   }
@@ -588,7 +635,7 @@ export class WorkspaceManager {
 
   async #gitInspection(
     workspaceId: string,
-    method: "git.status" | "git.diff"
+    method: "git.status" | "git.checkpoint_patch" | "git.diff"
   ): Promise<WorkspaceGitInspectionResult> {
     const state = this.#requireReadyState(workspaceId);
     const result = await this.#kernel.request<unknown>(method, {
@@ -744,6 +791,105 @@ function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
     );
   }
   return { path: value.path, kind: value.kind };
+}
+
+function validateGitCheckpoint(value: unknown): WorkspaceGitCheckpointResult {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !Array.isArray(value.records) ||
+    typeof value.truncated !== "boolean"
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.checkpoint returned an invalid payload"
+    );
+  }
+  const records = value.records.map(validateGitCheckpointRecord);
+  const seen = new Set<string>();
+  for (const record of records) {
+    if (seen.has(record.path)) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.checkpoint returned duplicate paths"
+      );
+    }
+    seen.add(record.path);
+  }
+  return { schemaVersion: 1, records, truncated: value.truncated };
+}
+
+function validateGitCheckpointRecord(value: unknown): WorkspaceGitCheckpointRecord {
+  if (
+    !isRecord(value) ||
+    !isGitCheckpointRecordType(value.recordType) ||
+    typeof value.path !== "string" ||
+    value.path.length === 0 ||
+    !optionalNonemptyString(value.originalPath) ||
+    !optionalGitStatus(value.indexStatus) ||
+    !optionalGitStatus(value.worktreeStatus) ||
+    !optionalGitMode(value.headMode) ||
+    !optionalGitMode(value.indexMode) ||
+    !optionalGitMode(value.worktreeMode) ||
+    !optionalGitOid(value.headOid) ||
+    !optionalGitOid(value.indexOid) ||
+    !optionalGitOid(value.stage1Oid) ||
+    !optionalGitOid(value.stage2Oid) ||
+    !optionalGitOid(value.stage3Oid) ||
+    (value.currentIdentity !== undefined && !isValidPathIdentityResult(value.currentIdentity, true))
+  ) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.checkpoint returned an invalid record"
+    );
+  }
+  if (value.recordType === "rename" && value.originalPath === undefined) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.checkpoint rename record is missing originalPath"
+    );
+  }
+  if (value.recordType !== "rename" && value.originalPath !== undefined) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.checkpoint non-rename record contains originalPath"
+    );
+  }
+  const needsCurrentIdentity =
+    value.recordType === "untracked" ||
+    (typeof value.worktreeStatus === "string" && value.worktreeStatus !== "D");
+  if (needsCurrentIdentity && value.currentIdentity === undefined) {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.checkpoint record is missing currentIdentity"
+    );
+  }
+  return value as unknown as WorkspaceGitCheckpointRecord;
+}
+
+function isGitCheckpointRecordType(
+  value: unknown
+): value is WorkspaceGitCheckpointRecord["recordType"] {
+  return value === "ordinary" || value === "rename" || value === "unmerged" || value === "untracked";
+}
+
+function optionalNonemptyString(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length > 0);
+}
+
+function optionalGitStatus(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && /^[MADRCUT?]$/.test(value))
+  );
+}
+
+function optionalGitMode(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^[0-7]{6}$/.test(value));
+}
+
+function optionalGitOid(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^[0-9a-f]{40,64}$/.test(value));
 }
 
 function isTreeEntryKind(value: unknown): value is WorkspaceTreeEntryKind {

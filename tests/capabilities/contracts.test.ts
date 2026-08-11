@@ -60,10 +60,16 @@ describe("native capability public package boundary", () => {
         clean: true,
         changedPaths: [],
         summary: { changedFiles: 0 },
+        patchCoverage: { staged: true, worktree: true, untracked: false },
         truncated: false,
         fingerprint: "a".repeat(64)
       })
-    ).toMatchObject({ workspaceId: "ws_public", clean: true, truncated: false });
+    ).toMatchObject({
+      workspaceId: "ws_public",
+      clean: true,
+      patchCoverage: { staged: true, worktree: true, untracked: false },
+      truncated: false
+    });
     expect(VerifyListInputSchema.parse({ workspaceId: "ws_public" })).toEqual({
       workspaceId: "ws_public"
     });
