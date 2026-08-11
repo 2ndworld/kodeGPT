@@ -219,6 +219,13 @@ interface CodeSearchInput {
 Result:
 
 ```ts
+type CodeSearchTruncationReason =
+  | "TREE_LIMIT"
+  | "FILE_SIZE_LIMIT"
+  | "SCAN_BYTE_LIMIT"
+  | "MATCH_LIMIT"
+  | "SNIPPET_BYTE_LIMIT";
+
 interface CodeSearchResult {
   schemaVersion: 1;
   mode: CodeSearchMode;
@@ -231,6 +238,7 @@ interface CodeSearchResult {
     preview?: string;
   }>;
   truncated: boolean;
+  truncationReasons: CodeSearchTruncationReason[];
 }
 ```
 
@@ -241,6 +249,8 @@ Version 1 is deliberately progressive:
 - `symbol`, `definition`, `reference`: deterministic lexical/syntax-pattern heuristics with `precision` explicitly reported.
 
 Tree-sitter/LSP integration is a later optimization and must not be required to ship the initial stable contract. The API must not pretend heuristic results are compiler-precise.
+
+Completeness is explicit. `truncated:false` requires `truncationReasons:[]`; when the retained-root tree, candidate file size, aggregate scan-byte budget, match limit, or snippet budget makes the result incomplete, `truncated:true` carries the corresponding stable reason. Oversized or budget-skipped candidates must never be silently reported as a complete search.
 
 ### 6.3 `git.changes`
 
@@ -274,12 +284,15 @@ interface GitChangesResult {
   };
   patchPreview?: string;
   patchArtifact?: { uri: string; bytes: number };
+  patchCoverage?: { staged: true; worktree: true; untracked: false };
   truncated: boolean;
   fingerprint: string;
 }
 ```
 
-The fingerprint is a deterministic digest of normalized observable Git change state, not a security credential. It enables future `sinceFingerprint`/“what changed since last checkpoint” behavior without storing model session state in KodeGPT.
+The fingerprint is a deterministic digest of normalized observable Git change state, not a security credential. It is content-sensitive and request-option-invariant: current worktree/untracked SHA-256 identities and staged index object IDs participate in the checkpoint, while patch previews, artifact IDs, operation/request IDs, and `includePatch` do not. The same checkpoint therefore has the same fingerprint whether or not patch presentation is requested, while a content change under the same status/path changes the fingerprint.
+
+When `includePatch:true`, v1 combines tracked staged and tracked worktree diffs in fixed order and reports `patchCoverage: { staged:true, worktree:true, untracked:false }`. Untracked content participates in fingerprint identity but is deliberately not represented as a unified v1 patch. A truncated checkpoint or patch presentation is reported honestly with `truncated:true`.
 
 ### 6.4 `file.patch`
 
@@ -322,18 +335,20 @@ interface VerificationRecipe {
   id: string;
   label: string;
   category: "test" | "lint" | "typecheck" | "build" | "format-check" | "custom";
-  logicalExecutable: string;
-  argv: string[];
-  cwd: string;
+  logicalExecutable?: string;
+  argv?: string[];
+  cwd?: string;
   source: "package-script" | "cargo" | "kodegpt-config";
   allowed: boolean;
   blockedReason?: string;
 }
 ```
 
-Discovery may inspect known manifests/configuration but must never execute package-manager lifecycle scripts merely to discover commands.
+Discovery may inspect known manifests/configuration but must never execute package-manager lifecycle scripts merely to discover commands. Package-manager discovery is deterministic from root `package.json` plus recognized lockfile evidence (`pnpm`, `npm`, `yarn`, or `bun`) and never performs PATH/package-manager discovery commands.
 
-A discovered recipe is marked `allowed: true` only if its executable/cwd/network requirements fit the current effective KodeGPT policy.
+A discovered recipe is marked `allowed: true` only when all static launch prerequisites hold: process authority is enabled, the resolved logical executable is allowlisted, the executable is available through KodeGPT's trusted root-owned executable resolver, and the sandbox is available. `allowed:true` requires the complete stored `logicalExecutable`/`argv`/`cwd` launch tuple. Package-manager unknown/conflict recipes remain discoverable but blocked and omit that tuple.
+
+Stable blocked reasons are `PROCESS_NOT_ALLOWED`, `EXECUTABLE_NOT_ALLOWED`, `EXECUTABLE_UNAVAILABLE`, `SANDBOX_UNAVAILABLE`, `PACKAGE_MANAGER_UNKNOWN`, and `PACKAGE_MANAGER_CONFLICT`. These are public semantic reasons; trusted executable paths and sandbox host details are not exposed.
 
 ### 6.6 `verify.run`
 

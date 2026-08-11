@@ -499,7 +499,7 @@ git commit -m "fix(capabilities): stabilize workspace inspection contracts"
 - Internal lexical search result: `{ matches, truncated }`.
 - Produces schema-validated `CodeSearchResult` and production-usable MCP tool `code.search`.
 
-- [ ] **Step 1: Write failing tests for all five modes**
+- [x] **Step 1: Write failing tests for all five modes**
 
 Required examples:
 
@@ -525,7 +525,7 @@ trait Foo
 
 Symbol/reference classification uses whole-identifier boundaries. References exclude recognized definition lines.
 
-- [ ] **Step 2: Add RED tests for honest low-level truncation**
+- [x] **Step 2: Add RED tests for honest low-level truncation**
 
 The internal retained-root lexical search must carry an explicit requested match limit and explicit `truncated` bit. Cover:
 
@@ -539,17 +539,17 @@ requested maxMatches above 500                 → rejected by Rust authority
 
 `SEARCH_MAX_MATCHES` is the hard internal maximum `500`, aligned with public `MAX_SEARCH_MAX_RESULTS`. Preserve compatibility by keeping ordinary `WorkspaceManager.search()` at its historical default of `200`; add `searchBounded()` for capability callers.
 
-- [ ] **Step 3: Implement bounded search modes**
+- [x] **Step 3: Implement bounded search modes**
 
 Use `searchBounded()` for `text`. For `path`, filter the retained-root bounded tree with case-sensitive substring matching. For `symbol`, `definition`, and `reference`, obtain bounded lexical candidate lines first and classify them using deterministic whole-identifier and declaration-prefix checks. Do not recursively reread source files and do not add filesystem/process/Git authority.
 
 Never label heuristic output as exact. `truncated` is true when the low-level result is incomplete or when more classified/path matches exist than the configured `maxResults`; do not infer low-level truncation from array length.
 
-- [ ] **Step 4: Add shared runtime schemas**
+- [x] **Step 4: Add shared runtime schemas**
 
 `packages/capabilities/src/schemas.ts` owns `CodeSearchInputSchema` and `CodeSearchResultSchema`. The input is closed and enforces query length `1..512` and `maxResults <= 500`; the output is closed and validates mode, precision, bounded match metadata, and `truncated`.
 
-- [ ] **Step 5: Production-wire before advertising**
+- [x] **Step 5: Production-wire before advertising**
 
 Extend the Task 3 `NativeCapabilityService` construction in `createProductionServiceStack` with only a `CodeSearchAdapter` backed by the existing `WorkspaceManager.searchBounded`. Do not create a second service, kernel, workspace manager, or filesystem authority.
 
@@ -562,7 +562,7 @@ implemented
 → advertised
 ```
 
-- [ ] **Step 6: Register MCP `code.search`**
+- [x] **Step 6: Register MCP `code.search`**
 
 Use:
 
@@ -576,7 +576,7 @@ Required public fields remain `workspaceId` and `query`; `mode`, `path`, and `ma
 
 Add `code.search` to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"`; Phase 1 capability additions do not independently bump the already-established Phase 1 surface version.
 
-- [ ] **Step 7: Run GREEN and commit**
+- [x] **Step 7: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -616,17 +616,17 @@ git commit -m "feat(capabilities): add structured code search"
 - No filesystem, process, shell, network, or new Git-execution authority is added to the capability layer.
 - Produces compact normalized change state + deterministic SHA-256 fingerprint.
 
-- [ ] **Step 1: Add failing parser/fingerprint tests**
+- [x] **Step 1: Add failing parser/fingerprint tests**
 
 Use porcelain-v1 fixtures covering modified, added, deleted, renamed, staged-only, worktree-only, both-side modification, untracked, and clean states. Cover rename/copy destination normalization from either XY position and Git C-quoted UTF-8 path decoding. Assert two semantically identical normalized states produce the same fingerprint even if input line order differs.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test -- git-changes
 ```
 
-- [ ] **Step 3: Implement deterministic normalization**
+- [x] **Step 3: Implement deterministic normalization**
 
 Use Node `createHash("sha256")` only as a pure computation dependency. Normalize status paths first, then sort with deterministic bytewise/string ordering rather than locale-dependent ordering:
 
@@ -640,17 +640,17 @@ const normalized = {
 
 `includePatch=false` must not invoke `gitDiff`. `includePatch=true` may return the already-bounded diff preview plus opaque artifact metadata from the hardened Git result. If status or requested patch output is truncated, propagate `truncated: true`; if status is truncated, never claim `clean: true` even when no visible changed path survived the preview.
 
-- [ ] **Step 4: Add shared runtime schemas**
+- [x] **Step 4: Add shared runtime schemas**
 
 `packages/capabilities/src/schemas.ts` owns closed `GitChangesInputSchema` / `GitChangesResultSchema`. Validate the optional patch artifact, one-character XY status fields, non-negative summary values, and lowercase 64-hex SHA-256 fingerprint.
 
-- [ ] **Step 5: Production-wire before advertising**
+- [x] **Step 5: Production-wire before advertising**
 
 Extend the existing `NativeCapabilityService` construction with a narrow `GitInspectionAdapter` backed by the same `WorkspaceManager.gitStatus/gitDiff`. Do not create another manager or Git executor.
 
 Add a direct production-stack test that captures `toolContext` and proves `toolContext.git.changes()` works before public registration. Keep `WorkspaceGitInspectionResult.schemaVersion` narrowed to literal `1`, matching the runtime validator and capability adapter contract.
 
-- [ ] **Step 6: Register MCP `git.changes`**
+- [x] **Step 6: Register MCP `git.changes`**
 
 Use:
 
@@ -662,11 +662,11 @@ annotations: READ_ONLY_TOOL_ANNOTATIONS
 
 Required public field remains `workspaceId`; `includePatch` is optional. Preserve equivalent JSON text fallback and `structuredContent`. Add `git.changes` to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"` for this Phase 1 capability addition.
 
-- [ ] **Step 7: Add full-stack checkpoint coverage**
+- [x] **Step 7: Add full-stack checkpoint coverage**
 
 On a trusted/open temporary Git workspace containing staged, worktree, and untracked changes, call `git.changes(includePatch:true)` through MCP and assert normalized changed paths, SHA-256 fingerprint, bounded patch preview/artifact, structured/text parity, and absence of host absolute paths.
 
-- [ ] **Step 8: Run GREEN and commit**
+- [x] **Step 8: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -704,7 +704,7 @@ git commit -m "feat(capabilities): add git change checkpoints"
 - Produces schema-validated `verify.list` and `verify.run`.
 - No shell parser, arbitrary executable/argv input, filesystem authority, or second execution path is introduced.
 
-- [ ] **Step 1: Write failing discovery tests**
+- [x] **Step 1: Write failing discovery tests**
 
 Package discovery recognizes only fixed script names `test`, `lint`, `typecheck`, and `build`. The script body is metadata only and is never parsed as a command. Each discovered package recipe resolves to:
 
@@ -725,11 +725,11 @@ cargo:fmt-check  => cargo fmt --all -- --check
 
 Discovery reads root `package.json` with a 64 KiB ceiling and uses a bounded root tree with a 10,000-entry ceiling. Because `VerifyListResult` v1 has no partial-result marker, a truncated manifest tree or truncated package manifest read fails closed rather than claiming the recipe set is complete.
 
-- [ ] **Step 2: Prove discovery executes nothing**
+- [x] **Step 2: Prove discovery executes nothing**
 
 Use an execution adapter that throws if invoked. `listVerifications()` must still succeed. Manifest discovery must not run package-manager lifecycle scripts.
 
-- [ ] **Step 3: Implement policy compatibility**
+- [x] **Step 3: Implement policy compatibility**
 
 A recipe is `allowed: true` only when both conditions hold:
 
@@ -740,7 +740,7 @@ logical executable ∈ effectivePolicy.allowedExecutableNames
 
 Use `blockedReason: "PROCESS_NOT_ALLOWED"` when process authority is disabled and `blockedReason: "EXECUTABLE_NOT_ALLOWED"` when the logical executable is absent from the allowlist. This distinction matters because a narrowed profile may retain executable names while disabling process authority.
 
-- [ ] **Step 4: Implement `runVerification` with recipe re-resolution**
+- [x] **Step 4: Implement `runVerification` with recipe re-resolution**
 
 Required flow:
 
@@ -753,11 +753,11 @@ list current recipes
 
 `VerifyRunInput` contains only `workspaceId`, `recipeId`, and optional `background`; there is no client-provided executable, argv, cwd, environment, or network override.
 
-- [ ] **Step 5: Add shared runtime schemas**
+- [x] **Step 5: Add shared runtime schemas**
 
 `packages/capabilities/src/schemas.ts` owns closed `VerifyListInputSchema`, `VerifyListResultSchema`, `VerifyRunInputSchema`, and `VerifyRunResultSchema`. Validate recipe metadata and the complete verification operation/artifact shape, including literal `schemaVersion: 1`.
 
-- [ ] **Step 6: Extend the existing production capability service before advertising**
+- [x] **Step 6: Extend the existing production capability service before advertising**
 
 Extend the Task 3–5 `NativeCapabilityService` instance in `createProductionServiceStack` with:
 
@@ -772,7 +772,7 @@ Do not create a second service, kernel, workspace manager, or execution manager.
 
 Production-stack tests must prove both discovery and execution mapping. `verify.run` must pass exactly the stored recipe executable/argv/cwd to the existing process authority.
 
-- [ ] **Step 7: Register MCP tools**
+- [x] **Step 7: Register MCP tools**
 
 Use shared schemas and structured/text parity:
 
@@ -783,13 +783,13 @@ verify.run  -> PROCESS_RUN_TOOL_ANNOTATIONS
 
 Add both tools to the locked semantic surface and shared transport fixture. Keep `MCP_SURFACE_VERSION = "0.2"` for this Phase 1 capability addition.
 
-- [ ] **Step 8: Add full-stack discovery coverage and preserve host executable trust**
+- [x] **Step 8: Add full-stack discovery coverage and preserve host executable trust**
 
 The full-stack temporary workspace must prove `verify.list` works through real MCP and reports a policy-compatible package recipe without exposing host paths.
 
 Do not weaken Rust trusted-executable rules to make host-local package-manager installations runnable. On the current development host, `pnpm` resolves under the user's NVM directory rather than the fixed root-owned executable directories, so real-host `verify.run(package:test)` correctly fails the existing trusted-executable boundary. Production `verify.run` correctness is instead covered at the service/manager boundary; installations with a trusted package-manager executable can use the same runtime path unchanged.
 
-- [ ] **Step 9: Run GREEN and commit**
+- [x] **Step 9: Run GREEN and commit**
 
 ```bash
 pnpm --filter @kodegpt/capabilities test
@@ -808,6 +808,12 @@ git add packages/capabilities packages/core packages/mcp-server apps/cli tests d
 
 git commit -m "feat(capabilities): add safe verification recipes"
 ```
+
+> **Hardening reconciliation (2026-08-12):** Tasks 4–6 above are complete, but the original implementation history did not contain every final hardening property now enforced. The authoritative follow-up design and execution record are:
+> - spec: `docs/superpowers/specs/2026-08-11-kodegpt-native-capability-layer-hardening-design.md`
+> - plan: `docs/superpowers/plans/2026-08-11-kodegpt-native-capability-layer-hardening.md`
+>
+> In particular, the follow-up hardening makes search incompleteness explicit, replaces preview-derived Git identity with a content-sensitive structured checkpoint, and makes verification discovery/launch eligibility deterministic and semantically audited. This note records the later reconciliation without rewriting what the original task commits contained.
 
 ---
 
