@@ -9,7 +9,10 @@ import {
 } from "./contracts.js";
 import { buildContext, INTENT_WEIGHTS } from "./context-build.js";
 
-function sources(contents: Record<string, string>) {
+function sources(
+  contents: Record<string, string>,
+  options: { extraSearchMatches?: CodeSearchResult["matches"] } = {}
+) {
   const workspace: WorkspaceInspectResult = {
     schemaVersion: 1,
     workspaceId: "ws_1",
@@ -48,7 +51,8 @@ function sources(contents: Record<string, string>) {
     matches: [
       { path: "packages/core/src/workspace-manager.ts", kind: "path" },
       { path: "packages/core/src/workspace-manager-helper.ts", kind: "path" },
-      { path: "packages/core/src/workspace-manager.test.ts", kind: "path" }
+      { path: "packages/core/src/workspace-manager.test.ts", kind: "path" },
+      ...(options.extraSearchMatches ?? [])
     ],
     truncated: false,
     truncationReasons: []
@@ -133,6 +137,66 @@ describe("context.build", () => {
     expect(result.totalBytes).toBe(
       result.selectedFiles.reduce((sum, file) => sum + Buffer.byteLength(file.content ?? ""), 0)
     );
+  });
+
+  it("drops incidental semantic-excluded search evidence before selection and public relevantMatches", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "changed\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n",
+        "node_modules/pkg/workspace-manager.ts": "dependency-noise\n",
+        ".worktrees/old/workspace-manager.ts": "worktree-noise\n",
+        "target/generated/workspace-manager.ts": "generated-noise\n"
+      },
+      {
+        extraSearchMatches: [
+          { path: "node_modules/pkg/workspace-manager.ts", kind: "path" },
+          { path: ".worktrees/old/workspace-manager.ts", kind: "path" },
+          { path: "target/generated/workspace-manager.ts", kind: "path" }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.selectedFiles.some(({ path }) => path.includes("node_modules"))).toBe(false);
+    expect(result.selectedFiles.some(({ path }) => path.includes(".worktrees"))).toBe(false);
+    expect(result.selectedFiles.some(({ path }) => path.startsWith("target/"))).toBe(false);
+    expect(result.relevantMatches.some(({ path }) => path.includes("node_modules"))).toBe(false);
+    expect(result.relevantMatches.some(({ path }) => path.includes(".worktrees"))).toBe(false);
+    expect(result.relevantMatches.some(({ path }) => path.startsWith("target/"))).toBe(false);
+    expect(fixture.readCalls.filter((path) => path === TARGET)).toHaveLength(1);
+  });
+
+  it("keeps an explicitly requested excluded target eligible for direct read", async () => {
+    const explicitTarget = "node_modules/pkg/package.json";
+    const fixture = sources({
+      [explicitTarget]: "dependency-manifest\n",
+      "package.json": "root-manifest\n"
+    });
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: explicitTarget,
+      maxBytes: 1024
+    });
+
+    expect(result.selectedFiles[0]).toMatchObject({
+      path: explicitTarget,
+      reason: "exact-target",
+      content: "dependency-manifest\n"
+    });
+    expect(fixture.readCalls.filter((path) => path === explicitTarget)).toHaveLength(1);
   });
 
   it("never exceeds the byte budget and omits later candidates deterministically", async () => {

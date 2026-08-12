@@ -415,7 +415,11 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         expect.objectContaining({ path: "package.json", reason: "governing-manifest" })
       );
       expect(contextBuild.totalBytes).toBeLessThanOrEqual(4_096);
-      expect(JSON.stringify(contextBuild)).not.toContain(workspaceA);
+      const serializedContextBuild = JSON.stringify(contextBuild);
+      expect(serializedContextBuild).not.toContain(workspaceA);
+      expect(serializedContextBuild).not.toContain("node_modules");
+      expect(serializedContextBuild).not.toContain(".worktrees");
+      expect(serializedContextBuild).not.toContain("target/generated");
 
       const gitChangesResult = await callTool(
         port,
