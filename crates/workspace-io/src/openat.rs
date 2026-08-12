@@ -11,6 +11,9 @@ const REQUIRED_RESOLVE_FLAGS: ResolveFlags = ResolveFlags::BENEATH
     .union(ResolveFlags::NO_MAGICLINKS)
     .union(ResolveFlags::NO_XDEV);
 
+const STRICT_NO_SYMLINKS_RESOLVE_FLAGS: ResolveFlags =
+    REQUIRED_RESOLVE_FLAGS.union(ResolveFlags::NO_SYMLINKS);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenatBoundaryError {
     InvalidRelativePath,
@@ -93,6 +96,44 @@ pub fn open_directory_beneath(
         relative_path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW,
     )
+}
+
+pub(crate) fn open_existing_beneath_no_symlinks(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    flags: OFlags,
+) -> Result<OwnedFd, OpenatBoundaryError> {
+    validate_relative_path(relative_path)?;
+    if flags.intersects(OFlags::CREATE | OFlags::TRUNC) {
+        return Err(OpenatBoundaryError::InvalidRelativePath);
+    }
+
+    openat2(
+        root_fd,
+        relative_path,
+        flags | OFlags::CLOEXEC,
+        Mode::empty(),
+        STRICT_NO_SYMLINKS_RESOLVE_FLAGS,
+    )
+    .map_err(map_openat_error)
+}
+
+pub(crate) fn open_directory_beneath_no_symlinks(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+) -> Result<OwnedFd, OpenatBoundaryError> {
+    if relative_path == Path::new(".") {
+        return openat2(
+            root_fd,
+            relative_path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+            STRICT_NO_SYMLINKS_RESOLVE_FLAGS,
+        )
+        .map_err(map_openat_error);
+    }
+
+    open_existing_beneath_no_symlinks(root_fd, relative_path, OFlags::RDONLY | OFlags::DIRECTORY)
 }
 
 pub fn open_parent_beneath(

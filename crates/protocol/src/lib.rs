@@ -10,7 +10,8 @@ pub use types::{
     InheritEnvDisabled, JsonRpcVersion, NetworkMode, PersistentFilesystemIdentity,
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
     RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy, RuntimeRequest, RuntimeResponse,
-    RuntimeRpcError, RuntimeSuccessResponse, SystemInspectRootParams, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
+    RuntimeRpcError, RuntimeSuccessResponse, SkillSourceCapabilityParams,
+    SkillSourceInspectRootParams, SkillSourceReadParams, SkillSourceRegisterParams,
+    SkillSourceTreeParams, SystemInspectRootParams, VerifyRunParams, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
 };

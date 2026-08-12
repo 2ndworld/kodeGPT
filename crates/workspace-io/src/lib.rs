@@ -7,6 +7,7 @@ mod path_identity;
 mod profile;
 mod read;
 mod registry;
+mod skill_source;
 mod write;
 
 pub use identity::{FilesystemIdentity, InspectRootError, InspectedRoot, inspect_root};
@@ -25,6 +26,10 @@ pub use read::{
     tree_beneath,
 };
 pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
+pub use skill_source::{
+    SKILL_SOURCE_TREE_MAX_ENTRIES, SkillSourceRegistration, SkillSourceRegistry,
+    SkillSourceRegistryError, inspect_skill_source_root,
+};
 pub use write::{
     EditFileResult, PatchFileAction, PatchFileCommitResult, WorkspaceWriteError, WriteFileResult,
     commit_patch_file_beneath, edit_file_exact_beneath, write_file_atomic_beneath,

@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_skill_source_inspect_root",
+  "method": "skill_source.inspect_root",
+  "params": {
+    "path": "/tmp/kodegpt-skill-source-fixture"
+  }
+}

@@ -40,6 +40,11 @@ pub enum AuditAction {
     ArtifactSpoolCreate,
     ArtifactRead,
     ArtifactCleanup,
+    SkillSourceInspectRoot,
+    SkillSourceRegister,
+    SkillSourceTree,
+    SkillSourceRead,
+    SkillSourceUnregister,
     TestEffect,
 }
 
@@ -369,10 +374,7 @@ impl AuditRecord {
             phase,
             request_id: sanitize_id(&context.request_id, "req_"),
             operation_id: sanitize_id(&context.operation_id, "op_"),
-            capability_id: context
-                .capability_id
-                .as_deref()
-                .map(|value| sanitize_id(value, "kc_")),
+            capability_id: context.capability_id.as_deref().map(sanitize_capability_id),
             action: context.action.as_str(),
             decision,
             reason,
@@ -411,6 +413,11 @@ impl AuditAction {
             Self::ArtifactSpoolCreate => "artifact_spool_create",
             Self::ArtifactRead => "artifact_read",
             Self::ArtifactCleanup => "artifact_cleanup",
+            Self::SkillSourceInspectRoot => "skill_source_inspect_root",
+            Self::SkillSourceRegister => "skill_source_register",
+            Self::SkillSourceTree => "skill_source_tree",
+            Self::SkillSourceRead => "skill_source_read",
+            Self::SkillSourceUnregister => "skill_source_unregister",
             Self::TestEffect => "test_effect",
         }
     }
@@ -468,6 +475,14 @@ fn sync_directory(directory: &Path) -> Result<(), std::io::Error> {
 
 fn rotated_path(path: &Path, index: usize) -> PathBuf {
     path.with_extension(format!("jsonl.{index}"))
+}
+
+fn sanitize_capability_id(value: &str) -> String {
+    if value.starts_with("sc_") {
+        sanitize_id(value, "sc_")
+    } else {
+        sanitize_id(value, "kc_")
+    }
 }
 
 fn sanitize_id(value: &str, prefix: &str) -> String {
@@ -655,6 +670,30 @@ mod tests {
         assert!(sink.path().with_extension("jsonl.1").exists());
         assert!(sink.path().with_extension("jsonl.2").exists());
         assert!(!sink.path().with_extension("jsonl.3").exists());
+        fs::remove_dir_all(root).expect("temporary root removed");
+    }
+
+    #[test]
+    fn audit_preserves_valid_skill_source_capability_ids() {
+        let root = temporary_root("skill-source-capability");
+        let sink = AuditSink::open(&root);
+        let context = AuditContext {
+            request_id: "req_skill_source_capability".to_owned(),
+            operation_id: "op_skill_source_capability".to_owned(),
+            capability_id: Some("sc_safe_123".to_owned()),
+            action: AuditAction::SkillSourceRead,
+        };
+
+        sink.decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .expect("decision persists");
+
+        let serialized = fs::read_to_string(sink.path()).expect("audit readable");
+        let record: Value = serde_json::from_str(serialized.trim()).expect("audit record json");
+        assert_eq!(record["capabilityId"], "sc_safe_123");
         fs::remove_dir_all(root).expect("temporary root removed");
     }
 

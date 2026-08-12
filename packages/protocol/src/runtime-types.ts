@@ -26,7 +26,12 @@ export const RUNTIME_METHODS = [
   "verify.run",
   "process.status",
   "process.cancel",
-  "artifact.read"
+  "artifact.read",
+  "skill_source.inspect_root",
+  "skill_source.register",
+  "skill_source.tree",
+  "skill_source.read",
+  "skill_source.unregister"
 ] as const;
 
 export type RuntimeMethod = (typeof RUNTIME_METHODS)[number];
@@ -220,6 +225,42 @@ const artifactReadParamsSchema = z
   })
   .strict();
 
+const skillSourceInspectRootParamsSchema = z
+  .object({
+    path: z.string().min(1)
+  })
+  .strict();
+
+const skillSourceRegisterParamsSchema = z
+  .object({
+    rootPath: z.string().min(1),
+    expectedIdentity: persistentFilesystemIdentitySchema
+  })
+  .strict();
+
+const skillSourceTreeParamsSchema = z
+  .object({
+    sourceCapabilityId: z.string().min(1),
+    path: z.string(),
+    maxEntries: z.number().int().positive().max(20_000).safe()
+  })
+  .strict();
+
+const skillSourceReadParamsSchema = z
+  .object({
+    sourceCapabilityId: z.string().min(1),
+    path: z.string(),
+    offset: z.number().int().nonnegative().safe(),
+    maxBytes: z.number().int().positive().max(1024 * 1024).safe()
+  })
+  .strict();
+
+const skillSourceCapabilityParamsSchema = z
+  .object({
+    sourceCapabilityId: z.string().min(1)
+  })
+  .strict();
+
 function requestSchema<M extends RuntimeMethod, P extends z.ZodType>(method: M, params: P) {
   return z
     .object({
@@ -257,7 +298,12 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("verify.run", verifyRunParamsSchema),
   requestSchema("process.status", processOperationParamsSchema),
   requestSchema("process.cancel", processOperationParamsSchema),
-  requestSchema("artifact.read", artifactReadParamsSchema)
+  requestSchema("artifact.read", artifactReadParamsSchema),
+  requestSchema("skill_source.inspect_root", skillSourceInspectRootParamsSchema),
+  requestSchema("skill_source.register", skillSourceRegisterParamsSchema),
+  requestSchema("skill_source.tree", skillSourceTreeParamsSchema),
+  requestSchema("skill_source.read", skillSourceReadParamsSchema),
+  requestSchema("skill_source.unregister", skillSourceCapabilityParamsSchema)
 ]);
 
 export type RuntimeRequest = z.infer<typeof runtimeRequestSchema>;

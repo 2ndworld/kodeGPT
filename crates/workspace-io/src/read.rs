@@ -12,7 +12,10 @@ use rustix::fs::{AtFlags, FileType, OFlags, RawDir, fstat, statat};
 use rustix::io::Errno;
 use serde::Serialize;
 
-use crate::openat::{OpenatBoundaryError, open_directory_beneath, open_existing_beneath};
+use crate::openat::{
+    OpenatBoundaryError, open_directory_beneath, open_directory_beneath_no_symlinks,
+    open_existing_beneath, open_existing_beneath_no_symlinks,
+};
 
 pub const INLINE_READ_MAX_BYTES: u64 = 1024 * 1024;
 pub const TREE_DEFAULT_MAX_ENTRIES: usize = 2_000;
@@ -74,9 +77,12 @@ pub enum TreeEntryKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TreeEntry {
     pub path: String,
     pub kind: TreeEntryKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -118,11 +124,50 @@ pub fn read_file_beneath(
     offset: u64,
     max_bytes: u64,
 ) -> Result<ReadFileResult, WorkspaceReadError> {
+    read_file_beneath_with_flags(
+        root_fd,
+        relative_path,
+        offset,
+        max_bytes,
+        OFlags::empty(),
+        false,
+    )
+}
+
+pub(crate) fn read_file_beneath_no_follow(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<ReadFileResult, WorkspaceReadError> {
+    read_file_beneath_with_flags(
+        root_fd,
+        relative_path,
+        offset,
+        max_bytes,
+        OFlags::NOFOLLOW,
+        true,
+    )
+}
+
+fn read_file_beneath_with_flags(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    offset: u64,
+    max_bytes: u64,
+    additional_flags: OFlags,
+    reject_all_symlinks: bool,
+) -> Result<ReadFileResult, WorkspaceReadError> {
     if max_bytes > INLINE_READ_MAX_BYTES {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let fd = open_existing_beneath(root_fd, relative_path, OFlags::RDONLY | OFlags::NONBLOCK)
-        .map_err(map_boundary_error)?;
+    let flags = OFlags::RDONLY | OFlags::NONBLOCK | additional_flags;
+    let fd = if reject_all_symlinks {
+        open_existing_beneath_no_symlinks(root_fd, relative_path, flags)
+    } else {
+        open_existing_beneath(root_fd, relative_path, flags)
+    }
+    .map_err(map_boundary_error)?;
     let stat = fstat(&fd).map_err(WorkspaceReadError::Io)?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
         return Err(WorkspaceReadError::NotRegularFile);
@@ -152,13 +197,47 @@ pub fn tree_beneath(
     relative_path: &Path,
     max_entries: usize,
 ) -> Result<TreeResult, WorkspaceReadError> {
-    if max_entries == 0 || max_entries > TREE_MAX_ENTRIES {
+    tree_beneath_with_options(
+        root_fd,
+        relative_path,
+        max_entries,
+        TREE_MAX_ENTRIES,
+        false,
+        false,
+    )
+}
+
+pub(crate) fn tree_beneath_no_symlinks_with_hard_cap(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    max_entries: usize,
+    hard_cap: usize,
+) -> Result<TreeResult, WorkspaceReadError> {
+    tree_beneath_with_options(root_fd, relative_path, max_entries, hard_cap, true, true)
+}
+
+fn tree_beneath_with_options(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    max_entries: usize,
+    hard_cap: usize,
+    reject_all_symlinks: bool,
+    include_size_bytes: bool,
+) -> Result<TreeResult, WorkspaceReadError> {
+    if max_entries == 0 || max_entries > hard_cap {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let (start_fd, start_prefix) = open_directory_start(root_fd, relative_path)?;
+    let (start_fd, start_prefix) =
+        open_directory_start(root_fd, relative_path, reject_all_symlinks)?;
     let start_fd = Arc::new(start_fd);
     let mut pending = BTreeMap::new();
-    enqueue_directory_entries(&mut pending, start_fd, &start_prefix, max_entries + 1)?;
+    enqueue_directory_entries(
+        &mut pending,
+        start_fd,
+        &start_prefix,
+        max_entries + 1,
+        include_size_bytes,
+    )?;
     let mut entries = Vec::with_capacity(max_entries.min(pending.len()));
 
     while entries.len() < max_entries {
@@ -168,9 +247,18 @@ pub fn tree_beneath(
         entries.push(TreeEntry {
             path: relative.to_string_lossy().into_owned(),
             kind: candidate.kind,
+            size_bytes: candidate.size_bytes,
         });
         if candidate.kind == TreeEntryKind::Directory {
-            match open_directory_beneath(candidate.parent_fd.as_ref(), Path::new(&candidate.name)) {
+            let opened = if reject_all_symlinks {
+                open_directory_beneath_no_symlinks(
+                    candidate.parent_fd.as_ref(),
+                    Path::new(&candidate.name),
+                )
+            } else {
+                open_directory_beneath(candidate.parent_fd.as_ref(), Path::new(&candidate.name))
+            };
+            match opened {
                 Ok(child_fd) => {
                     let frontier_limit = max_entries.saturating_sub(entries.len()) + 1;
                     enqueue_directory_entries(
@@ -178,6 +266,7 @@ pub fn tree_beneath(
                         Arc::new(child_fd),
                         &relative,
                         frontier_limit,
+                        include_size_bytes,
                     )?;
                 }
                 Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {}
@@ -291,6 +380,7 @@ struct TreeCandidate {
     parent_fd: Arc<OwnedFd>,
     name: OsString,
     kind: TreeEntryKind,
+    size_bytes: Option<u64>,
 }
 
 fn enqueue_directory_entries(
@@ -298,32 +388,44 @@ fn enqueue_directory_entries(
     directory_fd: Arc<OwnedFd>,
     prefix: &Path,
     frontier_limit: usize,
+    include_size_bytes: bool,
 ) -> Result<(), WorkspaceReadError> {
-    visit_directory_entries(directory_fd.as_ref(), |name, kind| {
-        let relative = if prefix.as_os_str().is_empty() {
-            PathBuf::from(&name)
-        } else {
-            prefix.join(&name)
-        };
-        pending.insert(
-            relative,
-            TreeCandidate {
-                parent_fd: Arc::clone(&directory_fd),
-                name,
-                kind,
-            },
-        );
-        if pending.len() > frontier_limit {
-            pending.pop_last();
-        }
-    })
+    visit_directory_entries(
+        directory_fd.as_ref(),
+        include_size_bytes,
+        |name, kind, size_bytes| {
+            let relative = if prefix.as_os_str().is_empty() {
+                PathBuf::from(&name)
+            } else {
+                prefix.join(&name)
+            };
+            pending.insert(
+                relative,
+                TreeCandidate {
+                    parent_fd: Arc::clone(&directory_fd),
+                    name,
+                    kind,
+                    size_bytes,
+                },
+            );
+            if pending.len() > frontier_limit {
+                pending.pop_last();
+            }
+        },
+    )
 }
 
 fn open_directory_start(
     root_fd: &OwnedFd,
     relative_path: &Path,
+    reject_all_symlinks: bool,
 ) -> Result<(OwnedFd, PathBuf), WorkspaceReadError> {
-    let fd = open_directory_beneath(root_fd, relative_path).map_err(map_boundary_error)?;
+    let fd = if reject_all_symlinks {
+        open_directory_beneath_no_symlinks(root_fd, relative_path)
+    } else {
+        open_directory_beneath(root_fd, relative_path)
+    }
+    .map_err(map_boundary_error)?;
     let prefix = if relative_path == Path::new(".") {
         PathBuf::new()
     } else {
@@ -334,7 +436,8 @@ fn open_directory_start(
 
 fn visit_directory_entries(
     directory_fd: &OwnedFd,
-    mut visit: impl FnMut(OsString, TreeEntryKind),
+    include_size_bytes: bool,
+    mut visit: impl FnMut(OsString, TreeEntryKind, Option<u64>),
 ) -> Result<(), WorkspaceReadError> {
     let mut buffer: Vec<u8> = Vec::with_capacity(8 * 1024);
 
@@ -349,8 +452,13 @@ fn visit_directory_entries(
                             continue;
                         }
                         let name = OsString::from_vec(name_bytes.to_vec());
-                        let kind = entry_kind(directory_fd, &name, entry.file_type())?;
-                        visit(name, kind);
+                        let (kind, size_bytes) = if include_size_bytes {
+                            let (kind, size_bytes) = entry_metadata(directory_fd, &name)?;
+                            (kind, Some(size_bytes))
+                        } else {
+                            (entry_kind(directory_fd, &name, entry.file_type())?, None)
+                        };
+                        visit(name, kind, size_bytes);
                     }
                     Some(Err(Errno::INVAL)) => break true,
                     Some(Err(error)) => return Err(WorkspaceReadError::Io(error)),
@@ -398,6 +506,28 @@ fn entry_kind(
         FileType::Symlink => TreeEntryKind::Symlink,
         _ => TreeEntryKind::Other,
     })
+}
+
+fn entry_metadata(
+    directory_fd: &OwnedFd,
+    name: &OsString,
+) -> Result<(TreeEntryKind, u64), WorkspaceReadError> {
+    let stat = statat(directory_fd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+        if error == Errno::NOENT {
+            WorkspaceReadError::NotFound
+        } else {
+            WorkspaceReadError::Io(error)
+        }
+    })?;
+    let size_bytes =
+        u64::try_from(stat.st_size).map_err(|_| WorkspaceReadError::Io(Errno::OVERFLOW))?;
+    let kind = match FileType::from_raw_mode(stat.st_mode) {
+        FileType::RegularFile => TreeEntryKind::File,
+        FileType::Directory => TreeEntryKind::Directory,
+        FileType::Symlink => TreeEntryKind::Symlink,
+        _ => TreeEntryKind::Other,
+    };
+    Ok((kind, size_bytes))
 }
 
 fn map_boundary_error(error: OpenatBoundaryError) -> WorkspaceReadError {

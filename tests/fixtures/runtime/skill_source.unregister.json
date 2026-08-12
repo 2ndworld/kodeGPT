@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_skill_source_unregister",
+  "method": "skill_source.unregister",
+  "params": {
+    "sourceCapabilityId": "sc_fixture_1"
+  }
+}
