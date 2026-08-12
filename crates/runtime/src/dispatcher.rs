@@ -2,14 +2,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
-    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadParams,
-    SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams, WorkspaceActivateParams,
-    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
+    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -371,14 +373,29 @@ async fn dispatch_one(
                 request.id,
                 Some(audit_capability_id),
                 AuditAction::SkillSourceRead,
-                move |registry| {
-                    let result = registry.read_file(
-                        &capability_id,
-                        &path,
-                        params.offset,
-                        params.max_bytes,
-                    )?;
-                    Ok(json!(result))
+                move |registry| match params.encoding {
+                    Some(SkillSourceReadEncoding::Base64) => {
+                        let result = registry.read_bytes(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!({
+                            "contentBase64": BASE64_STANDARD.encode(result.bytes),
+                            "bytesRead": result.bytes_read,
+                            "eof": result.eof
+                        }))
+                    }
+                    None => {
+                        let result = registry.read_file(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!(result))
+                    }
                 },
             )
         }
@@ -2829,6 +2846,70 @@ mod tests {
         drop(request_tx);
         dispatcher.await.expect("dispatcher joins");
         fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_base64_read_preserves_binary_bytes_without_content_in_audit() {
+        let (audit, audit_root) = audit_sink("skill-source-base64-read");
+        let source = audit_root.with_extension("skill-source-base64-source");
+        fs::create_dir_all(source.join("assets")).expect("source assets created");
+        fs::write(source.join("assets/binary.bin"), [0_u8, 255, 1, 128])
+            .expect("binary source written");
+        let identity = kodegpt_workspace_io::inspect_root(&source)
+            .expect("source inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registration = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_base64_register",
+            "skill_source.register",
+            json!({
+                "rootPath": source.to_string_lossy(),
+                "expectedIdentity": identity
+            }),
+        )
+        .await;
+        let source_capability_id = registration["result"]["sourceCapabilityId"]
+            .as_str()
+            .expect("source capability returned")
+            .to_owned();
+
+        let read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_base64_read",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": source_capability_id,
+                "path": "assets/binary.bin",
+                "offset": 0,
+                "maxBytes": 64,
+                "encoding": "base64"
+            }),
+        )
+        .await;
+        assert_eq!(read["result"]["contentBase64"], "AP8BgA==");
+        assert_eq!(read["result"]["bytesRead"], 4);
+        assert_eq!(read["result"]["eof"], true);
+        assert!(read["result"].get("contents").is_none());
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(!audit_text.contains("AP8BgA=="));
+        assert!(!audit_text.contains("binary.bin"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
         fs::remove_dir_all(source).expect("source removed");
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }

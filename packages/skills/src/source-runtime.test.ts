@@ -30,7 +30,7 @@ const identity: PersistedSkillSourceIdentity = {
 
 describe("createSkillSourceRuntimeAdapter", () => {
   it("uses only the five fixed skill_source RPC methods with exact params", async () => {
-    const { kernel, calls } = fakeKernel((method) => {
+    const { kernel, calls } = fakeKernel((method, params) => {
       switch (method) {
         case "skill_source.inspect_root":
           return { canonicalRoot: "/canonical/skills", identity };
@@ -45,7 +45,9 @@ describe("createSkillSourceRuntimeAdapter", () => {
             truncated: false
           };
         case "skill_source.read":
-          return { contents: "hello", bytesRead: 5, eof: true };
+          return params.encoding === "base64"
+            ? { contentBase64: "AP8BgA==", bytesRead: 4, eof: true }
+            : { contents: "hello", bytesRead: 5, eof: true };
         case "skill_source.unregister":
           return { ok: true };
         default:
@@ -78,6 +80,14 @@ describe("createSkillSourceRuntimeAdapter", () => {
         maxBytes: 256
       })
     ).toEqual({ contents: "hello", bytesRead: 5, eof: true });
+    const binary = await adapter.readBytes({
+      sourceCapabilityId: "sc_123_1",
+      path: "assets/binary.bin",
+      offset: 0,
+      maxBytes: 256
+    });
+    expect([...binary.bytes]).toEqual([0, 255, 1, 128]);
+    expect({ bytesRead: binary.bytesRead, eof: binary.eof }).toEqual({ bytesRead: 4, eof: true });
     await expect(adapter.unregister("sc_123_1")).resolves.toBeUndefined();
 
     expect(calls).toEqual([
@@ -97,6 +107,16 @@ describe("createSkillSourceRuntimeAdapter", () => {
           path: "alpha/SKILL.md",
           offset: 0,
           maxBytes: 256
+        }
+      },
+      {
+        method: "skill_source.read",
+        params: {
+          sourceCapabilityId: "sc_123_1",
+          path: "assets/binary.bin",
+          offset: 0,
+          maxBytes: 256,
+          encoding: "base64"
         }
       },
       { method: "skill_source.unregister", params: { sourceCapabilityId: "sc_123_1" } }
@@ -148,6 +168,16 @@ describe("createSkillSourceRuntimeAdapter", () => {
           adapter.read({
             sourceCapabilityId: "sc_1_1",
             path: "SKILL.md",
+            offset: 0,
+            maxBytes: 256
+          })
+      },
+      {
+        response: { contentBase64: "%%%", bytesRead: 2, eof: true },
+        invoke: (adapter) =>
+          adapter.readBytes({
+            sourceCapabilityId: "sc_1_1",
+            path: "assets/binary.bin",
             offset: 0,
             maxBytes: 256
           })

@@ -42,6 +42,7 @@ const FIXTURE_NAMES = [
   "skill_source.register.json",
   "skill_source.tree.json",
   "skill_source.read.json",
+  "skill_source.read_base64.json",
   "skill_source.unregister.json"
 ] as const;
 

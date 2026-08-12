@@ -86,6 +86,7 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "skill_source.register.json",
         "skill_source.tree.json",
         "skill_source.read.json",
+        "skill_source.read_base64.json",
         "skill_source.unregister.json",
     ] {
         let value = fixture(name);

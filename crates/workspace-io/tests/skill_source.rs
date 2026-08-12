@@ -112,6 +112,32 @@ fn source_reads_reject_traversal_and_symlinks_even_when_symlink_target_is_inside
 }
 
 #[test]
+fn source_raw_read_preserves_binary_bytes_without_utf8_decoding() {
+    let root = temporary_root("raw-read");
+    fs::create_dir(root.join("assets")).expect("assets directory created");
+    fs::write(root.join("assets/binary.bin"), [0_u8, 255, 1, 128]).expect("binary fixture written");
+    let identity = inspect_root(&root).expect("root inspected").identity;
+    let mut registry = SkillSourceRegistry::new();
+    let registration = registry
+        .register(&root, &identity)
+        .expect("source registered");
+
+    let read = registry
+        .read_bytes(
+            &registration.capability_id,
+            Path::new("assets/binary.bin"),
+            0,
+            64,
+        )
+        .expect("raw source read");
+    assert_eq!(read.bytes, vec![0_u8, 255, 1, 128]);
+    assert_eq!(read.bytes_read, 4);
+    assert!(read.eof);
+
+    fs::remove_dir_all(root).expect("fixture removed");
+}
+
+#[test]
 fn source_tree_supports_its_20000_entry_request_cap_without_changing_workspace_cap() {
     let root = temporary_root("tree-cap");
     fs::write(root.join("SKILL.md"), "bounded").expect("fixture written");

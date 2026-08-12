@@ -67,6 +67,13 @@ pub struct ReadFileResult {
     pub eof: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadBytesResult {
+    pub bytes: Vec<u8>,
+    pub bytes_read: u64,
+    pub eof: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TreeEntryKind {
@@ -150,6 +157,22 @@ pub(crate) fn read_file_beneath_no_follow(
     )
 }
 
+pub(crate) fn read_bytes_beneath_no_symlinks(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<ReadBytesResult, WorkspaceReadError> {
+    read_bytes_beneath_with_flags(
+        root_fd,
+        relative_path,
+        offset,
+        max_bytes,
+        OFlags::NOFOLLOW,
+        true,
+    )
+}
+
 fn read_file_beneath_with_flags(
     root_fd: &OwnedFd,
     relative_path: &Path,
@@ -158,6 +181,30 @@ fn read_file_beneath_with_flags(
     additional_flags: OFlags,
     reject_all_symlinks: bool,
 ) -> Result<ReadFileResult, WorkspaceReadError> {
+    let result = read_bytes_beneath_with_flags(
+        root_fd,
+        relative_path,
+        offset,
+        max_bytes,
+        additional_flags,
+        reject_all_symlinks,
+    )?;
+    let contents = String::from_utf8(result.bytes).map_err(|_| WorkspaceReadError::InvalidUtf8)?;
+    Ok(ReadFileResult {
+        contents,
+        bytes_read: result.bytes_read,
+        eof: result.eof,
+    })
+}
+
+fn read_bytes_beneath_with_flags(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    offset: u64,
+    max_bytes: u64,
+    additional_flags: OFlags,
+    reject_all_symlinks: bool,
+) -> Result<ReadBytesResult, WorkspaceReadError> {
     if max_bytes > INLINE_READ_MAX_BYTES {
         return Err(WorkspaceReadError::LimitExceeded);
     }
@@ -184,9 +231,8 @@ fn read_file_beneath_with_flags(
         bytes.truncate(max_bytes as usize);
     }
     let bytes_read = bytes.len() as u64;
-    let contents = String::from_utf8(bytes).map_err(|_| WorkspaceReadError::InvalidUtf8)?;
-    Ok(ReadFileResult {
-        contents,
+    Ok(ReadBytesResult {
+        bytes,
         bytes_read,
         eof,
     })

@@ -13,6 +13,7 @@ export {
   type PersistedSkillSourceIdentity,
   type SkillSourceAdmissionInput,
   type SkillSourceAdmissionResult,
+  type SkillSourceReadBytesResult,
   type SkillSourceReadResult,
   type SkillSourceRootInspection,
   type SkillSourceRuntimeAdapter,

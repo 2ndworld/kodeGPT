@@ -11,7 +11,8 @@ pub use types::{
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
     RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy, RuntimeRequest, RuntimeResponse,
     RuntimeRpcError, RuntimeSuccessResponse, SkillSourceCapabilityParams,
-    SkillSourceInspectRootParams, SkillSourceReadParams, SkillSourceRegisterParams,
-    SkillSourceTreeParams, SystemInspectRootParams, VerifyRunParams, WorkspaceActivateParams,
-    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    SkillSourceInspectRootParams, SkillSourceReadEncoding, SkillSourceReadParams,
+    SkillSourceRegisterParams, SkillSourceTreeParams, SystemInspectRootParams, VerifyRunParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams,
 };

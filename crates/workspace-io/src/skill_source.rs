@@ -12,7 +12,8 @@ use crate::mountinfo::{
     read_current_mountinfo,
 };
 use crate::read::{
-    ReadFileResult, TreeResult, WorkspaceReadError, read_file_beneath_no_follow,
+    ReadBytesResult, ReadFileResult, TreeResult, WorkspaceReadError,
+    read_bytes_beneath_no_symlinks, read_file_beneath_no_follow,
     tree_beneath_no_symlinks_with_hard_cap,
 };
 use crate::registry::roots_overlap;
@@ -243,6 +244,21 @@ impl SkillSourceRegistry {
             .get(capability_id)
             .ok_or(SkillSourceRegistryError::CapabilityNotFound)?;
         read_file_beneath_no_follow(&context.root_fd, relative_path, offset, max_bytes)
+            .map_err(map_read_error)
+    }
+
+    pub fn read_bytes(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        offset: u64,
+        max_bytes: u64,
+    ) -> Result<ReadBytesResult, SkillSourceRegistryError> {
+        let context = self
+            .contexts
+            .get(capability_id)
+            .ok_or(SkillSourceRegistryError::CapabilityNotFound)?;
+        read_bytes_beneath_no_symlinks(&context.root_fd, relative_path, offset, max_bytes)
             .map_err(map_read_error)
     }
 

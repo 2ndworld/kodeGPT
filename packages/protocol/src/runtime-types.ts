@@ -251,7 +251,8 @@ const skillSourceReadParamsSchema = z
     sourceCapabilityId: z.string().min(1),
     path: z.string(),
     offset: z.number().int().nonnegative().safe(),
-    maxBytes: z.number().int().positive().max(1024 * 1024).safe()
+    maxBytes: z.number().int().positive().max(1024 * 1024).safe(),
+    encoding: z.literal("base64").optional()
   })
   .strict();
 

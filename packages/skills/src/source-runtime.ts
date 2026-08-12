@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   MAX_SOURCE_ENTRIES,
+  type SkillSourceReadBytesResult,
   type SkillSourceReadResult,
   type SkillSourceRootInspection,
   type SkillSourceRuntimeAdapter,
@@ -69,6 +70,14 @@ const readSchema = z
   })
   .strict();
 
+const readBytesSchema = z
+  .object({
+    contentBase64: z.string(),
+    bytesRead: z.number().int().nonnegative().safe(),
+    eof: z.boolean()
+  })
+  .strict();
+
 const unregisterSchema = z.object({ ok: z.literal(true) }).strict();
 
 export function createSkillSourceRuntimeAdapter(
@@ -114,6 +123,27 @@ export function createSkillSourceRuntimeAdapter(
         throw invalidRuntimeResponse();
       }
       return parsed;
+    },
+
+    async readBytes(input): Promise<SkillSourceReadBytesResult> {
+      const value = await request(kernel, "skill_source.read", {
+        sourceCapabilityId: input.sourceCapabilityId,
+        path: input.path,
+        offset: input.offset,
+        maxBytes: input.maxBytes,
+        encoding: "base64"
+      });
+      const parsed = parseResponse(readBytesSchema, value);
+      const bytes = decodeCanonicalBase64(parsed.contentBase64);
+      if (
+        bytes === undefined ||
+        parsed.bytesRead !== bytes.byteLength ||
+        parsed.bytesRead > input.maxBytes ||
+        (!parsed.eof && parsed.bytesRead !== input.maxBytes)
+      ) {
+        throw invalidRuntimeResponse();
+      }
+      return { bytes, bytesRead: parsed.bytesRead, eof: parsed.eof };
     },
 
     async unregister(sourceCapabilityId): Promise<void> {
@@ -165,6 +195,17 @@ function invalidRuntimeResponse(): SkillError {
     "SKILL_SOURCE_UNAVAILABLE",
     "Skill source runtime returned an invalid response"
   );
+}
+
+function decodeCanonicalBase64(value: string): Uint8Array | undefined {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return undefined;
+  }
+  const buffer = Buffer.from(value, "base64");
+  if (buffer.toString("base64") !== value) {
+    return undefined;
+  }
+  return Uint8Array.from(buffer);
 }
 
 function isCanonicalRelativePath(value: string): boolean {

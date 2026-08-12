@@ -60,6 +60,12 @@ export interface SkillSourceReadResult {
   eof: boolean;
 }
 
+export interface SkillSourceReadBytesResult {
+  bytes: Uint8Array;
+  bytesRead: number;
+  eof: boolean;
+}
+
 export interface SkillSourceRuntimeAdapter {
   inspectRoot(path: string): Promise<SkillSourceRootInspection>;
   register(input: {
@@ -77,5 +83,11 @@ export interface SkillSourceRuntimeAdapter {
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadResult>;
+  readBytes(input: {
+    sourceCapabilityId: string;
+    path: string;
+    offset: number;
+    maxBytes: number;
+  }): Promise<SkillSourceReadBytesResult>;
   unregister(sourceCapabilityId: string): Promise<void>;
 }

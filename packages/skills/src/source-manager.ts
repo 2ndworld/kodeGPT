@@ -5,6 +5,7 @@ import {
   SKILL_LOAD_MAX_BYTES,
   type PersistedSkillSource,
   type SkillSourceAdmissionResult,
+  type SkillSourceReadBytesResult,
   type SkillSourceReadResult,
   type SkillSourceRuntimeAdapter,
   type SkillSourceTreeResult
@@ -80,21 +81,25 @@ export class SkillSourceManager {
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadResult> {
-    if (!isCanonicalRelativePath(input.path, false)) {
-      throw boundaryViolation();
-    }
-    if (
-      !Number.isSafeInteger(input.offset) ||
-      input.offset < 0 ||
-      !Number.isSafeInteger(input.maxBytes) ||
-      input.maxBytes <= 0 ||
-      input.maxBytes > SKILL_LOAD_MAX_BYTES
-    ) {
-      throw new SkillError("SKILL_SOURCE_LIMIT_EXCEEDED", "Skill source read limit exceeded");
-    }
-
+    validateReadInput(input.path, input.offset, input.maxBytes);
     const sourceCapabilityId = await this.#capabilityFor(input.sourceId);
     return this.#runtime.read({
+      sourceCapabilityId,
+      path: input.path,
+      offset: input.offset,
+      maxBytes: input.maxBytes
+    });
+  }
+
+  async readBytes(input: {
+    sourceId: string;
+    path: string;
+    offset: number;
+    maxBytes: number;
+  }): Promise<SkillSourceReadBytesResult> {
+    validateReadInput(input.path, input.offset, input.maxBytes);
+    const sourceCapabilityId = await this.#capabilityFor(input.sourceId);
+    return this.#runtime.readBytes({
       sourceCapabilityId,
       path: input.path,
       offset: input.offset,
@@ -160,6 +165,21 @@ function isCanonicalRelativePath(value: string, allowRootDot: boolean): boolean 
   }
   const parts = value.split("/");
   return parts.every((part) => part.length > 0 && part !== "." && part !== "..");
+}
+
+function validateReadInput(path: string, offset: number, maxBytes: number): void {
+  if (!isCanonicalRelativePath(path, false)) {
+    throw boundaryViolation();
+  }
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes <= 0 ||
+    maxBytes > SKILL_LOAD_MAX_BYTES
+  ) {
+    throw new SkillError("SKILL_SOURCE_LIMIT_EXCEEDED", "Skill source read limit exceeded");
+  }
 }
 
 function boundaryViolation(): SkillError {

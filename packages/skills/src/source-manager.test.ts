@@ -19,6 +19,7 @@ type RuntimeCalls = {
   register: Array<{ rootPath: string; expectedIdentity: PersistedSkillSourceIdentity }>;
   tree: Array<{ sourceCapabilityId: string; path: string; maxEntries: number }>;
   read: Array<{ sourceCapabilityId: string; path: string; offset: number; maxBytes: number }>;
+  readBytes: Array<{ sourceCapabilityId: string; path: string; offset: number; maxBytes: number }>;
   unregister: string[];
 };
 
@@ -33,6 +34,7 @@ function fakeRuntime(options?: {
     register: [],
     tree: [],
     read: [],
+    readBytes: [],
     unregister: []
   };
   let nextCapability = 1;
@@ -68,6 +70,10 @@ function fakeRuntime(options?: {
     async read(input) {
       calls.read.push({ ...input });
       return { contents: "instructions", bytesRead: 12, eof: true };
+    },
+    async readBytes(input) {
+      calls.readBytes.push({ ...input });
+      return { bytes: Uint8Array.from([0, 255, 1, 128]), bytesRead: 4, eof: true };
     },
     async unregister(sourceCapabilityId) {
       calls.unregister.push(sourceCapabilityId);
@@ -210,6 +216,22 @@ describe("SkillSourceManager", () => {
       ).rejects.toMatchObject({ code: "SKILL_SOURCE_BOUNDARY_VIOLATION" });
     }
     expect(calls.read).toHaveLength(1);
+  });
+
+  it("exposes bounded raw reads through the manager without exposing source capabilities", async () => {
+    const { runtime } = fakeRuntime();
+    const { manager } = await managerFixture("raw-read", runtime);
+    const source = await manager.addSource("/skills", "Skills");
+
+    const result = await manager.readBytes({
+      sourceId: source.sourceId,
+      path: "assets/binary.bin",
+      offset: 0,
+      maxBytes: 256
+    });
+    expect([...result.bytes]).toEqual([0, 255, 1, 128]);
+    expect({ bytesRead: result.bytesRead, eof: result.eof }).toEqual({ bytesRead: 4, eof: true });
+    expect(result).not.toHaveProperty("sourceCapabilityId");
   });
 
   it("unregisters before removing local admission and close attempts every active capability", async () => {
