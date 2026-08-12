@@ -153,6 +153,28 @@ describe("createSkillSourceRuntimeAdapter", () => {
           adapter.tree({ sourceCapabilityId: "sc_1_1", path: ".", maxEntries: 20_000 })
       },
       {
+        response: {
+          entries: [
+            { path: "alpha/SKILL.md", kind: "file", sizeBytes: 10 },
+            { path: "alpha/SKILL.md", kind: "file", sizeBytes: 10 }
+          ],
+          truncated: false
+        },
+        invoke: (adapter) =>
+          adapter.tree({ sourceCapabilityId: "sc_1_1", path: ".", maxEntries: 20_000 })
+      },
+      {
+        response: {
+          entries: [
+            { path: "alpha", kind: "directory", sizeBytes: 0 },
+            { path: "alpha/SKILL.md", kind: "file", sizeBytes: 10 }
+          ],
+          truncated: true
+        },
+        invoke: (adapter) =>
+          adapter.tree({ sourceCapabilityId: "sc_1_1", path: ".", maxEntries: 1 })
+      },
+      {
         response: { contents: "hello", bytesRead: 4, eof: true },
         invoke: (adapter) =>
           adapter.read({

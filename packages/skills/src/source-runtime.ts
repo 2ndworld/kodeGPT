@@ -103,7 +103,15 @@ export function createSkillSourceRuntimeAdapter(
         path: input.path,
         maxEntries: input.maxEntries
       });
-      return parseResponse(treeSchema, value);
+      const parsed = parseResponse(treeSchema, value);
+      if (parsed.entries.length > input.maxEntries) {
+        throw invalidRuntimeResponse();
+      }
+      const paths = new Set(parsed.entries.map((entry) => entry.path));
+      if (paths.size !== parsed.entries.length) {
+        throw invalidRuntimeResponse();
+      }
+      return parsed;
     },
 
     async read(input): Promise<SkillSourceReadResult> {
