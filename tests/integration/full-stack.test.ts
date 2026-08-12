@@ -143,11 +143,19 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     const workspaceB = await tempRoot("kodegpt-task23-b-");
     await mkdir(join(workspaceA, "nested"));
     await mkdir(join(workspaceA, "src"));
+    await mkdir(join(workspaceA, "frontend"));
     await mkdir(join(workspaceA, "node_modules/pkg"), { recursive: true });
     await mkdir(join(workspaceA, ".worktrees/old"), { recursive: true });
     await mkdir(join(workspaceA, "target/generated"), { recursive: true });
     await writeFile(join(workspaceA, "tracked.txt"), "before\n");
     await writeFile(join(workspaceA, "src/main.ts"), "export function needle() {}\nneedle();\n");
+    await writeFile(
+      join(workspaceA, "frontend/package.json"),
+      JSON.stringify({
+        name: "frontend",
+        scripts: { test: "frontend-test", lint: "frontend-lint", typecheck: "frontend-typecheck", build: "frontend-build" }
+      }) + "\n"
+    );
     await writeFile(
       join(workspaceA, "node_modules/pkg/package.json"),
       JSON.stringify({ name: "dependency-copy", marker: "dependency-marker" }) + "\n"
@@ -175,7 +183,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     runGit(workspaceA, ["init", "-q"]);
     await writeFile(
       join(workspaceA, ".git/info/exclude"),
-      "/node_modules/\n/.worktrees/\n/target/\n"
+      "/frontend/\n/node_modules/\n/.worktrees/\n/target/\n"
     );
     runGit(workspaceA, ["add", "tracked.txt"]);
 
@@ -331,6 +339,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         )
       );
       expect(manifestSearch.matches).toContainEqual({ path: "package.json", kind: "path" });
+      expect(manifestSearch.matches).toContainEqual({ path: "frontend/package.json", kind: "path" });
       const serializedManifestSearch = JSON.stringify(manifestSearch);
       expect(serializedManifestSearch).not.toContain("node_modules");
       expect(serializedManifestSearch).not.toContain(".worktrees");
@@ -383,6 +392,20 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         allowed: false,
         blockedReason: "EXECUTABLE_UNAVAILABLE"
       });
+      expect(verifyList.recipes).toContainEqual({
+        id: "package:frontend:test",
+        label: "Package test",
+        category: "test",
+        logicalExecutable: "pnpm",
+        argv: ["run", "test"],
+        cwd: "frontend",
+        source: "package-script",
+        allowed: false,
+        blockedReason: "EXECUTABLE_UNAVAILABLE"
+      });
+      expect(JSON.stringify(verifyList)).not.toContain("node_modules");
+      expect(JSON.stringify(verifyList)).not.toContain(".worktrees");
+      expect(JSON.stringify(verifyList)).not.toContain("target/generated");
       expect(JSON.stringify(verifyList)).not.toContain("/home/");
       expect(JSON.stringify(verifyList)).not.toContain("/usr/");
 
