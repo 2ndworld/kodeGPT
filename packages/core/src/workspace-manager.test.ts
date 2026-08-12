@@ -286,8 +286,10 @@ describe("WorkspaceManager", () => {
     const gitDiff = await manager.gitDiff("ws_files");
     const tree = await manager.tree("ws_files", ".");
     const boundedTree = await manager.treeBounded("ws_files", ".", 10_000);
+    const semanticTree = await manager.treeBounded("ws_files", ".", 10_000, "semantic");
     const matches = await manager.search("ws_files", "needle", ".");
     const boundedMatches = await manager.searchBounded("ws_files", "needle", ".", 500);
+    const semanticMatches = await manager.searchBounded("ws_files", "needle", ".", 500, "semantic");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
     expect(identity).toEqual({
@@ -374,6 +376,7 @@ describe("WorkspaceManager", () => {
       ],
       truncated: false
     });
+    expect(semanticTree).toEqual(boundedTree);
     expect(matches).toEqual([
       { path: "src/index.ts", line: 2, lineText: "const needle = true;" }
     ]);
@@ -382,8 +385,9 @@ describe("WorkspaceManager", () => {
       truncated: false,
       truncationReasons: []
     });
+    expect(semanticMatches).toEqual(boundedMatches);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-12)).toEqual([
+    expect(kernel.calls.slice(-14)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
@@ -412,19 +416,45 @@ describe("WorkspaceManager", () => {
       { method: "git.diff", params: { capabilityId: "kc_fixture" } },
       {
         method: "file.tree",
-        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 2_000 }
+        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 2_000, scope: "literal" }
       },
       {
         method: "file.tree",
-        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 10_000 }
+        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 10_000, scope: "literal" }
+      },
+      {
+        method: "file.tree",
+        params: { capabilityId: "kc_fixture", path: ".", maxEntries: 10_000, scope: "semantic" }
       },
       {
         method: "file.search",
-        params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 200 }
+        params: {
+          capabilityId: "kc_fixture",
+          path: ".",
+          query: "needle",
+          maxMatches: 200,
+          scope: "literal"
+        }
       },
       {
         method: "file.search",
-        params: { capabilityId: "kc_fixture", path: ".", query: "needle", maxMatches: 500 }
+        params: {
+          capabilityId: "kc_fixture",
+          path: ".",
+          query: "needle",
+          maxMatches: 500,
+          scope: "literal"
+        }
+      },
+      {
+        method: "file.search",
+        params: {
+          capabilityId: "kc_fixture",
+          path: ".",
+          query: "needle",
+          maxMatches: 500,
+          scope: "semantic"
+        }
       }
     ]);
   });

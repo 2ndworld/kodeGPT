@@ -11,12 +11,12 @@ use kodegpt_protocol::{
     SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
     SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
+    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
     FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, SKILL_SOURCE_TREE_MAX_ENTRIES,
-    SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, WorkspaceRegistry,
+    SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, TraversalScope, WorkspaceRegistry,
     WorkspaceRegistryError, inspect_root, inspect_skill_source_root, probe_filesystem_boundary,
 };
 use serde::Deserialize;
@@ -593,6 +593,10 @@ async fn dispatch_one(
                 }
             };
             let max_entries = params.max_entries;
+            let scope = match params.scope {
+                ProtocolTraversalScope::Literal => TraversalScope::Literal,
+                ProtocolTraversalScope::Semantic => TraversalScope::Semantic,
+            };
             let capability_id = params.capability_id;
             let audit_capability_id = capability_id.clone();
             let path = PathBuf::from(params.path);
@@ -603,7 +607,7 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileTree,
                 move |registry| {
-                    let result = registry.tree(&capability_id, &path, max_entries)?;
+                    let result = registry.tree(&capability_id, &path, max_entries, scope)?;
                     Ok(json!(result))
                 },
             )
@@ -621,6 +625,10 @@ async fn dispatch_one(
                     return error_response(Some(request.id), -32602, "INVALID_PARAMS");
                 }
             };
+            let scope = match params.scope {
+                ProtocolTraversalScope::Literal => TraversalScope::Literal,
+                ProtocolTraversalScope::Semantic => TraversalScope::Semantic,
+            };
             let capability_id = params.capability_id;
             let audit_capability_id = capability_id.clone();
             let path = PathBuf::from(params.path);
@@ -633,7 +641,7 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileSearch,
                 move |registry| {
-                    let result = registry.search(&capability_id, &path, &query, max_matches)?;
+                    let result = registry.search(&capability_id, &path, &query, max_matches, scope)?;
                     Ok(json!(result))
                 },
             )
@@ -3166,7 +3174,7 @@ mod tests {
             &mut response_rx,
             "req_file_tree",
             "file.tree",
-            json!({ "capabilityId": capability_id, "path": ".", "maxEntries": 2_000 }),
+            json!({ "capabilityId": capability_id, "path": ".", "maxEntries": 2_000, "scope": "literal" }),
         )
         .await;
         let tree_entries = tree["result"]["entries"]
@@ -3189,7 +3197,7 @@ mod tests {
             &mut response_rx,
             "req_file_search",
             "file.search",
-            json!({ "capabilityId": capability_id, "path": ".", "query": "needle", "maxMatches": 100 }),
+            json!({ "capabilityId": capability_id, "path": ".", "query": "needle", "maxMatches": 100, "scope": "literal" }),
         )
         .await;
         assert_eq!(search["result"]["truncated"], false);

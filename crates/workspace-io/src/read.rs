@@ -16,6 +16,7 @@ use crate::openat::{
     OpenatBoundaryError, open_directory_beneath, open_directory_beneath_no_symlinks,
     open_existing_beneath, open_existing_beneath_no_symlinks,
 };
+use crate::semantic_scope::{TraversalScope, include_directory};
 
 pub const INLINE_READ_MAX_BYTES: u64 = 1024 * 1024;
 pub const TREE_DEFAULT_MAX_ENTRIES: usize = 2_000;
@@ -243,6 +244,15 @@ pub fn tree_beneath(
     relative_path: &Path,
     max_entries: usize,
 ) -> Result<TreeResult, WorkspaceReadError> {
+    tree_beneath_scoped(root_fd, relative_path, max_entries, TraversalScope::Literal)
+}
+
+pub fn tree_beneath_scoped(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    max_entries: usize,
+    scope: TraversalScope,
+) -> Result<TreeResult, WorkspaceReadError> {
     tree_beneath_with_options(
         root_fd,
         relative_path,
@@ -250,6 +260,7 @@ pub fn tree_beneath(
         TREE_MAX_ENTRIES,
         false,
         false,
+        scope,
     )
 }
 
@@ -259,7 +270,15 @@ pub(crate) fn tree_beneath_no_symlinks_with_hard_cap(
     max_entries: usize,
     hard_cap: usize,
 ) -> Result<TreeResult, WorkspaceReadError> {
-    tree_beneath_with_options(root_fd, relative_path, max_entries, hard_cap, true, true)
+    tree_beneath_with_options(
+        root_fd,
+        relative_path,
+        max_entries,
+        hard_cap,
+        true,
+        true,
+        TraversalScope::Literal,
+    )
 }
 
 fn tree_beneath_with_options(
@@ -269,6 +288,7 @@ fn tree_beneath_with_options(
     hard_cap: usize,
     reject_all_symlinks: bool,
     include_size_bytes: bool,
+    scope: TraversalScope,
 ) -> Result<TreeResult, WorkspaceReadError> {
     if max_entries == 0 || max_entries > hard_cap {
         return Err(WorkspaceReadError::LimitExceeded);
@@ -283,6 +303,7 @@ fn tree_beneath_with_options(
         &start_prefix,
         max_entries + 1,
         include_size_bytes,
+        scope,
     )?;
     let mut entries = Vec::with_capacity(max_entries.min(pending.len()));
 
@@ -313,6 +334,7 @@ fn tree_beneath_with_options(
                         &relative,
                         frontier_limit,
                         include_size_bytes,
+                        scope,
                     )?;
                 }
                 Err(OpenatBoundaryError::BoundaryViolation | OpenatBoundaryError::NotFound) => {}
@@ -334,6 +356,24 @@ pub fn search_utf8_beneath(
     max_matches: usize,
     max_snippet_bytes: usize,
 ) -> Result<SearchResult, WorkspaceReadError> {
+    search_utf8_beneath_scoped(
+        root_fd,
+        relative_path,
+        query,
+        max_matches,
+        max_snippet_bytes,
+        TraversalScope::Literal,
+    )
+}
+
+pub fn search_utf8_beneath_scoped(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    query: &str,
+    max_matches: usize,
+    max_snippet_bytes: usize,
+    scope: TraversalScope,
+) -> Result<SearchResult, WorkspaceReadError> {
     if query.is_empty()
         || max_matches == 0
         || max_matches > SEARCH_MAX_MATCHES
@@ -342,7 +382,7 @@ pub fn search_utf8_beneath(
     {
         return Err(WorkspaceReadError::LimitExceeded);
     }
-    let tree = tree_beneath(root_fd, relative_path, SEARCH_TREE_MAX_ENTRIES)?;
+    let tree = tree_beneath_scoped(root_fd, relative_path, SEARCH_TREE_MAX_ENTRIES, scope)?;
     let mut matches = Vec::new();
     let mut snippet_bytes = 0usize;
     let mut scanned_bytes = 0u64;
@@ -435,11 +475,15 @@ fn enqueue_directory_entries(
     prefix: &Path,
     frontier_limit: usize,
     include_size_bytes: bool,
+    scope: TraversalScope,
 ) -> Result<(), WorkspaceReadError> {
     visit_directory_entries(
         directory_fd.as_ref(),
         include_size_bytes,
         |name, kind, size_bytes| {
+            if kind == TreeEntryKind::Directory && !include_directory(scope, &name) {
+                return;
+            }
             let relative = if prefix.as_os_str().is_empty() {
                 PathBuf::from(&name)
             } else {

@@ -7,6 +7,7 @@ mod path_identity;
 mod profile;
 mod read;
 mod registry;
+mod semantic_scope;
 mod skill_source;
 mod write;
 
@@ -23,9 +24,10 @@ pub use read::{
     INLINE_READ_MAX_BYTES, ReadBytesResult, ReadFileResult, SEARCH_MAX_MATCHES,
     SEARCH_MAX_SNIPPET_BYTES, SearchMatch, SearchResult, TREE_DEFAULT_MAX_ENTRIES,
     TREE_MAX_ENTRIES, TreeEntry, TreeEntryKind, TreeResult, WorkspaceReadError, read_file_beneath,
-    search_utf8_beneath, tree_beneath,
+    search_utf8_beneath, search_utf8_beneath_scoped, tree_beneath, tree_beneath_scoped,
 };
 pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
+pub use semantic_scope::TraversalScope;
 pub use skill_source::{
     SKILL_SOURCE_TREE_MAX_ENTRIES, SkillSourceRegistration, SkillSourceRegistry,
     SkillSourceRegistryError, inspect_skill_source_root,
