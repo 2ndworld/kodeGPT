@@ -16,8 +16,9 @@ use kodegpt_protocol::{
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
     FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, SKILL_SOURCE_TREE_MAX_ENTRIES,
-    SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, TraversalScope, WorkspaceRegistry,
-    WorkspaceRegistryError, inspect_root, inspect_skill_source_root, probe_filesystem_boundary,
+    SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, TraversalScope,
+    WorkspaceRegistry, WorkspaceRegistryError, inspect_root, inspect_skill_source_root,
+    probe_filesystem_boundary,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -641,7 +642,8 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileSearch,
                 move |registry| {
-                    let result = registry.search(&capability_id, &path, &query, max_matches, scope)?;
+                    let result =
+                        registry.search(&capability_id, &path, &query, max_matches, scope)?;
                     Ok(json!(result))
                 },
             )

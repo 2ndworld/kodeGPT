@@ -45,7 +45,11 @@ fn semantic_tree_excludes_noise_before_budget_but_explicit_root_opts_in() {
     write_fixture(&root, "node_modules/pkg/package.json", "{}\n");
     write_fixture(&root, "target/debug/generated.rs", "fn generated() {}\n");
     write_fixture(&root, "dist/app.js", "generated\n");
-    write_fixture(&root, "vendor/lib/source.ts", "export const vendored = true;\n");
+    write_fixture(
+        &root,
+        "vendor/lib/source.ts",
+        "export const vendored = true;\n",
+    );
     write_fixture(&root, ".cache/value.txt", "cached\n");
     let fd = root_fd(&root);
 
@@ -56,8 +60,16 @@ fn semantic_tree_excludes_noise_before_budget_but_explicit_root_opts_in() {
         .iter()
         .map(|entry| entry.path.as_str())
         .collect::<Vec<_>>();
-    assert!(literal_paths.iter().any(|path| path.starts_with("node_modules/")));
-    assert!(literal_paths.iter().any(|path| path.starts_with(".worktrees/")));
+    assert!(
+        literal_paths
+            .iter()
+            .any(|path| path.starts_with("node_modules/"))
+    );
+    assert!(
+        literal_paths
+            .iter()
+            .any(|path| path.starts_with(".worktrees/"))
+    );
 
     let semantic = tree_beneath_scoped(&fd, Path::new("."), 100, TraversalScope::Semantic)
         .expect("semantic tree succeeds");
@@ -109,13 +121,21 @@ fn semantic_tree_excludes_noise_before_budget_but_explicit_root_opts_in() {
 fn semantic_search_skips_excluded_candidates_and_their_truncation_pressure() {
     let root = temporary_root("search");
     write_fixture(&root, "src/main.ts", "const marker = 'needle';\n");
-    write_fixture(&root, "node_modules/pkg/index.ts", "const dep = 'needle';\n");
+    write_fixture(
+        &root,
+        "node_modules/pkg/index.ts",
+        "const dep = 'needle';\n",
+    );
     write_fixture(
         &root,
         ".worktrees/feature/src/main.ts",
         "const old = 'needle';\n",
     );
-    write_fixture(&root, "target/generated/huge.txt", vec![b'x'; 1024 * 1024 + 1]);
+    write_fixture(
+        &root,
+        "target/generated/huge.txt",
+        vec![b'x'; 1024 * 1024 + 1],
+    );
     let fd = root_fd(&root);
 
     let semantic = search_utf8_beneath_scoped(

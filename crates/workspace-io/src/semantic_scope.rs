@@ -50,7 +50,10 @@ mod tests {
 
     #[test]
     fn semantic_scope_uses_a_fixed_exclusion_set_not_a_dotfile_rule() {
-        assert!(!include_directory(TraversalScope::Semantic, OsStr::new(".git")));
+        assert!(!include_directory(
+            TraversalScope::Semantic,
+            OsStr::new(".git")
+        ));
         assert!(!include_directory(
             TraversalScope::Semantic,
             OsStr::new("node_modules")
