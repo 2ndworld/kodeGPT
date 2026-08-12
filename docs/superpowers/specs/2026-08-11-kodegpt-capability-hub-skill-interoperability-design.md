@@ -4,6 +4,8 @@ Date: 2026-08-11
 Status: Approved
 Scope: Post-v0.1 evolution of KodeGPT as the deterministic capability bridge between GPT Web and the local desktop
 
+> **Phase 2 reconciliation (2026-08-12):** The architectural intent in this document remains authoritative. Phase 2 implementation details are refined by `docs/superpowers/specs/2026-08-12-kodegpt-hybrid-skill-interoperability-reconciled-design.md` and its reconciled execution plan to reflect the completed Native Capability Layer at `b8a3b71`.
+
 ## 1. Purpose
 
 KodeGPT already provides a secure low-level bridge from GPT Web to a locally trusted workspace: bounded file operations, hardened Git inspection, sandboxed process execution, artifacts, profiles, extensions, audit, and MCP transport. The next development stage should make GPT Web substantially more capable without changing KodeGPT into a second autonomous agent and without introducing Codex as a runtime dependency.
