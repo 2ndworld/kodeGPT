@@ -242,6 +242,21 @@ describe("hybrid skill interoperability release fixtures", () => {
       expect(portable).toBeDefined();
       expect(volatile).toBeDefined();
       expect(provider?.compatibility?.classification).toBe("UNSUPPORTED");
+      const unsupported = textJson(
+        await callTool(
+          PORT,
+          credential.token,
+          "skill.list",
+          { compatibility: "UNSUPPORTED", limit: 1 },
+          "req_skill_list_unsupported"
+        )
+      );
+      expect(unsupported.skills).toHaveLength(1);
+      expect(unsupported.skills[0]).toMatchObject({
+        skillId: provider.skillId,
+        compatibility: { classification: "UNSUPPORTED" }
+      });
+      expect(unsupported.truncated).toBe(false);
       portableId = portable.skillId;
       volatileId = volatile.skillId;
 
@@ -352,7 +367,19 @@ describe("hybrid skill interoperability release fixtures", () => {
           "req_skill_inspect_changed_live"
         )
       );
+      expect(current.skill.skillId).toBe(portableId);
       expect(current.skill.fingerprint).not.toBe(portableFingerprint);
+
+      const pinnedList = textJson(
+        await callTool(
+          PORT,
+          credential.token,
+          "skill.list",
+          { pinned: true },
+          "req_skill_list_pinned_same_identity"
+        )
+      );
+      expect(pinnedList.skills).toContainEqual(expect.objectContaining({ skillId: portableId, pinned: true }));
 
       await expectToolError(
         PORT,

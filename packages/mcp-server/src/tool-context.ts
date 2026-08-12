@@ -26,6 +26,7 @@ import type {
 import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
 import type {
   SkillCatalogToolAdapter,
+  SkillCompatibility,
   SkillInspectResult,
   SkillListResult,
   SkillLoadResult
@@ -142,7 +143,12 @@ export interface ContextToolContext {
 }
 
 export interface SkillToolContext {
-  list(input: { limit?: number; sourceId?: string; pinned?: boolean }): Promise<SkillListResult>;
+  list(input: {
+    limit?: number;
+    sourceId?: string;
+    compatibility?: SkillCompatibility;
+    pinned?: boolean;
+  }): Promise<SkillListResult>;
   inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
   load(input: {
     skillId: string;
