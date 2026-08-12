@@ -67,6 +67,19 @@ function pinInput(body = "instructions\n", guide = "guide\n"): SkillPinInput {
   };
 }
 
+function pinInputWithoutResources(): SkillPinInput {
+  const input = pinInput();
+  input.resources = [];
+  input.fingerprint = fingerprintSkillBundle([
+    {
+      path: "SKILL.md",
+      bytes: input.skillDocument.byteLength,
+      sha256: input.descriptor.descriptorFingerprint
+    }
+  ]);
+  return input;
+}
+
 afterEach(async () => {
   while (roots.length > 0) {
     await removeSkillTestStateRoot(roots.pop()!);
@@ -179,6 +192,17 @@ describe("SkillPinStore", () => {
     expect(loaded.resources.map((resource) => resource.path)).toEqual(["references/guide.md"]);
     expect(Buffer.from(loaded.resources[0]!.bytes).toString("utf8")).toBe("guide\n");
     expect(loaded.manifest.fingerprint).toBe(input.fingerprint);
+  });
+
+  it("accepts snapshots with no resources that were created by the pin store itself", async () => {
+    const { store: pins } = await store();
+    const input = pinInputWithoutResources();
+    await pins.pin(input);
+
+    const loaded = await pins.load(SKILL_ID, input.fingerprint);
+    expect(loaded.resources).toEqual([]);
+    expect((await pins.list()).map((manifest) => manifest.fingerprint)).toEqual([input.fingerprint]);
+    expect(await pins.unpin(SKILL_ID, input.fingerprint)).toBe(true);
   });
 
   it("rejects snapshot topology containing unexpected files or symlinked resource directories", async () => {

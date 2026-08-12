@@ -8,7 +8,8 @@ import {
   readFile,
   readdir,
   rename,
-  rm
+  rm,
+  rmdir
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
@@ -237,7 +238,7 @@ export class SkillPinStore {
     try {
       const remaining = await readdir(skillRoot);
       if (remaining.length === 0) {
-        await rm(skillRoot, { recursive: false, force: false });
+        await rmdir(skillRoot);
       } else {
         await syncDirectory(skillRoot);
       }
