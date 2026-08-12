@@ -24,17 +24,19 @@ Keep these categories distinct:
 Skill-source admission is local-only authority. Prepare a minimal source outside the repository:
 
 ```bash
-mkdir -p /tmp/kodegpt-host-skill-source/portable/references
-cat > /tmp/kodegpt-host-skill-source/portable/SKILL.md <<'EOF'
+mkdir -p /tmp/kodegpt-host-skill-source/portable-host-acceptance/references
+cat > /tmp/kodegpt-host-skill-source/portable-host-acceptance/SKILL.md <<'EOF'
 ---
 name: portable-host-acceptance
 description: Host acceptance skill
 ---
 Read the requested reference and report its exact marker.
 EOF
-printf 'kodegpt-host-skill-reference\n' > /tmp/kodegpt-host-skill-source/portable/references/marker.txt
+printf 'kodegpt-host-skill-reference\n' > /tmp/kodegpt-host-skill-source/portable-host-acceptance/references/marker.txt
 kodegpt skill source add /tmp/kodegpt-host-skill-source --kind agent-skills
 ```
+
+The directory name intentionally matches the `name` field because the shipped Agent Skills parser requires that identity match.
 
 Then, from the actual ChatGPT host connected to the candidate:
 
