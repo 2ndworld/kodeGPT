@@ -30,6 +30,8 @@ The compatibility claim is therefore scoped to observed evidence:
 - MCP Apps rendering must be recorded separately from text fallback behavior.
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
 
+For the reconciled `0.3` candidate, begin host acceptance by calling `system.capabilities` and require `mcpProtocolVersion:"2026-07-28"` plus `mcpSurfaceVersion:"0.3"`. A still-running `0.2` connector is a stale deployment and must not be used as evidence that the `0.3` candidate passed or failed host behavior; restart/reinstall the exact candidate first.
+
 ## Native capability hub semantics
 
 KodeGPT's released native capability + read-only skill hub is the `0.3` semantic MCP tool surface; the MCP protocol remains `2026-07-28`. GPT Web remains the reasoning actor: KodeGPT provides bounded, typed, policy-checked desktop/repository capabilities and does not introduce an autonomous coding agent, a Codex execution path, or a general shell shortcut.
