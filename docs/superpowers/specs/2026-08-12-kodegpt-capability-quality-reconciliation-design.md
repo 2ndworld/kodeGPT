@@ -1,8 +1,8 @@
 # KodeGPT Capability Quality & Contract Reconciliation Design
 
-**Date:** 2026-08-12  
-**Status:** Approved direction from real ChatGPT-host acceptance; implementation plan follows in the paired plan document.  
-**Scope:** Post-merge quality hardening, contract reconciliation, host evidence reconciliation, and bounded follow-up backlog extraction.  
+**Date:** 2026-08-12
+**Status:** Approved direction from real ChatGPT-host acceptance; implementation plan follows in the paired plan document.
+**Scope:** Post-merge quality hardening, contract reconciliation, host evidence reconciliation, and bounded follow-up backlog extraction.
 
 ## 1. Purpose
 
