@@ -29,3 +29,53 @@ export interface SkillSourceAdmissionInput {
   canonicalRoot: string;
   identity: PersistedSkillSourceIdentity;
 }
+
+export interface SkillSourceAdmissionResult {
+  sourceId: string;
+  label: string;
+  kind: "agent-skills";
+}
+
+export interface SkillSourceRootInspection {
+  canonicalRoot: string;
+  identity: PersistedSkillSourceIdentity;
+}
+
+export type SkillSourceTreeEntryKind = "file" | "directory" | "symlink" | "other";
+
+export interface SkillSourceTreeEntry {
+  path: string;
+  kind: SkillSourceTreeEntryKind;
+  sizeBytes: number;
+}
+
+export interface SkillSourceTreeResult {
+  entries: SkillSourceTreeEntry[];
+  truncated: boolean;
+}
+
+export interface SkillSourceReadResult {
+  contents: string;
+  bytesRead: number;
+  eof: boolean;
+}
+
+export interface SkillSourceRuntimeAdapter {
+  inspectRoot(path: string): Promise<SkillSourceRootInspection>;
+  register(input: {
+    rootPath: string;
+    expectedIdentity: PersistedSkillSourceIdentity;
+  }): Promise<{ sourceCapabilityId: string }>;
+  tree(input: {
+    sourceCapabilityId: string;
+    path: string;
+    maxEntries: number;
+  }): Promise<SkillSourceTreeResult>;
+  read(input: {
+    sourceCapabilityId: string;
+    path: string;
+    offset: number;
+    maxBytes: number;
+  }): Promise<SkillSourceReadResult>;
+  unregister(sourceCapabilityId: string): Promise<void>;
+}

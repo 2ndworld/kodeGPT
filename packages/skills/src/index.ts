@@ -11,7 +11,16 @@ export {
   SKILL_STATE_SCHEMA_VERSION,
   type PersistedSkillSource,
   type PersistedSkillSourceIdentity,
-  type SkillSourceAdmissionInput
+  type SkillSourceAdmissionInput,
+  type SkillSourceAdmissionResult,
+  type SkillSourceReadResult,
+  type SkillSourceRootInspection,
+  type SkillSourceRuntimeAdapter,
+  type SkillSourceTreeEntry,
+  type SkillSourceTreeEntryKind,
+  type SkillSourceTreeResult
 } from "./contracts.js";
 export { SKILL_ERROR_CODES, SkillError, type SkillErrorCode } from "./errors.js";
+export { SkillSourceManager } from "./source-manager.js";
+export { createSkillSourceRuntimeAdapter } from "./source-runtime.js";
 export { SkillSourceStore } from "./source-store.js";
