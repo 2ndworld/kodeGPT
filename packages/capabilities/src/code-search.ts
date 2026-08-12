@@ -34,7 +34,8 @@ export async function searchCode(
     input.workspaceId,
     input.query,
     input.path,
-    lowLevelMax
+    lowLevelMax,
+    "semantic"
   );
   const classified = classifyMatches(lowLevel.matches, input.query, mode);
   const truncationReasons = orderedReasons([
@@ -60,7 +61,8 @@ async function searchPaths(
   const tree = await workspace.tree(
     input.workspaceId,
     input.path ?? ".",
-    MAX_INSPECT_MAX_ENTRIES
+    MAX_INSPECT_MAX_ENTRIES,
+    "semantic"
   );
   const matchingPaths = tree.entries
     .map(({ path }) => path)

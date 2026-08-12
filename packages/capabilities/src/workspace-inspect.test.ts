@@ -9,7 +9,7 @@ function makeWorkspaceAdapter(
   options: {
     files?: Record<string, string>;
     treeTruncated?: boolean;
-    onTree?: (path: string | undefined, maxEntries: number) => void;
+    onTree?: (path: string | undefined, maxEntries: number, scope: "literal" | "semantic" | undefined) => void;
     onRead?: (path: string, maxBytes: number | undefined) => void;
   } = {}
 ): WorkspaceInspectionAdapter {
@@ -24,8 +24,8 @@ function makeWorkspaceAdapter(
         eof: true
       };
     },
-    tree: async (_workspaceId, path, maxEntries) => {
-      options.onTree?.(path, maxEntries);
+    tree: async (_workspaceId, path, maxEntries, scope) => {
+      options.onTree?.(path, maxEntries, scope);
       return { entries, truncated: options.treeTruncated ?? false };
     }
   };
@@ -128,6 +128,22 @@ describe("workspace.inspect", () => {
     expect(result.areas).toContainEqual({ path: "src", kind: "other" });
     expect(result.languages).toEqual([]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("does not present arbitrary hidden top-level directories as generic project areas", async () => {
+    const service = makeService(
+      makeWorkspaceAdapter([
+        { path: ".cargo", kind: "directory" },
+        { path: ".cargo/config.toml", kind: "file" },
+        { path: "src", kind: "directory" },
+        { path: "src/main.rs", kind: "file" }
+      ])
+    );
+
+    const result = await service.inspectWorkspace({ workspaceId: "ws_hidden_area" });
+
+    expect(result.areas).toContainEqual({ path: "src", kind: "other" });
+    expect(result.areas).not.toContainEqual({ path: ".cargo", kind: "other" });
   });
 
   it("sorts evidence lexically so repeated inspection is deterministic", async () => {
@@ -246,11 +262,13 @@ describe("workspace.inspect", () => {
   it("passes the requested workspace-relative path and bound to the trusted workspace adapter", async () => {
     let requestedPath: string | undefined;
     let requestedMaxEntries: number | undefined;
+    let requestedScope: "literal" | "semantic" | undefined;
     const service = makeService(
       makeWorkspaceAdapter([{ path: "packages/core/package.json", kind: "file" }], {
-        onTree: (path, maxEntries) => {
+        onTree: (path, maxEntries, scope) => {
           requestedPath = path;
           requestedMaxEntries = maxEntries;
+          requestedScope = scope;
         }
       })
     );
@@ -263,6 +281,7 @@ describe("workspace.inspect", () => {
 
     expect(requestedPath).toBe("packages/core");
     expect(requestedMaxEntries).toBe(321);
+    expect(requestedScope).toBe("semantic");
     expect(result.root).toBe("packages/core");
   });
 });

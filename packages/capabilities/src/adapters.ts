@@ -73,7 +73,8 @@ export interface WorkspaceInspectionAdapter {
   tree(
     workspaceId: string,
     path: string | undefined,
-    maxEntries: number
+    maxEntries: number,
+    scope: "literal" | "semantic"
   ): Promise<CapabilityTreeResult>;
 }
 
@@ -82,7 +83,8 @@ export interface CodeSearchAdapter {
     workspaceId: string,
     query: string,
     path: string | undefined,
-    maxMatches: number
+    maxMatches: number,
+    scope: "literal" | "semantic"
   ): Promise<CapabilitySearchResult>;
 }
 

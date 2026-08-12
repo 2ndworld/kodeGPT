@@ -213,12 +213,12 @@ export async function createProductionServiceStack(
         inspection: {
           readFile: (workspaceId, path, readOptions) =>
             managers.workspaceManager.readFile(workspaceId, path, readOptions),
-          tree: (workspaceId, path, maxEntries) =>
-            managers.workspaceManager.treeBounded(workspaceId, path, maxEntries)
+          tree: (workspaceId, path, maxEntries, scope) =>
+            managers.workspaceManager.treeBounded(workspaceId, path, maxEntries, scope)
         },
         search: {
-          search: (workspaceId, query, path, maxMatches) =>
-            managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches)
+          search: (workspaceId, query, path, maxMatches, scope) =>
+            managers.workspaceManager.searchBounded(workspaceId, query, path, maxMatches, scope)
         }
       },
       git: {

@@ -16,20 +16,28 @@ function service(options: {
   search?: CapabilitySearchMatch[];
   searchTruncated?: boolean;
   searchTruncationReasons?: CodeSearchTruncationReason[];
+  onTree?: (scope: "literal" | "semantic" | undefined) => void;
+  onSearch?: (scope: "literal" | "semantic" | undefined) => void;
 }): NativeCapabilityService {
   const workspaceInspection: WorkspaceInspectionAdapter = {
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
-    tree: async () => ({
-      entries: options.tree ?? [],
-      truncated: options.treeTruncated ?? false
-    })
+    tree: async (_workspaceId, _path, _maxEntries, scope) => {
+      options.onTree?.(scope);
+      return {
+        entries: options.tree ?? [],
+        truncated: options.treeTruncated ?? false
+      };
+    }
   };
   const codeSearch: CodeSearchAdapter = {
-    search: async () => ({
-      matches: options.search ?? [],
-      truncated: options.searchTruncated ?? false,
-      truncationReasons: options.searchTruncationReasons ?? []
-    })
+    search: async (_workspaceId, _query, _path, _maxMatches, scope) => {
+      options.onSearch?.(scope);
+      return {
+        matches: options.search ?? [],
+        truncated: options.searchTruncated ?? false,
+        truncationReasons: options.searchTruncationReasons ?? []
+      };
+    }
   };
   return new NativeCapabilityService(
     createTestCapabilityDependencies({
@@ -105,6 +113,23 @@ describe("code.search", () => {
       truncated: true,
       truncationReasons: ["MATCH_LIMIT"]
     });
+  });
+
+  it("uses semantic traversal for both path and lexical search modes", async () => {
+    const treeScopes: Array<"literal" | "semantic" | undefined> = [];
+    const searchScopes: Array<"literal" | "semantic" | undefined> = [];
+    const capability = service({
+      tree: [{ path: "src/needle.ts", kind: "file" }],
+      search: [{ path: "src/needle.ts", line: 1, lineText: "needle" }],
+      onTree: (scope) => treeScopes.push(scope),
+      onSearch: (scope) => searchScopes.push(scope)
+    });
+
+    await capability.searchCode({ workspaceId: "ws_scope", query: "needle", mode: "path" });
+    await capability.searchCode({ workspaceId: "ws_scope", query: "needle", mode: "text" });
+
+    expect(treeScopes).toEqual(["semantic"]);
+    expect(searchScopes).toEqual(["semantic"]);
   });
 
   it("keeps symbol mode heuristic and matches whole identifiers only", async () => {
