@@ -29,6 +29,7 @@ The compatibility claim is therefore scoped to observed evidence:
 - Any confirmation prompt or action-control behavior must be recorded as observed host behavior, not inferred from MCP annotations.
 - MCP Apps rendering must be recorded separately from text fallback behavior.
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
+- After the MCP tool inventory or tool input definitions change, the ChatGPT app/connector actions must be refreshed/rescanned before new host evidence is collected. ChatGPT may retain an approved/frozen tool snapshot; a running server with a newer surface version does not by itself prove the host is using that newer inventory.
 
 ## Native capability hub semantics
 
