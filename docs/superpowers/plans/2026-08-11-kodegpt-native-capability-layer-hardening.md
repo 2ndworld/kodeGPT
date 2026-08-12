@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript 5.9, Zod 4, Vitest 3, Node `crypto` for pure capability fingerprint serialization, Rust 2024, `rustix`, `serde`, `sha2` for retained-root SHA-256, Tokio, existing Bubblewrap sandbox/runtime audit/spool infrastructure, MCP SDK.
 
+> **Execution reconciliation (2026-08-13):** this file records the historical Tasks 4–6 hardening execution scope. Current source/tests now include the later `file.patch` and `context.build` capabilities plus the capability-quality reconciliation work; MCP semantic surface is `0.3` with protocol `2026-07-28`. Therefore statements below that Tasks 7/8 are unimplemented or that surface `0.2` is current are historical, not present-tense implementation status. Use the v0.1 execution tracker and `docs/superpowers/specs/2026-08-12-kodegpt-capability-quality-reconciliation-design.md` for current status.
+
 ## Global Constraints
 
 - Base implementation is commit `be5da38`; design spec is commit `b33ff10` at `docs/superpowers/specs/2026-08-11-kodegpt-native-capability-layer-hardening-design.md`.

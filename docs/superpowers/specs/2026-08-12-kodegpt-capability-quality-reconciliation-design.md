@@ -54,9 +54,9 @@ On the same multi-project repository, `verify.list` discovered root Cargo recipe
 
 ### 2.4 Skill contract drift
 
-The authoritative reconciled hybrid-skill plan states that exposing `skill.list`, `skill.inspect`, and `skill.load` advances the semantic MCP surface from `0.2` to `0.3`. Current source exposes the three skill tools while `MCP_SURFACE_VERSION` remains `0.2`.
+The authoritative reconciled hybrid-skill plan states that exposing `skill.list`, `skill.inspect`, and `skill.load` advances the semantic MCP surface from `0.2` to `0.3`. **Planning-time finding:** when this design was written, source already exposed the three skill tools while `MCP_SURFACE_VERSION` still remained `0.2`; the reconciliation implementation subsequently advances the shipped surface to `0.3`.
 
-The reconciled plan also specified an optional `compatibility` filter for `skill.list`; the current public adapter/schema supports `limit`, `sourceId`, and `pinned`, but not that filter.
+The reconciled plan also specified an optional `compatibility` filter for `skill.list`. **Planning-time finding:** the public adapter/schema initially supported only `limit`, `sourceId`, and `pinned`; the reconciliation implementation subsequently adds the compatibility filter before result limiting.
 
 Other differences are not automatically defects:
 
