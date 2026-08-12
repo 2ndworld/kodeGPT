@@ -34,7 +34,7 @@ use crate::process::{
     ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
     run_process,
 };
-use crate::rpc::{error_response, parse_request, success_response};
+use crate::rpc::{error_response, error_response_with_data_code, parse_request, success_response};
 use crate::spool::{RawSpoolError, RawSpoolStore};
 
 #[cfg(feature = "runtime-test-methods")]
@@ -267,7 +267,7 @@ async fn dispatch_one(
                 return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
             }
             if !filesystem_boundary_available {
-                return audited_failure(
+                return audited_skill_source_failure(
                     &audit,
                     &audit_context,
                     request.id,
@@ -281,7 +281,13 @@ async fn dispatch_one(
                     Ok(inspected) => inspected,
                     Err(error) => {
                         let (code, message) = skill_source_registry_error_contract(&error);
-                        return audited_failure(&audit, &audit_context, request.id, code, message);
+                        return audited_skill_source_failure(
+                            &audit,
+                            &audit_context,
+                            request.id,
+                            code,
+                            message,
+                        );
                     }
                 };
             if audit
@@ -1147,7 +1153,7 @@ where
     let result = match registry.lock() {
         Ok(mut registry) => operation(&mut registry),
         Err(_) => {
-            return audited_failure(
+            return audited_skill_source_failure(
                 audit,
                 &context,
                 request_id,
@@ -1166,7 +1172,7 @@ where
         }
         Err(error) => {
             let (code, message) = skill_source_registry_error_contract(&error);
-            audited_failure(audit, &context, request_id, code, message)
+            audited_skill_source_failure(audit, &context, request_id, code, message)
         }
     }
 }
@@ -1899,6 +1905,19 @@ fn audited_failure(
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     error_response(Some(request_id), code, message)
+}
+
+fn audited_skill_source_failure(
+    audit: &AuditSink,
+    context: &AuditContext,
+    request_id: String,
+    code: i64,
+    message: &str,
+) -> Value {
+    if audit.outcome(context, AuditOutcome::Failed).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    error_response_with_data_code(Some(request_id), code, message, message)
 }
 
 #[cfg(test)]
@@ -2667,6 +2686,7 @@ mod tests {
         )
         .await;
         assert_eq!(after["error"]["message"], "SKILL_SOURCE_UNAVAILABLE");
+        assert_eq!(after["error"]["data"]["code"], "SKILL_SOURCE_UNAVAILABLE");
 
         let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
         for action in [

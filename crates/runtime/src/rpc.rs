@@ -44,3 +44,22 @@ pub fn error_response(id: Option<String>, code: i64, message: &str) -> Value {
         }
     })
 }
+
+pub fn error_response_with_data_code(
+    id: Option<String>,
+    code: i64,
+    message: &str,
+    data_code: &str,
+) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message,
+            "data": {
+                "code": data_code
+            }
+        }
+    })
+}
