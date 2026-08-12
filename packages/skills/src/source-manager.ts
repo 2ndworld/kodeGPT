@@ -139,10 +139,21 @@ export class SkillSourceManager {
     if (source === undefined) {
       throw new SkillError("SKILL_SOURCE_NOT_FOUND", "Skill source was not found");
     }
-    const registration = await this.#runtime.register({
-      rootPath: source.canonicalRoot,
-      expectedIdentity: source.identity
-    });
+    let registration: { sourceCapabilityId: string };
+    try {
+      registration = await this.#runtime.register({
+        rootPath: source.canonicalRoot,
+        expectedIdentity: source.identity
+      });
+    } catch (error) {
+      // Admission already validated this persisted root. If it later stops being a valid root,
+      // treat the live source as unavailable so immutable pins may still be used. Identity
+      // replacement remains a distinct fail-closed error and is deliberately not remapped.
+      if (error instanceof SkillError && error.code === "SKILL_SOURCE_INVALID") {
+        throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source runtime request failed");
+      }
+      throw error;
+    }
     this.#activeCapabilities.set(sourceId, registration.sourceCapabilityId);
   }
 

@@ -179,6 +179,19 @@ describe("SkillSourceManager", () => {
     expect(calls.register).toHaveLength(1);
   });
 
+  it("maps an invalid persisted source registration to unavailable", async () => {
+    const { runtime } = fakeRuntime({
+      registerError: new SkillError("SKILL_SOURCE_INVALID", "Skill source runtime request failed")
+    });
+    const { manager } = await managerFixture("persisted-root-unavailable", runtime);
+    const source = await manager.addSource("/skills", "Skills");
+
+    await expect(manager.ensureRegistered(source.sourceId)).rejects.toMatchObject({
+      name: "SkillError",
+      code: "SKILL_SOURCE_UNAVAILABLE"
+    });
+  });
+
   it("tree/read lazily register and accept only canonical relative paths", async () => {
     const { runtime, calls } = fakeRuntime();
     const { manager } = await managerFixture("read-tree", runtime);

@@ -1,6 +1,6 @@
 # ChatGPT Compatibility Claim Gate
 
-Status date: 2026-08-10.
+Status date: 2026-08-12.
 
 KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compatibility. Passing KodeGPT's local protocol, security, Apps, and packaging suites is necessary but is not evidence that a specific ChatGPT plan/workspace can connect to or invoke every KodeGPT capability.
 
@@ -43,6 +43,23 @@ The higher-level tools reduce repeated primitive round trips without replacing l
 - `file.patch` defaults to `check`. It parses a bounded text-only unified patch, performs full preflight for all affected files before the first mutation, then in `apply` mode uses per-file conditional retained-root commits. It is **not** a globally atomic multi-file transaction: a host/runtime failure during commit may leave already committed earlier paths in place, and KodeGPT reports `committedPaths` plus `failedPath` rather than claiming rollback.
 
 Workspace trust remains local-only and is deliberately absent from the MCP tool inventory. The public surface also contains no `shell.run`, `codex.run`, `codex.exec`, or `skill.run` execution tools.
+
+## Hybrid skill interoperability
+
+Hybrid skill interoperability keeps GPT Web as the reasoning actor over skill semantics. KodeGPT discovers, fingerprints, inspects, and loads bounded skill instructions/resources, while KodeGPT's existing native capabilities perform any allowed host operations under the normal runtime, policy, sandbox, trust, and audit authorities.
+
+The release does **not** launch, proxy, or depend on Codex or Claude agents. Skill scripts and resources are data: an explicitly requested UTF-8 script resource may be returned as text, but it is never executed merely because a skill references or contains it. Live skills reflect source changes automatically, while pinned skills preserve immutable, reproducible snapshots that remain loadable when the corresponding live source is unavailable. A persisted source path that is replaced with a different filesystem identity is not treated as ordinary unavailability: identity replacement remains fail-closed even when an older snapshot is pinned.
+
+Source admission/removal and pin/unpin are local CLI actions. MCP exposes only the read-only `skill.list`, `skill.inspect`, and `skill.load` tools; it does not expose source mutation, pin mutation, workspace trust, host paths, state-root paths, canonical source roots, or source capability IDs.
+
+Compatibility classification is advisory semantic-portability metadata, not a permission grant:
+
+- `NATIVE` means the declared/static semantics are representable by currently available KodeGPT-native capabilities.
+- `PARTIAL` means part of the skill is portable but some semantics are missing or require adaptation.
+- `PROVIDER_REQUIRED` means the skill describes semantics associated with an external provider/tool environment. It does **not** mean provider invocation is available in this release.
+- `UNSUPPORTED` means the skill depends on semantics KodeGPT must not execute or pretend to support, including Codex/subagent execution workflows such as `codex exec`.
+
+Runtime/security policy remains the final authority regardless of compatibility classification. Provider interoperability (`provider.list`, `provider.tools`, `provider.invoke`) and `skill.run` are intentionally out of scope for this phase.
 
 ## Required manual host evidence matrix
 
