@@ -14,6 +14,10 @@ export {
   SKILL_STATE_SCHEMA_VERSION,
   type LiveSkillDescriptor,
   type ParsedSkillDocument,
+  type SkillAvailability,
+  type SkillCatalogEntry,
+  type SkillCatalogListResult,
+  type SkillCatalogRawLoad,
   type PersistedSkillSource,
   type PersistedSkillSourceIdentity,
   type SkillBundleFingerprintRecord,
@@ -21,6 +25,10 @@ export {
   type SkillLiveInspection,
   type SkillLiveListResult,
   type SkillLiveRawLoad,
+  type SkillPinInput,
+  type SkillPinnedFileRecord,
+  type SkillPinnedManifest,
+  type SkillPinnedRawLoad,
   type SkillRawResource,
   type SkillResourceInventoryEntry,
   type SkillSourceAdmissionInput,
@@ -34,10 +42,11 @@ export {
   type SkillSourceTreeResult,
   type SkillValidatedFrontmatter
 } from "./contracts.js";
-export { SkillCatalog } from "./catalog.js";
+export { SkillCatalog, type SkillCatalogOptions } from "./catalog.js";
 export { SKILL_ERROR_CODES, SkillError, type SkillErrorCode } from "./errors.js";
 export { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 export { parseSkillDocument } from "./parser.js";
+export { SkillPinStore, type SkillPinStoreOptions } from "./pin-store.js";
 export { SkillSourceManager } from "./source-manager.js";
 export { createSkillSourceRuntimeAdapter } from "./source-runtime.js";
 export { SkillSourceStore } from "./source-store.js";

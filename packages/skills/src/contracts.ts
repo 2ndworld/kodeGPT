@@ -42,7 +42,8 @@ export interface SkillBundleFingerprintRecord {
 export type SkillDiscoveryTruncationReason =
   | "SOURCE_ENTRY_LIMIT"
   | "SKILL_COUNT_LIMIT"
-  | "DESCRIPTOR_SIZE_LIMIT";
+  | "DESCRIPTOR_SIZE_LIMIT"
+  | "SOURCE_UNAVAILABLE";
 
 export interface LiveSkillDescriptor {
   skillId: string;
@@ -98,6 +99,67 @@ export interface SkillLiveRawLoad {
   bundleFingerprint: string;
   skillDocument: Uint8Array;
   resources: SkillRawResource[];
+}
+
+export interface SkillPinnedFileRecord {
+  path: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface SkillPinnedManifest {
+  schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
+  skillId: string;
+  name: string;
+  description: string;
+  fingerprint: string;
+  provenance: {
+    sourceId: string;
+    sourceKind: "agent-skills";
+    sourceRelativePath: string;
+    pinnedAt: string;
+  };
+  files: SkillPinnedFileRecord[];
+}
+
+export interface SkillPinInput {
+  descriptor: LiveSkillDescriptor;
+  fingerprint: string;
+  sourceRelativePath: string;
+  skillDocument: Uint8Array;
+  resources: SkillRawResource[];
+}
+
+export interface SkillPinnedRawLoad {
+  manifest: SkillPinnedManifest;
+  skillDocument: Uint8Array;
+  resources: SkillRawResource[];
+}
+
+export type SkillAvailability = "live" | "pinned" | "live+pinned";
+
+export interface SkillCatalogEntry {
+  skillId: string;
+  name: string;
+  description: string;
+  sourceId: string;
+  sourceKind: "agent-skills";
+  fingerprint: string;
+  descriptorFingerprint: string;
+  nameCollision: boolean;
+  availability: SkillAvailability;
+  pinned: boolean;
+}
+
+export interface SkillCatalogListResult {
+  skills: SkillCatalogEntry[];
+  truncated: boolean;
+  truncationReasons: SkillDiscoveryTruncationReason[];
+}
+
+export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
+  availability: SkillAvailability;
+  pinned: boolean;
 }
 
 export interface ParsedSkillDocument {

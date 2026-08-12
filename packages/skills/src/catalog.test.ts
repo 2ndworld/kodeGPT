@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MAX_LOADED_RESOURCES,
@@ -10,11 +10,21 @@ import {
   SKILL_DESCRIPTOR_MAX_BYTES,
   SKILL_MD_MAX_BYTES,
   SkillCatalog,
+  SkillPinStore,
   type PersistedSkillSource,
   type SkillSourceReadBytesResult,
   type SkillSourceTreeEntry,
   type SkillSourceTreeResult
 } from "./index.js";
+import { createSkillTestStateRoot, removeSkillTestStateRoot } from "./test-support.js";
+
+const catalogStateRoots: string[] = [];
+
+afterEach(async () => {
+  while (catalogStateRoots.length > 0) {
+    await removeSkillTestStateRoot(catalogStateRoots.pop()!);
+  }
+});
 
 type FakeEntry = SkillSourceTreeEntry & { bytes?: Uint8Array };
 
@@ -25,6 +35,7 @@ type FakeSource = {
 
 class FakeSourceManager {
   readonly sources = new Map<string, FakeSource>();
+  readonly unavailableSourceIds = new Set<string>();
 
   addSource(sourceId: string, label: string): FakeSource {
     const source: PersistedSkillSource = {
@@ -51,6 +62,7 @@ class FakeSourceManager {
   }
 
   async tree(input: { sourceId: string; path: string }): Promise<SkillSourceTreeResult> {
+    if (this.unavailableSourceIds.has(input.sourceId)) throw new Error("fake source unavailable");
     const source = this.requiredSource(input.sourceId);
     const prefix = input.path === "." ? "" : `${input.path}/`;
     const entries = [...source.entries.values()]
@@ -70,6 +82,7 @@ class FakeSourceManager {
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadBytesResult> {
+    if (this.unavailableSourceIds.has(input.sourceId)) throw new Error("fake source unavailable");
     const entry = this.requiredSource(input.sourceId).entries.get(input.path);
     if (entry?.kind !== "file" || entry.bytes === undefined) {
       throw new Error("fake file unavailable");
@@ -447,5 +460,71 @@ describe("SkillCatalog inspection and raw loading", () => {
     await expect(byteCatalog.inspectLive({ skillId: byteSkill.skillId })).rejects.toMatchObject({
       code: "SKILL_LOAD_LIMIT_EXCEEDED"
     });
+  });
+});
+
+describe("SkillCatalog pinned snapshots", () => {
+  it("keeps an old pin reproducible while live content changes and after the source disappears", async () => {
+    const stateRoot = await createSkillTestStateRoot("catalog-pins");
+    catalogStateRoots.push(stateRoot);
+    const manager = new FakeSourceManager();
+    manager.addSource(SOURCE_A, "private-a");
+    addSkill(manager, SOURCE_A, "portable");
+    addDirectory(manager, SOURCE_A, "portable/references");
+    manager.setFile(SOURCE_A, "portable/references/guide.md", bytes("old guide\n"));
+    const pins = new SkillPinStore(stateRoot, {
+      now: () => new Date("2026-08-12T07:45:00.000Z")
+    });
+    const catalog = new SkillCatalog(manager, { pins });
+
+    const liveOnly = await catalog.list();
+    expect(liveOnly.skills).toHaveLength(1);
+    expect(liveOnly.skills[0]).toMatchObject({ availability: "live", pinned: false });
+
+    const pinned = await catalog.pin({ skillId: liveOnly.skills[0]!.skillId });
+    const combined = await catalog.list();
+    expect(combined.skills).toHaveLength(1);
+    expect(combined.skills[0]).toMatchObject({
+      skillId: pinned.skillId,
+      fingerprint: pinned.fingerprint,
+      availability: "live+pinned",
+      pinned: true
+    });
+
+    manager.setFile(SOURCE_A, "portable/references/guide.md", bytes("new guide\n"));
+    const changed = await catalog.list();
+    const versions = changed.skills.filter((skill) => skill.skillId === pinned.skillId);
+    expect(versions).toHaveLength(2);
+    expect(versions.find((skill) => skill.fingerprint === pinned.fingerprint)).toMatchObject({
+      availability: "pinned",
+      pinned: true
+    });
+    expect(versions.find((skill) => skill.fingerprint !== pinned.fingerprint)).toMatchObject({
+      availability: "live",
+      pinned: false
+    });
+
+    manager.unavailableSourceIds.add(SOURCE_A);
+    const offline = await catalog.list();
+    expect(offline.truncated).toBe(true);
+    expect(offline.truncationReasons).toContain("SOURCE_UNAVAILABLE");
+    expect(offline.skills).toEqual([
+      expect.objectContaining({
+        skillId: pinned.skillId,
+        fingerprint: pinned.fingerprint,
+        availability: "pinned",
+        pinned: true
+      })
+    ]);
+    const loaded = await catalog.loadRaw({
+      skillId: pinned.skillId,
+      fingerprint: pinned.fingerprint,
+      resources: ["references/guide.md"]
+    });
+    expect(loaded.availability).toBe("pinned");
+    expect(Buffer.from(loaded.resources[0]!.bytes).toString("utf8")).toBe("old guide\n");
+    expect(JSON.stringify({ offline, loaded: { ...loaded, skillDocument: undefined, resources: [] } })).not.toContain(
+      "/private/"
+    );
   });
 });
