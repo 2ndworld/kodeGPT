@@ -17,6 +17,12 @@ import {
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
+  SKILL_TOOL_LIST_MAX,
+  SKILL_TOOL_LOAD_MAX_BYTES,
+  SKILL_TOOL_LOAD_RESOURCE_MAX
+} from "@kodegpt/skills/contracts";
+import { SkillError } from "@kodegpt/skills/errors";
+import {
   ConsoleStateStore,
   DEV_CONSOLE_RESOURCE_URI
 } from "@kodegpt/dev-console";
@@ -54,6 +60,9 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "process.status", required: ["workspaceId", "operationId"] },
   { name: "profile.current", required: ["workspaceId"] },
   { name: "profile.inspect", required: ["name"] },
+  { name: "skill.list", required: [] },
+  { name: "skill.inspect", required: ["skillId"] },
+  { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
@@ -473,6 +482,51 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "skill.list",
+    {
+      description: "List bounded live and pinned skill metadata without exposing host source paths.",
+      inputSchema: {
+        limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
+        sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
+        pinned: z.boolean().optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ limit, sourceId, pinned }) =>
+      skillToolResult(() => context.skill.list({ limit, sourceId, pinned }))
+  );
+
+  server.registerTool(
+    "skill.inspect",
+    {
+      description: "Inspect bounded skill metadata, compatibility, and resource inventory without resource bodies.",
+      inputSchema: {
+        skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ skillId, fingerprint }) =>
+      skillToolResult(() => context.skill.inspect({ skillId, fingerprint }))
+  );
+
+  server.registerTool(
+    "skill.load",
+    {
+      description: "Load a bounded skill instruction body and explicitly requested UTF-8 resources.",
+      inputSchema: {
+        skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        resources: z.array(z.string().min(1)).max(SKILL_TOOL_LOAD_RESOURCE_MAX).optional(),
+        maxBytes: z.number().int().positive().max(SKILL_TOOL_LOAD_MAX_BYTES).safe().optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ skillId, fingerprint, resources, maxBytes }) =>
+      skillToolResult(() => context.skill.load({ skillId, fingerprint, resources, maxBytes }))
+  );
+
+  server.registerTool(
     "system.capabilities",
     {
       description: "Report KodeGPT capability availability without mutating host state.",
@@ -491,6 +545,17 @@ export function registerKodegptTools(
     },
     async () => structuredToolResult(await context.system.health())
   );
+}
+
+async function skillToolResult<T>(operation: () => Promise<T>) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    if (error instanceof SkillError) {
+      throw new Error(`${error.code}: Skill request failed`);
+    }
+    throw new Error("SKILL_SOURCE_UNAVAILABLE: Skill request failed");
+  }
 }
 
 async function nativeCapabilityResult<T>(operation: () => Promise<T>) {

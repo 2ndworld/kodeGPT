@@ -233,6 +233,11 @@ function makeContext(): KodegptToolContext {
     },
     context: {
       build: async () => typedContextBuildResult
+    },
+    skill: {
+      list: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
+      inspect: async () => ({} as never),
+      load: async () => ({} as never)
     }
   };
 }

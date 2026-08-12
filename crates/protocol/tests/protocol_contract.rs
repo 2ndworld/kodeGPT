@@ -82,6 +82,12 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "process.status.json",
         "process.cancel.json",
         "artifact.read.json",
+        "skill_source.inspect_root.json",
+        "skill_source.register.json",
+        "skill_source.tree.json",
+        "skill_source.read.json",
+        "skill_source.read_base64.json",
+        "skill_source.unregister.json",
     ] {
         let value = fixture(name);
         serde_json::from_value::<RuntimeRequest>(value)
@@ -96,6 +102,16 @@ fn security_sensitive_params_reject_unknown_fields() {
 
     let error =
         serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn skill_source_params_reject_unknown_fields() {
+    let mut value = fixture("skill_source.register.json");
+    value["params"]["allowWrite"] = json!(true);
+
+    let error = serde_json::from_value::<RuntimeRequest>(value)
+        .expect_err("skill source privilege field rejected");
     assert!(error.to_string().contains("unknown field"));
 }
 

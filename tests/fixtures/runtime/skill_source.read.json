@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_skill_source_read",
+  "method": "skill_source.read",
+  "params": {
+    "sourceCapabilityId": "sc_fixture_1",
+    "path": "systematic-debugging/SKILL.md",
+    "offset": 0,
+    "maxBytes": 262144
+  }
+}

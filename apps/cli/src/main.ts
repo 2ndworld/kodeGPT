@@ -3,11 +3,19 @@ import { join } from "node:path";
 
 import { ConnectorCredentialStore } from "@kodegpt/auth";
 import { KernelClient } from "@kodegpt/core";
+import {
+  createSkillSourceRuntimeAdapter,
+  SkillCatalog,
+  SkillPinStore,
+  SkillSourceManager,
+  SkillSourceStore
+} from "@kodegpt/skills";
 import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
 import { runBridgeCommand } from "./commands/bridge.js";
 import { formatExposeZrokStatus, runExposeZrokCommand } from "./commands/expose-zrok.js";
+import { runSkillCommand, type SkillCommandDependencies } from "./commands/skill.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
 import { resolveRuntimePath, RUNTIME_PACKAGE_LINUX_X64 } from "./runtime-resolver.js";
@@ -23,6 +31,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "workspace":
       await workspace(rest);
+      return;
+    case "skill":
+      await skill(rest);
       return;
     case "start":
       await start(rest);
@@ -80,6 +91,47 @@ async function workspace(args: string[]): Promise<void> {
   };
   const output = await runWorkspaceCommand(remaining, { store, inspectRoot });
   process.stdout.write(`${output}\n`);
+}
+
+async function skill(args: string[]): Promise<void> {
+  const { stateRoot, remaining } = extractStateRoot(args);
+  const sourceStore = new SkillSourceStore(stateRoot);
+  const pinStore = new SkillPinStore(stateRoot);
+  const dependencies: SkillCommandDependencies = {
+    sourceStore,
+    pinStore,
+    sourceManager: {
+      addSource: (path, label) =>
+        withSkillRuntime(stateRoot, sourceStore, (manager) => manager.addSource(path, label))
+    },
+    catalog: {
+      pin: (input) =>
+        withSkillRuntime(stateRoot, sourceStore, (manager) =>
+          new SkillCatalog(manager, { pins: pinStore }).pin(input)
+        )
+    }
+  };
+  const output = await runSkillCommand(remaining, dependencies);
+  process.stdout.write(`${output}\n`);
+}
+
+async function withSkillRuntime<T>(
+  stateRoot: string,
+  sourceStore: SkillSourceStore,
+  operation: (manager: SkillSourceManager) => Promise<T>
+): Promise<T> {
+  const runtimePath = await resolveRuntimePath();
+  const client = await KernelClient.start({ runtimePath, stateRoot });
+  const manager = new SkillSourceManager(sourceStore, createSkillSourceRuntimeAdapter(client));
+  try {
+    return await operation(manager);
+  } finally {
+    try {
+      await manager.close();
+    } finally {
+      await client.stop();
+    }
+  }
 }
 
 async function start(args: string[]): Promise<void> {
@@ -180,6 +232,11 @@ function helpText(): string {
     "  kodegpt workspace trust <path> [--ceiling observe|develop|trusted] [--state-root <path>]",
     "  kodegpt workspace untrust <trust-id> [--state-root <path>]",
     "  kodegpt workspace list [--state-root <path>]",
+    "  kodegpt skill source list [--state-root <path>]",
+    "  kodegpt skill source add <absolute-path> [--kind agent-skills] [--state-root <path>]",
+    "  kodegpt skill source remove <source-id> [--state-root <path>]",
+    "  kodegpt skill pin <skill-id> [--fingerprint <sha256>] [--state-root <path>]",
+    "  kodegpt skill unpin <skill-id> [--fingerprint <sha256>] [--state-root <path>]",
     "  kodegpt start [--state-root <path>] [--port <port>] [--public-url <https-url>]",
     "  kodegpt bridge [--state-root <path>]",
     "  kodegpt expose zrok --name <namespace:name> [--port <port>] [--state-root <path>]",

@@ -10,8 +10,10 @@ import {
   KernelClient,
   RuntimeUnavailableError
 } from "../../packages/core/src/kernel-client.js";
+import { READ_ONLY_TOOL_ANNOTATIONS } from "../../packages/mcp-server/src/annotations.js";
 import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
 import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/surface-version.js";
+import { registerKodegptTools } from "../../packages/mcp-server/src/tools.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const TARGET = join(REPOSITORY_ROOT, "target", "task22-security");
@@ -127,7 +129,10 @@ describe("full security acceptance invariants", () => {
       "verify.list",
       "verify.run",
       "file.patch",
-      "context.build"
+      "context.build",
+      "skill.list",
+      "skill.inspect",
+      "skill.load"
     ]) {
       expect(names).toContain(required);
     }
@@ -136,9 +141,27 @@ describe("full security acceptance invariants", () => {
       "shell.run",
       "codex.run",
       "codex.exec",
-      "skill.run"
+      "skill.run",
+      "skill.pin",
+      "skill.unpin",
+      "skill.source.add",
+      "skill.source.remove"
     ]) {
       expect(names).not.toContain(forbidden);
+    }
+
+    const registrations = new Map<string, { annotations?: unknown }>();
+    registerKodegptTools(
+      {
+        registerTool(name: string, config: { annotations?: unknown }) {
+          registrations.set(name, config);
+        },
+        registerResource() {}
+      } as never,
+      {} as never
+    );
+    for (const name of ["skill.list", "skill.inspect", "skill.load"]) {
+      expect(registrations.get(name)?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
     }
   });
 });

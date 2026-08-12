@@ -1,0 +1,30 @@
+export const SKILL_ERROR_CODES = [
+  "SKILL_SOURCE_NOT_FOUND",
+  "SKILL_SOURCE_INVALID",
+  "SKILL_SOURCE_STATE_OVERLAP",
+  "SKILL_SOURCE_IDENTITY_CHANGED",
+  "SKILL_SOURCE_UNAVAILABLE",
+  "SKILL_SOURCE_BOUNDARY_VIOLATION",
+  "SKILL_SOURCE_LIMIT_EXCEEDED",
+  "SKILL_REGISTRY_INVALID",
+  "SKILL_REGISTRY_SCHEMA_UNSUPPORTED",
+  "SKILL_NOT_FOUND",
+  "SKILL_BUNDLE_INVALID",
+  "SKILL_FINGERPRINT_MISMATCH",
+  "SKILL_RESOURCE_UNSUPPORTED",
+  "SKILL_LOAD_LIMIT_EXCEEDED",
+  "SKILL_PIN_INVALID",
+  "SKILL_PIN_SCHEMA_UNSUPPORTED"
+] as const;
+
+export type SkillErrorCode = (typeof SKILL_ERROR_CODES)[number];
+
+export class SkillError extends Error {
+  readonly code: SkillErrorCode;
+
+  constructor(code: SkillErrorCode, message: string) {
+    super(message);
+    this.name = "SkillError";
+    this.code = code;
+  }
+}

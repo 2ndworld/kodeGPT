@@ -101,6 +101,21 @@ describe("bridge command unit tests", () => {
           kernelStopped = true;
         }
       }),
+      prepareSkillCatalog: async () => ({
+        list: async () => ({
+          schemaVersion: 1 as const,
+          skills: [],
+          truncated: false,
+          truncationReasons: []
+        }),
+        inspect: async () => {
+          throw new Error("not used");
+        },
+        load: async () => {
+          throw new Error("not used");
+        },
+        close: async () => undefined
+      }),
       createTrustProfile: () => ({
         trust: {},
         inspectProfile: () => ({ name: "observe" })

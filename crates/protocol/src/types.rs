@@ -245,6 +245,50 @@ pub struct ArtifactReadParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSourceInspectRootParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SkillSourceRegisterParams {
+    pub root_path: String,
+    pub expected_identity: PersistentFilesystemIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SkillSourceTreeParams {
+    pub source_capability_id: String,
+    pub path: String,
+    pub max_entries: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillSourceReadEncoding {
+    Base64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SkillSourceReadParams {
+    pub source_capability_id: String,
+    pub path: String,
+    pub offset: u64,
+    pub max_bytes: u64,
+    #[serde(default)]
+    pub encoding: Option<SkillSourceReadEncoding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SkillSourceCapabilityParams {
+    pub source_capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "method", deny_unknown_fields)]
 pub enum RuntimeRequest {
     #[serde(rename = "runtime.hello")]
@@ -402,6 +446,36 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: ArtifactReadParams,
+    },
+    #[serde(rename = "skill_source.inspect_root")]
+    SkillSourceInspectRoot {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: SkillSourceInspectRootParams,
+    },
+    #[serde(rename = "skill_source.register")]
+    SkillSourceRegister {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: SkillSourceRegisterParams,
+    },
+    #[serde(rename = "skill_source.tree")]
+    SkillSourceTree {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: SkillSourceTreeParams,
+    },
+    #[serde(rename = "skill_source.read")]
+    SkillSourceRead {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: SkillSourceReadParams,
+    },
+    #[serde(rename = "skill_source.unregister")]
+    SkillSourceUnregister {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: SkillSourceCapabilityParams,
     },
 }
 

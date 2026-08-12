@@ -15,6 +15,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
+  "dependencies": {
+    "yaml": "2.9.0"
+  },
   "optionalDependencies": {
     "@kodegpt/runtime-linux-x64": "workspace:*"
   },
@@ -27,6 +30,7 @@
     "@kodegpt/extensions": "workspace:*",
     "@kodegpt/mcp-server": "workspace:*",
     "@kodegpt/profiles": "workspace:*",
+    "@kodegpt/skills": "workspace:*",
     "@kodegpt/trust": "workspace:*",
     "esbuild": "0.28.1"
   }

@@ -582,6 +582,103 @@
           }
         }
       }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "skill_source.inspect_root" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "skill_source.register" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rootPath", "expectedIdentity"],
+          "properties": {
+            "rootPath": { "type": "string", "minLength": 1 },
+            "expectedIdentity": { "$ref": "#/$defs/persistentFilesystemIdentity" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "skill_source.tree" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourceCapabilityId", "path", "maxEntries"],
+          "properties": {
+            "sourceCapabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string" },
+            "maxEntries": { "type": "integer", "minimum": 1, "maximum": 20000 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "skill_source.read" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourceCapabilityId", "path", "offset", "maxBytes"],
+          "properties": {
+            "sourceCapabilityId": { "type": "string", "minLength": 1 },
+            "path": { "type": "string" },
+            "offset": { "type": "integer", "minimum": 0 },
+            "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+            "encoding": { "const": "base64" }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "skill_source.unregister" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourceCapabilityId"],
+          "properties": {
+            "sourceCapabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
     }
   ]
 }

@@ -2,18 +2,22 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
-    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy, VerifyRunParams,
+    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
+    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
+    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
-    FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, TREE_MAX_ENTRIES, WorkspaceRegistry,
-    WorkspaceRegistryError, inspect_root, probe_filesystem_boundary,
+    FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, SKILL_SOURCE_TREE_MAX_ENTRIES,
+    SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, WorkspaceRegistry,
+    WorkspaceRegistryError, inspect_root, inspect_skill_source_root, probe_filesystem_boundary,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -32,7 +36,7 @@ use crate::process::{
     ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
     run_process,
 };
-use crate::rpc::{error_response, parse_request, success_response};
+use crate::rpc::{error_response, error_response_with_data_code, parse_request, success_response};
 use crate::spool::{RawSpoolError, RawSpoolStore};
 
 #[cfg(feature = "runtime-test-methods")]
@@ -94,6 +98,7 @@ async fn run_dispatcher_with_boundary_status(
 ) {
     let mut tasks = JoinSet::new();
     let workspace_registry = Arc::new(Mutex::new(WorkspaceRegistry::<RuntimePolicy>::new()));
+    let skill_source_registry = Arc::new(Mutex::new(SkillSourceRegistry::new()));
     let execution_registry = Arc::new(Mutex::new(ExecutionRegistry::default()));
     let process_operations = Arc::new(ProcessOperationRegistry::default());
     let raw_spool = RawSpoolStore::open(audit.state_root(), Arc::clone(&audit))
@@ -104,6 +109,7 @@ async fn run_dispatcher_with_boundary_status(
         let response_tx = responses.clone();
         let audit = Arc::clone(&audit);
         let workspace_registry = Arc::clone(&workspace_registry);
+        let skill_source_registry = Arc::clone(&skill_source_registry);
         let execution_registry = Arc::clone(&execution_registry);
         let process_operations = Arc::clone(&process_operations);
         let raw_spool = raw_spool.as_ref().map(Arc::clone);
@@ -113,6 +119,7 @@ async fn run_dispatcher_with_boundary_status(
                 test_methods_enabled,
                 audit,
                 workspace_registry,
+                skill_source_registry,
                 execution_registry,
                 process_operations,
                 raw_spool,
@@ -131,6 +138,7 @@ async fn dispatch_one(
     test_methods_enabled: bool,
     audit: Arc<AuditSink>,
     workspace_registry: Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    skill_source_registry: Arc<Mutex<SkillSourceRegistry>>,
     execution_registry: Arc<Mutex<ExecutionRegistry>>,
     process_operations: Arc<ProcessOperationRegistry>,
     raw_spool: Option<Arc<RawSpoolStore>>,
@@ -235,6 +243,180 @@ async fn dispatch_one(
                     "canonicalRoot": inspected.canonical_root.to_string_lossy(),
                     "identity": inspected.identity
                 }),
+            )
+        }
+        "skill_source.inspect_root" => {
+            let params =
+                match serde_json::from_value::<SkillSourceInspectRootParams>(request.params) {
+                    Ok(params) => params,
+                    Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                };
+            let operation_suffix = request.id.strip_prefix("req_").unwrap_or("redacted");
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: format!("op_{operation_suffix}"),
+                capability_id: None,
+                action: AuditAction::SkillSourceInspectRoot,
+            };
+            if audit
+                .decision(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                )
+                .is_err()
+            {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            if !filesystem_boundary_available {
+                return audited_skill_source_failure(
+                    &audit,
+                    &audit_context,
+                    request.id,
+                    -32106,
+                    "SKILL_SOURCE_UNAVAILABLE",
+                );
+            }
+
+            let inspected =
+                match inspect_skill_source_root(&PathBuf::from(params.path), audit.state_root()) {
+                    Ok(inspected) => inspected,
+                    Err(error) => {
+                        let (code, message) = skill_source_registry_error_contract(&error);
+                        return audited_skill_source_failure(
+                            &audit,
+                            &audit_context,
+                            request.id,
+                            code,
+                            message,
+                        );
+                    }
+                };
+            if audit
+                .outcome(&audit_context, AuditOutcome::Success)
+                .is_err()
+            {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(
+                request.id,
+                json!({
+                    "canonicalRoot": inspected.canonical_root.to_string_lossy(),
+                    "identity": inspected.identity
+                }),
+            )
+        }
+        "skill_source.register" => {
+            let params = match serde_json::from_value::<SkillSourceRegisterParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let root_path = PathBuf::from(params.root_path);
+            let state_root = audit.state_root().to_path_buf();
+            let expected_identity = filesystem_identity_from_protocol(params.expected_identity);
+            audited_skill_source_operation(
+                &audit,
+                &skill_source_registry,
+                request.id,
+                None,
+                AuditAction::SkillSourceRegister,
+                move |registry| {
+                    if !filesystem_boundary_available {
+                        return Err(SkillSourceRegistryError::FilesystemBoundaryUnavailable);
+                    }
+                    inspect_skill_source_root(&root_path, &state_root)?;
+                    let registration = registry.register(&root_path, &expected_identity)?;
+                    Ok(json!({ "sourceCapabilityId": registration.capability_id }))
+                },
+            )
+        }
+        "skill_source.tree" => {
+            let params = match serde_json::from_value::<SkillSourceTreeParams>(request.params) {
+                Ok(params)
+                    if params.max_entries > 0
+                        && params.max_entries <= SKILL_SOURCE_TREE_MAX_ENTRIES =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.source_capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            audited_skill_source_operation(
+                &audit,
+                &skill_source_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::SkillSourceTree,
+                move |registry| {
+                    let result = registry.tree(&capability_id, &path, params.max_entries)?;
+                    Ok(json!(result))
+                },
+            )
+        }
+        "skill_source.read" => {
+            let params = match serde_json::from_value::<SkillSourceReadParams>(request.params) {
+                Ok(params) if params.max_bytes > 0 && params.max_bytes <= 1024 * 1024 => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let capability_id = params.source_capability_id;
+            let audit_capability_id = capability_id.clone();
+            let path = PathBuf::from(params.path);
+            audited_skill_source_operation(
+                &audit,
+                &skill_source_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::SkillSourceRead,
+                move |registry| match params.encoding {
+                    Some(SkillSourceReadEncoding::Base64) => {
+                        let result = registry.read_bytes(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!({
+                            "contentBase64": BASE64_STANDARD.encode(result.bytes),
+                            "bytesRead": result.bytes_read,
+                            "eof": result.eof
+                        }))
+                    }
+                    None => {
+                        let result = registry.read_file(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!(result))
+                    }
+                },
+            )
+        }
+        "skill_source.unregister" => {
+            let params = match serde_json::from_value::<SkillSourceCapabilityParams>(request.params)
+            {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let capability_id = params.source_capability_id;
+            let audit_capability_id = capability_id.clone();
+            audited_skill_source_operation(
+                &audit,
+                &skill_source_registry,
+                request.id,
+                Some(audit_capability_id),
+                AuditAction::SkillSourceUnregister,
+                move |registry| {
+                    registry.unregister(&capability_id)?;
+                    Ok(json!({ "ok": true }))
+                },
             )
         }
         "workspace.register" => {
@@ -955,6 +1137,63 @@ where
     }
 }
 
+fn audited_skill_source_operation<F>(
+    audit: &AuditSink,
+    registry: &Arc<Mutex<SkillSourceRegistry>>,
+    request_id: String,
+    capability_id: Option<String>,
+    action: AuditAction,
+    operation: F,
+) -> Value
+where
+    F: FnOnce(&mut SkillSourceRegistry) -> Result<Value, SkillSourceRegistryError>,
+{
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: format!("op_{operation_suffix}"),
+        capability_id,
+        action,
+    };
+
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let result = match registry.lock() {
+        Ok(mut registry) => operation(&mut registry),
+        Err(_) => {
+            return audited_skill_source_failure(
+                audit,
+                &context,
+                request_id,
+                -32109,
+                "SKILL_SOURCE_UNAVAILABLE",
+            );
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, result)
+        }
+        Err(error) => {
+            let (code, message) = skill_source_registry_error_contract(&error);
+            audited_skill_source_failure(audit, &context, request_id, code, message)
+        }
+    }
+}
+
 async fn dispatch_git_operation(
     audit: &Arc<AuditSink>,
     registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
@@ -1627,6 +1866,24 @@ fn valid_sha256_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn skill_source_registry_error_contract(error: &SkillSourceRegistryError) -> (i64, &'static str) {
+    match error {
+        SkillSourceRegistryError::RootInvalid | SkillSourceRegistryError::RootOverlap => {
+            (-32100, "SKILL_SOURCE_INVALID")
+        }
+        SkillSourceRegistryError::IdentityChanged => (-32101, "SKILL_SOURCE_IDENTITY_CHANGED"),
+        SkillSourceRegistryError::StateOverlap => (-32102, "SKILL_SOURCE_STATE_OVERLAP"),
+        SkillSourceRegistryError::AccessDenied => (-32103, "SKILL_SOURCE_BOUNDARY_VIOLATION"),
+        SkillSourceRegistryError::LimitExceeded => (-32104, "SKILL_SOURCE_LIMIT_EXCEEDED"),
+        SkillSourceRegistryError::InvalidUtf8 => (-32105, "SKILL_RESOURCE_UNSUPPORTED"),
+        SkillSourceRegistryError::MountTopologyUnavailable
+        | SkillSourceRegistryError::FilesystemBoundaryUnavailable
+        | SkillSourceRegistryError::NotFound
+        | SkillSourceRegistryError::ReadFailed
+        | SkillSourceRegistryError::CapabilityNotFound => (-32106, "SKILL_SOURCE_UNAVAILABLE"),
+    }
+}
+
 fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'static str) {
     match error {
         WorkspaceRegistryError::RootInvalid => (-32020, "WORKSPACE_ROOT_INVALID"),
@@ -1665,6 +1922,19 @@ fn audited_failure(
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     error_response(Some(request_id), code, message)
+}
+
+fn audited_skill_source_failure(
+    audit: &AuditSink,
+    context: &AuditContext,
+    request_id: String,
+    code: i64,
+    message: &str,
+) -> Value {
+    if audit.outcome(context, AuditOutcome::Failed).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    error_response_with_data_code(Some(request_id), code, message, message)
 }
 
 #[cfg(test)]
@@ -1947,7 +2217,7 @@ mod tests {
             .expect("workspace request accepted");
         tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
             .await
-            .expect("workspace response arrives")
+            .unwrap_or_else(|_| panic!("workspace response arrives for {method} ({id})"))
             .expect("workspace response channel open")
     }
 
@@ -2218,6 +2488,515 @@ mod tests {
                     "inode": "0"
                 },
                 "ceiling": observe_policy()
+            }),
+        )
+        .await;
+
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher task joins");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_inspect_root_rejects_equal_ancestor_and_descendant_state_overlap() {
+        let (audit, audit_root) = audit_sink("skill-source-inspect-overlap");
+        let descendant = audit_root.join("skills-child");
+        fs::create_dir_all(&descendant).expect("descendant fixture created");
+        let ancestor = audit_root
+            .parent()
+            .expect("temporary root has parent")
+            .to_path_buf();
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        for (id, path) in [
+            ("req_skill_source_equal", audit_root.clone()),
+            ("req_skill_source_descendant", descendant),
+            ("req_skill_source_ancestor", ancestor),
+        ] {
+            let response = next_response(
+                &request_tx,
+                &mut response_rx,
+                id,
+                "skill_source.inspect_root",
+                json!({ "path": path.to_string_lossy() }),
+            )
+            .await;
+            assert_eq!(response["error"]["message"], "SKILL_SOURCE_STATE_OVERLAP");
+        }
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_inspect_root_returns_identity_and_is_audited_without_capability() {
+        let (audit, audit_root) = audit_sink("skill-source-inspect-success");
+        let source = audit_root.with_extension("skill-source-inspect-success-source");
+        fs::create_dir_all(&source).expect("source created");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_inspect_success",
+            "skill_source.inspect_root",
+            json!({ "path": source.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(
+            response["result"]["canonicalRoot"],
+            source.to_string_lossy().as_ref()
+        );
+        assert!(response["result"]["identity"]["inode"].as_str().is_some());
+        assert!(response["result"].get("sourceCapabilityId").is_none());
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("skill_source_inspect_root"));
+        assert!(!audit_text.contains(source.to_string_lossy().as_ref()));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_inspect_root_fails_when_filesystem_boundary_is_unavailable() {
+        let (audit, audit_root) = audit_sink("skill-source-boundary-unavailable");
+        let source = audit_root.with_extension("skill-source-boundary-source");
+        fs::create_dir_all(&source).expect("source created");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher_with_boundary_status(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+            false,
+        ));
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_boundary_unavailable",
+            "skill_source.inspect_root",
+            json!({ "path": source.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(response["error"]["message"], "SKILL_SOURCE_UNAVAILABLE");
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_register_tree_read_and_unregister_use_private_retained_capability() {
+        let (audit, audit_root) = audit_sink("skill-source-lifecycle");
+        let source = audit_root.with_extension("skill-source");
+        fs::create_dir_all(&source).expect("source created");
+        fs::write(source.join("SKILL.md"), "source instructions").expect("source written");
+        let identity = kodegpt_workspace_io::inspect_root(&source)
+            .expect("source inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registration = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_register",
+            "skill_source.register",
+            json!({
+                "rootPath": source.to_string_lossy(),
+                "expectedIdentity": identity
+            }),
+        )
+        .await;
+        let capability_id = registration["result"]["sourceCapabilityId"]
+            .as_str()
+            .expect("private source capability returned")
+            .to_owned();
+        assert!(capability_id.starts_with("sc_"));
+        assert!(registration["result"].get("canonicalRoot").is_none());
+        assert!(
+            !registration
+                .to_string()
+                .contains(source.to_string_lossy().as_ref())
+        );
+
+        let tree = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_tree",
+            "skill_source.tree",
+            json!({
+                "sourceCapabilityId": capability_id,
+                "path": ".",
+                "maxEntries": 20_000
+            }),
+        )
+        .await;
+        assert_eq!(tree["result"]["entries"][0]["path"], "SKILL.md");
+        assert_eq!(tree["result"]["entries"][0]["sizeBytes"], 19);
+
+        let read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_read",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": capability_id,
+                "path": "SKILL.md",
+                "offset": 0,
+                "maxBytes": 256
+            }),
+        )
+        .await;
+        assert_eq!(read["result"]["contents"], "source instructions");
+
+        let unregistered = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_unregister",
+            "skill_source.unregister",
+            json!({ "sourceCapabilityId": capability_id }),
+        )
+        .await;
+        assert_eq!(unregistered["result"]["ok"], true);
+
+        let after = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_after_unregister",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": capability_id,
+                "path": "SKILL.md",
+                "offset": 0,
+                "maxBytes": 256
+            }),
+        )
+        .await;
+        assert_eq!(after["error"]["message"], "SKILL_SOURCE_UNAVAILABLE");
+        assert_eq!(after["error"]["data"]["code"], "SKILL_SOURCE_UNAVAILABLE");
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        for action in [
+            "skill_source_register",
+            "skill_source_tree",
+            "skill_source_read",
+            "skill_source_unregister",
+        ] {
+            assert!(audit_text.contains(action), "missing audit action {action}");
+        }
+        assert!(audit_text.contains(&capability_id));
+        assert!(!audit_text.contains("source instructions"));
+        assert!(!audit_text.contains(source.to_string_lossy().as_ref()));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn workspace_and_skill_source_capability_ids_are_not_interchangeable() {
+        let (audit, audit_root) = audit_sink("skill-source-id-isolation");
+        let workspace = audit_root.with_extension("id-workspace");
+        let source = audit_root.with_extension("id-source");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        fs::create_dir_all(&source).expect("source created");
+        fs::write(workspace.join("workspace.txt"), "workspace").expect("workspace file written");
+        fs::write(source.join("SKILL.md"), "source").expect("source file written");
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let workspace_capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            observe_policy(),
+            "skill_source_id_isolation",
+        )
+        .await;
+        let source_identity = kodegpt_workspace_io::inspect_root(&source)
+            .expect("source inspected")
+            .identity;
+        let source_registration = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_id_register",
+            "skill_source.register",
+            json!({
+                "rootPath": source.to_string_lossy(),
+                "expectedIdentity": source_identity
+            }),
+        )
+        .await;
+        let source_capability_id = source_registration["result"]["sourceCapabilityId"]
+            .as_str()
+            .expect("source capability returned")
+            .to_owned();
+
+        let workspace_read_with_source_id = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_read_with_source_id",
+            "file.read",
+            json!({
+                "capabilityId": source_capability_id,
+                "path": "SKILL.md",
+                "offset": 0,
+                "maxBytes": 64
+            }),
+        )
+        .await;
+        assert_eq!(
+            workspace_read_with_source_id["error"]["message"],
+            "WORKSPACE_CAPABILITY_NOT_FOUND"
+        );
+
+        let workspace_write_with_source_id = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_workspace_write_with_source_id",
+            "file.write",
+            json!({
+                "capabilityId": source_capability_id,
+                "path": "forbidden.txt",
+                "content": "must not write"
+            }),
+        )
+        .await;
+        assert_eq!(
+            workspace_write_with_source_id["error"]["message"],
+            "WORKSPACE_CAPABILITY_NOT_FOUND"
+        );
+        assert!(!source.join("forbidden.txt").exists());
+
+        let process_with_source_id = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_process_with_source_id",
+            "process.run",
+            json!({
+                "capabilityId": source_capability_id,
+                "logicalExecutable": "node",
+                "argv": ["--version"],
+                "cwd": ".",
+                "env": {},
+                "background": false
+            }),
+        )
+        .await;
+        assert_eq!(
+            process_with_source_id["error"]["message"],
+            "WORKSPACE_CAPABILITY_NOT_FOUND"
+        );
+
+        let source_read_with_workspace_id = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_source_read_with_workspace_id",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": workspace_capability_id,
+                "path": "workspace.txt",
+                "offset": 0,
+                "maxBytes": 64
+            }),
+        )
+        .await;
+        assert_eq!(
+            source_read_with_workspace_id["error"]["message"],
+            "SKILL_SOURCE_UNAVAILABLE"
+        );
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_base64_read_preserves_binary_bytes_without_content_in_audit() {
+        let (audit, audit_root) = audit_sink("skill-source-base64-read");
+        let source = audit_root.with_extension("skill-source-base64-source");
+        fs::create_dir_all(source.join("assets")).expect("source assets created");
+        fs::write(source.join("assets/binary.bin"), [0_u8, 255, 1, 128])
+            .expect("binary source written");
+        let identity = kodegpt_workspace_io::inspect_root(&source)
+            .expect("source inspected")
+            .identity;
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let registration = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_base64_register",
+            "skill_source.register",
+            json!({
+                "rootPath": source.to_string_lossy(),
+                "expectedIdentity": identity
+            }),
+        )
+        .await;
+        let source_capability_id = registration["result"]["sourceCapabilityId"]
+            .as_str()
+            .expect("source capability returned")
+            .to_owned();
+
+        let read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_base64_read",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": source_capability_id,
+                "path": "assets/binary.bin",
+                "offset": 0,
+                "maxBytes": 64,
+                "encoding": "base64"
+            }),
+        )
+        .await;
+        assert_eq!(read["result"]["contentBase64"], "AP8BgA==");
+        assert_eq!(read["result"]["bytesRead"], 4);
+        assert_eq!(read["result"]["eof"], true);
+        assert!(read["result"].get("contents").is_none());
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(!audit_text.contains("AP8BgA=="));
+        assert!(!audit_text.contains("binary.bin"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(source).expect("source removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_runtime_rejects_tree_and_read_limits_above_hard_caps() {
+        let (audit, audit_root) = audit_sink("skill-source-hard-caps");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let tree = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_tree_over_limit",
+            "skill_source.tree",
+            json!({
+                "sourceCapabilityId": "sc_fake",
+                "path": ".",
+                "maxEntries": 20_001
+            }),
+        )
+        .await;
+        assert_eq!(tree["error"]["message"], "INVALID_PARAMS");
+
+        let read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_read_over_limit",
+            "skill_source.read",
+            json!({
+                "sourceCapabilityId": "sc_fake",
+                "path": "SKILL.md",
+                "offset": 0,
+                "maxBytes": 1024 * 1024 + 1
+            }),
+        )
+        .await;
+        assert_eq!(read["error"]["message"], "INVALID_PARAMS");
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_source_registration_stops_before_root_inspection_when_audit_decision_fails() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-skill-source-audit-order-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let missing_source = audit_root.with_extension("missing-skill-source");
+        let _ = fs::remove_dir_all(&missing_source);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_skill_source_audit_order",
+            "skill_source.register",
+            json!({
+                "rootPath": missing_source.to_string_lossy(),
+                "expectedIdentity": {
+                    "deviceMajor": 0,
+                    "deviceMinor": 0,
+                    "inode": "0"
+                }
             }),
         )
         .await;

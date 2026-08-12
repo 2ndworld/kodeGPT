@@ -1,5 +1,7 @@
 # KodeGPT Hybrid Skill Interoperability Implementation Plan
 
+> **Execution note (2026-08-12):** This document is preserved as the original Phase 2 plan. Execute `docs/superpowers/plans/2026-08-12-kodegpt-hybrid-skill-interoperability-reconciled.md` instead; the reconciled plan updates stale source paths, bounds, typed runtime-adapter design, final Phase 1 capability vocabulary, and moves production wiring/E2E before MCP advertisement.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let GPT Web discover, inspect, and load portable Agent Skills/Codex skill assets without executing Codex, while preserving live read-only discovery and explicit reproducible pinned snapshots.

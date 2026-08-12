@@ -541,7 +541,7 @@ fn map_workspace_write_error(error: WorkspaceWriteError) -> WorkspaceRegistryErr
     }
 }
 
-fn roots_overlap(
+pub(crate) fn roots_overlap(
     existing_visible: &Path,
     existing_backing: &BackingTreeIdentity,
     existing_identity: &FilesystemIdentity,

@@ -37,7 +37,13 @@ const FIXTURE_NAMES = [
   "verify.run.json",
   "process.status.json",
   "process.cancel.json",
-  "artifact.read.json"
+  "artifact.read.json",
+  "skill_source.inspect_root.json",
+  "skill_source.register.json",
+  "skill_source.tree.json",
+  "skill_source.read.json",
+  "skill_source.read_base64.json",
+  "skill_source.unregister.json"
 ] as const;
 
 const EXPECTED_METHODS = [
@@ -66,7 +72,12 @@ const EXPECTED_METHODS = [
   "verify.run",
   "process.status",
   "process.cancel",
-  "artifact.read"
+  "artifact.read",
+  "skill_source.inspect_root",
+  "skill_source.register",
+  "skill_source.tree",
+  "skill_source.read",
+  "skill_source.unregister"
 ] as const;
 
 async function fixture(name: (typeof FIXTURE_NAMES)[number]): Promise<unknown> {

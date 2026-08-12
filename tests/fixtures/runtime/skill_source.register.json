@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_skill_source_register",
+  "method": "skill_source.register",
+  "params": {
+    "rootPath": "/tmp/kodegpt-skill-source-fixture",
+    "expectedIdentity": {
+      "deviceMajor": 8,
+      "deviceMinor": 1,
+      "inode": "12345"
+    }
+  }
+}
