@@ -10,7 +10,8 @@ import {
   MAX_PATCH_BYTES,
   MAX_PATCH_FILES,
   MAX_PATCH_HUNKS,
-  MAX_SEARCH_MAX_RESULTS
+  MAX_SEARCH_MAX_RESULTS,
+  NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
 import { CapabilityError, toPublicCapabilityError } from "./errors.js";
 import { CapabilityNotImplementedError } from "./native-capability-service.js";
@@ -60,6 +61,22 @@ describe("capability contracts", () => {
     expect(MAX_PATCH_BYTES).toBe(1024 * 1024);
     expect(MAX_PATCH_FILES).toBe(64);
     expect(MAX_PATCH_HUNKS).toBe(256);
+    expect(NATIVE_CAPABILITY_IDS).toEqual([
+      "workspace.inspect",
+      "code.search",
+      "file.read",
+      "file.write",
+      "file.edit",
+      "file.patch",
+      "git.status",
+      "git.diff",
+      "git.changes",
+      "process.run",
+      "verify.list",
+      "verify.run",
+      "context.build"
+    ]);
+    expect(Object.isFrozen(NATIVE_CAPABILITY_IDS)).toBe(true);
   });
 
   it("validates workspace.inspect inputs and structured results at runtime", () => {

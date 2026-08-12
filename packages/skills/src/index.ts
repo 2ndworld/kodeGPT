@@ -18,6 +18,9 @@ export {
   type SkillCatalogEntry,
   type SkillCatalogListResult,
   type SkillCatalogRawLoad,
+  type SkillCompatibility,
+  type SkillCompatibilityAnalysisBasis,
+  type SkillCompatibilityReport,
   type PersistedSkillSource,
   type PersistedSkillSourceIdentity,
   type SkillBundleFingerprintRecord,
@@ -43,6 +46,7 @@ export {
   type SkillValidatedFrontmatter
 } from "./contracts.js";
 export { SkillCatalog, type SkillCatalogOptions } from "./catalog.js";
+export { analyzeSkillCompatibility } from "./compatibility.js";
 export { SKILL_ERROR_CODES, SkillError, type SkillErrorCode } from "./errors.js";
 export { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 export { parseSkillDocument } from "./parser.js";

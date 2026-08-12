@@ -8,7 +8,8 @@ export {
   MAX_PATCH_BYTES,
   MAX_PATCH_FILES,
   MAX_PATCH_HUNKS,
-  MAX_SEARCH_MAX_RESULTS
+  MAX_SEARCH_MAX_RESULTS,
+  NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
 export type {
   CapabilityArtifactMetadata,
@@ -32,6 +33,7 @@ export type {
   GitChangesSummary,
   GitPatchArtifact,
   GitPatchCoverage,
+  NativeCapabilityId,
   PatchFileAction,
   VerificationCategory,
   VerificationOperationResult,

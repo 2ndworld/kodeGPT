@@ -43,6 +43,14 @@ function pinInput(body = "instructions\n", guide = "guide\n"): SkillPinInput {
       sourceKind: "agent-skills",
       descriptorFingerprint,
       nameCollision: false,
+      compatibility: {
+        classification: "NATIVE",
+        requiredCapabilities: [],
+        missingCapabilities: [],
+        requiredProviders: [],
+        reasons: ["NATIVE_REQUIREMENTS_SATISFIED"],
+        analysisBasis: "static"
+      },
       unknownMetadataKeys: []
     },
     fingerprint,

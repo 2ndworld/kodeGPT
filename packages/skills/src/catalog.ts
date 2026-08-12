@@ -13,6 +13,7 @@ import {
   type SkillCatalogEntry,
   type SkillCatalogListResult,
   type SkillCatalogRawLoad,
+  type SkillCompatibilityReport,
   type SkillDiscoveryTruncationReason,
   type SkillLiveInspection,
   type SkillLiveListResult,
@@ -25,6 +26,7 @@ import {
   type SkillSourceTreeResult,
   type SkillValidatedFrontmatter
 } from "./contracts.js";
+import { analyzeSkillCompatibility } from "./compatibility.js";
 import { SkillError } from "./errors.js";
 import { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 import { SkillDocumentParseError, parseSkillDocument } from "./parser.js";
@@ -112,6 +114,7 @@ export class SkillCatalog {
         fingerprint,
         descriptorFingerprint: skill.descriptor.descriptorFingerprint,
         nameCollision: skill.descriptor.nameCollision,
+        compatibility: cloneCompatibilityReport(skill.descriptor.compatibility),
         availability: "live",
         pinned: false
       });
@@ -126,7 +129,8 @@ export class SkillCatalog {
           current.pinned = true;
           continue;
         }
-        entries.set(key, entryFromPinnedManifest(manifest));
+        const pinned = await this.#pins.load(manifest.skillId, manifest.fingerprint);
+        entries.set(key, entryFromPinnedLoad(pinned));
       }
     }
 
@@ -325,6 +329,7 @@ export class SkillCatalog {
             sourceKind: "agent-skills",
             descriptorFingerprint,
             nameCollision: false,
+            compatibility: analyzeSkillCompatibility(parsed),
             unknownMetadataKeys: [...parsed.unknownMetadataKeys]
           },
           sourceId: source.sourceId,
@@ -520,18 +525,31 @@ function versionKey(skillId: string, fingerprint: string): string {
   return `${skillId}\0${fingerprint}`;
 }
 
-function entryFromPinnedManifest(manifest: SkillPinnedManifest): SkillCatalogEntry {
-  const skillDocument = manifest.files.find((file) => file.path === "SKILL.md");
+function parsePinnedSkillDocument(pinned: SkillPinnedRawLoad): ParsedSkillDocument {
+  let parsed: ParsedSkillDocument;
+  try {
+    parsed = parseSkillDocument(pinned.skillDocument, pinned.manifest.name);
+  } catch {
+    throw bundleInvalid();
+  }
+  if (parsed.description !== pinned.manifest.description) throw bundleInvalid();
+  return parsed;
+}
+
+function entryFromPinnedLoad(pinned: SkillPinnedRawLoad): SkillCatalogEntry {
+  const skillDocument = pinned.manifest.files.find((file) => file.path === "SKILL.md");
   if (skillDocument === undefined) throw bundleInvalid();
+  const parsed = parsePinnedSkillDocument(pinned);
   return {
-    skillId: manifest.skillId,
-    name: manifest.name,
-    description: manifest.description,
-    sourceId: manifest.provenance.sourceId,
-    sourceKind: manifest.provenance.sourceKind,
-    fingerprint: manifest.fingerprint,
+    skillId: pinned.manifest.skillId,
+    name: pinned.manifest.name,
+    description: pinned.manifest.description,
+    sourceId: pinned.manifest.provenance.sourceId,
+    sourceKind: pinned.manifest.provenance.sourceKind,
+    fingerprint: pinned.manifest.fingerprint,
     descriptorFingerprint: skillDocument.sha256,
     nameCollision: false,
+    compatibility: analyzeSkillCompatibility(parsed),
     availability: "pinned",
     pinned: true
   };
@@ -585,6 +603,7 @@ function rawLoadFromPinned(
   const resourcesByPath = new Map(pinned.resources.map((resource) => [resource.path, resource]));
   const skillDocument = pinned.manifest.files.find((file) => file.path === "SKILL.md");
   if (skillDocument === undefined) throw bundleInvalid();
+  const parsed = parsePinnedSkillDocument(pinned);
   return {
     descriptor: {
       skillId: pinned.manifest.skillId,
@@ -594,7 +613,8 @@ function rawLoadFromPinned(
       sourceKind: pinned.manifest.provenance.sourceKind,
       descriptorFingerprint: skillDocument.sha256,
       nameCollision: false,
-      unknownMetadataKeys: []
+      compatibility: analyzeSkillCompatibility(parsed),
+      unknownMetadataKeys: [...parsed.unknownMetadataKeys]
     },
     bundleFingerprint: pinned.manifest.fingerprint,
     skillDocument: pinned.skillDocument.slice(),
@@ -665,7 +685,18 @@ function frontmatterFrom(parsed: ParsedSkillDocument): SkillValidatedFrontmatter
 function cloneDescriptor(descriptor: LiveSkillDescriptor): LiveSkillDescriptor {
   return {
     ...descriptor,
+    compatibility: cloneCompatibilityReport(descriptor.compatibility),
     unknownMetadataKeys: [...descriptor.unknownMetadataKeys]
+  };
+}
+
+function cloneCompatibilityReport(report: SkillCompatibilityReport): SkillCompatibilityReport {
+  return {
+    ...report,
+    requiredCapabilities: [...report.requiredCapabilities],
+    missingCapabilities: [...report.missingCapabilities],
+    requiredProviders: [...report.requiredProviders],
+    reasons: [...report.reasons]
   };
 }
 

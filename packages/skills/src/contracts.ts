@@ -53,6 +53,7 @@ export interface LiveSkillDescriptor {
   sourceKind: "agent-skills";
   descriptorFingerprint: string;
   nameCollision: boolean;
+  compatibility: SkillCompatibilityReport;
   unknownMetadataKeys: string[];
 }
 
@@ -147,6 +148,7 @@ export interface SkillCatalogEntry {
   fingerprint: string;
   descriptorFingerprint: string;
   nameCollision: boolean;
+  compatibility: SkillCompatibilityReport;
   availability: SkillAvailability;
   pinned: boolean;
 }
@@ -160,6 +162,18 @@ export interface SkillCatalogListResult {
 export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
   availability: SkillAvailability;
   pinned: boolean;
+}
+
+export type SkillCompatibility = "NATIVE" | "PARTIAL" | "PROVIDER_REQUIRED" | "UNSUPPORTED";
+export type SkillCompatibilityAnalysisBasis = "declared" | "static" | "declared+static";
+
+export interface SkillCompatibilityReport {
+  classification: SkillCompatibility;
+  requiredCapabilities: string[];
+  missingCapabilities: string[];
+  requiredProviders: string[];
+  reasons: string[];
+  analysisBasis: SkillCompatibilityAnalysisBasis;
 }
 
 export interface ParsedSkillDocument {

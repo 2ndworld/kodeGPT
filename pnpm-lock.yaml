@@ -138,6 +138,9 @@ importers:
 
   packages/skills:
     dependencies:
+      '@kodegpt/capabilities':
+        specifier: workspace:*
+        version: link:../capabilities
       '@kodegpt/core':
         specifier: workspace:*
         version: link:../core

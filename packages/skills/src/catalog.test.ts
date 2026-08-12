@@ -291,6 +291,11 @@ describe("SkillCatalog inspection and raw loading", () => {
 
     expect(inspection.bundleFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(inspection.bundleBytes).toBeGreaterThan(0);
+    expect(inspection.descriptor.compatibility).toMatchObject({
+      classification: "NATIVE",
+      missingCapabilities: [],
+      requiredProviders: []
+    });
     expect(inspection.frontmatter).toMatchObject({ name: "bundle", description: "bundle description" });
     expect(inspection.resources).toEqual([
       expect.objectContaining({
@@ -365,6 +370,7 @@ describe("SkillCatalog inspection and raw loading", () => {
     });
 
     expect(Buffer.from(load.skillDocument).toString("utf8")).toContain("Bundle instructions");
+    expect(load.descriptor.compatibility).toMatchObject({ classification: "NATIVE" });
     expect(load.resources.map((resource) => resource.path)).toEqual([
       "assets/binary.bin",
       "references/guide.md"
@@ -488,7 +494,8 @@ describe("SkillCatalog pinned snapshots", () => {
       skillId: pinned.skillId,
       fingerprint: pinned.fingerprint,
       availability: "live+pinned",
-      pinned: true
+      pinned: true,
+      compatibility: { classification: "NATIVE" }
     });
 
     manager.setFile(SOURCE_A, "portable/references/guide.md", bytes("new guide\n"));
@@ -522,6 +529,7 @@ describe("SkillCatalog pinned snapshots", () => {
       resources: ["references/guide.md"]
     });
     expect(loaded.availability).toBe("pinned");
+    expect(loaded.descriptor.compatibility).toMatchObject({ classification: "NATIVE" });
     expect(Buffer.from(loaded.resources[0]!.bytes).toString("utf8")).toBe("old guide\n");
     expect(JSON.stringify({ offline, loaded: { ...loaded, skillDocument: undefined, resources: [] } })).not.toContain(
       "/private/"

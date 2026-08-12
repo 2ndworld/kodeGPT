@@ -8,7 +8,23 @@ export const MAX_SEARCH_MAX_RESULTS = 500;
 export const MAX_PATCH_BYTES = 1024 * 1024;
 export const MAX_PATCH_FILES = 64;
 export const MAX_PATCH_HUNKS = 256;
+export const NATIVE_CAPABILITY_IDS = Object.freeze([
+  "workspace.inspect",
+  "code.search",
+  "file.read",
+  "file.write",
+  "file.edit",
+  "file.patch",
+  "git.status",
+  "git.diff",
+  "git.changes",
+  "process.run",
+  "verify.list",
+  "verify.run",
+  "context.build"
+] as const);
 
+export type NativeCapabilityId = (typeof NATIVE_CAPABILITY_IDS)[number];
 export type CodeSearchMode = "text" | "path" | "symbol" | "definition" | "reference";
 export type CodeSearchPrecision = "exact" | "lexical" | "heuristic";
 export type CodeSearchTruncationReason =
