@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,7 +14,8 @@ import { createSkillTestStateRoot, removeSkillTestStateRoot } from "./test-suppo
 
 const roots: string[] = [];
 const SOURCE_ID = `ss_${"a".repeat(32)}`;
-const SKILL_ID = `sk_${"b".repeat(64)}`;
+const OTHER_SOURCE_ID = `ss_${"c".repeat(32)}`;
+const SKILL_ID = `sk_${fingerprintSkillDescriptor(Buffer.from(`${SOURCE_ID}\0portable`, "utf8"))}`;
 const PINNED_AT = "2026-08-12T07:30:00.000Z";
 
 function bytes(value: string): Uint8Array {
@@ -143,6 +144,30 @@ describe("SkillPinStore", () => {
     await expect(pins.pin(input)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
   });
 
+  it("maps unreadable manifest filesystem failures to a stable path-free pin error", async () => {
+    const { stateRoot, store: pins } = await store();
+    const input = pinInput();
+    await pins.pin(input);
+    const manifestPath = join(
+      stateRoot,
+      "skills",
+      "pinned",
+      SKILL_ID,
+      input.fingerprint,
+      "manifest.json"
+    );
+    await chmod(manifestPath, 0o000);
+
+    try {
+      await expect(pins.load(SKILL_ID, input.fingerprint)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
+      await pins.load(SKILL_ID, input.fingerprint).catch((error) => {
+        expect(String(error)).not.toContain(stateRoot);
+      });
+    } finally {
+      await chmod(manifestPath, 0o600);
+    }
+  });
+
   it("loads a pinned snapshot without any live source dependency", async () => {
     const { store: pins } = await store();
     const input = pinInput();
@@ -154,6 +179,59 @@ describe("SkillPinStore", () => {
     expect(loaded.resources.map((resource) => resource.path)).toEqual(["references/guide.md"]);
     expect(Buffer.from(loaded.resources[0]!.bytes).toString("utf8")).toBe("guide\n");
     expect(loaded.manifest.fingerprint).toBe(input.fingerprint);
+  });
+
+  it("rejects snapshot topology containing unexpected files or symlinked resource directories", async () => {
+    const { stateRoot, store: pins } = await store();
+    const input = pinInput();
+    await pins.pin(input);
+    const snapshotRoot = join(stateRoot, "skills", "pinned", SKILL_ID, input.fingerprint);
+
+    await writeFile(join(snapshotRoot, "unexpected.txt"), "unexpected\n", "utf8");
+    await expect(pins.load(SKILL_ID, input.fingerprint)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
+    await rm(join(snapshotRoot, "unexpected.txt"));
+
+    const references = join(snapshotRoot, "resources", "references");
+    const outside = join(stateRoot, "outside-references");
+    await mkdir(outside, { recursive: true, mode: 0o700 });
+    await writeFile(join(outside, "guide.md"), "guide\n", { mode: 0o600 });
+    await rm(references, { recursive: true });
+    await symlink(outside, references, "dir");
+
+    await expect(pins.load(SKILL_ID, input.fingerprint)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
+  });
+
+  it("rejects non-directory entries disguised as stale temporary pin directories", async () => {
+    const { stateRoot, store: pins } = await store();
+    const input = pinInput();
+    await pins.pin(input);
+    const skillRoot = join(stateRoot, "skills", "pinned", SKILL_ID);
+    const outside = join(stateRoot, "outside-temp");
+    await mkdir(outside, { recursive: true, mode: 0o700 });
+    await symlink(outside, join(skillRoot, ".pin-hidden.tmp"), "dir");
+
+    await expect(pins.list()).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
+  });
+
+  it("rejects provenance tampering that no longer derives the persisted skill identity", async () => {
+    const { stateRoot, store: pins } = await store();
+    const input = pinInput();
+    await pins.pin(input);
+    const manifestPath = join(
+      stateRoot,
+      "skills",
+      "pinned",
+      SKILL_ID,
+      input.fingerprint,
+      "manifest.json"
+    );
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      provenance: { sourceId: string };
+    };
+    manifest.provenance.sourceId = OTHER_SOURCE_ID;
+    await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+
+    await expect(pins.load(SKILL_ID, input.fingerprint)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
   });
 
   it("keeps multiple immutable fingerprints for the same skill and unpins only the selected one", async () => {
@@ -191,6 +269,15 @@ describe("SkillPinStore", () => {
     await expect(pins.load(SKILL_ID, input.fingerprint)).rejects.toMatchObject({
       code: "SKILL_PIN_SCHEMA_UNSUPPORTED"
     });
+  });
+
+  it("rejects pin inputs whose persisted descriptor metadata violates the manifest schema", async () => {
+    const { store: pins } = await store();
+    const input = pinInput();
+    input.descriptor.description = "";
+
+    await expect(pins.pin(input)).rejects.toMatchObject({ code: "SKILL_PIN_INVALID" });
+    expect(await pins.list()).toEqual([]);
   });
 
   it("rejects pin inputs whose declared bundle fingerprint does not match the exact bytes", async () => {

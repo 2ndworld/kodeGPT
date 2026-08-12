@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import {
   chmod,
+  lstat,
   mkdir,
   open,
   readFile,
   readdir,
   rename,
-  rm,
-  stat
+  rm
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
@@ -89,15 +89,16 @@ export class SkillPinStore {
     const skillRoot = dirname(finalRoot);
     await ensurePrivateDirectory(this.#root);
     await ensurePrivateDirectory(skillRoot);
+    await syncDirectory(this.#root);
 
     const temporaryRoot = join(
       skillRoot,
       `.pin-${validated.manifest.fingerprint}.${process.pid}.${randomUUID().replaceAll("-", "")}.tmp`
     );
-    await mkdir(temporaryRoot, { mode: 0o700 });
-    await chmod(temporaryRoot, 0o700);
 
     try {
+      await mkdir(temporaryRoot, { mode: 0o700 });
+      await chmod(temporaryRoot, 0o700);
       await writePrivateFile(join(temporaryRoot, "SKILL.md"), validated.skillDocument);
       for (const resource of validated.resources) {
         const destination = join(temporaryRoot, "resources", ...resource.path.split("/"));
@@ -108,7 +109,7 @@ export class SkillPinStore {
         join(temporaryRoot, "manifest.json"),
         Buffer.from(`${JSON.stringify(validated.manifest, null, 2)}\n`, "utf8")
       );
-      await syncDirectory(temporaryRoot);
+      await syncDirectoryTree(temporaryRoot);
 
       const racedExisting = await this.#existingManifest(finalRoot);
       if (racedExisting !== undefined) {
@@ -134,7 +135,8 @@ export class SkillPinStore {
       return cloneManifest(validated.manifest);
     } catch (error) {
       await rm(temporaryRoot, { recursive: true, force: true }).catch(() => undefined);
-      throw error;
+      if (error instanceof SkillError) throw error;
+      throw pinInvalid();
     }
   }
 
@@ -144,7 +146,7 @@ export class SkillPinStore {
       skillEntries = await readdir(this.#root, { withFileTypes: true, encoding: "utf8" });
     } catch (error) {
       if (isMissingError(error)) return [];
-      throw error;
+      throw pinInvalid();
     }
 
     const manifests: SkillPinnedManifest[] = [];
@@ -153,11 +155,17 @@ export class SkillPinStore {
         throw pinInvalid();
       }
       const skillRoot = join(this.#root, skillEntry.name);
-      const fingerprintEntries = await readdir(skillRoot, { withFileTypes: true, encoding: "utf8" });
+      let fingerprintEntries: Dirent<string>[];
+      try {
+        fingerprintEntries = await readdir(skillRoot, { withFileTypes: true, encoding: "utf8" });
+      } catch {
+        throw pinInvalid();
+      }
       for (const fingerprintEntry of fingerprintEntries.sort((left, right) =>
         compareUtf8(left.name, right.name)
       )) {
         if (fingerprintEntry.name.startsWith(".pin-") && fingerprintEntry.name.endsWith(".tmp")) {
+          if (!fingerprintEntry.isDirectory()) throw pinInvalid();
           continue;
         }
         if (!fingerprintEntry.isDirectory() || !SHA256_PATTERN.test(fingerprintEntry.name)) {
@@ -177,7 +185,10 @@ export class SkillPinStore {
   async load(skillId: string, fingerprint: string): Promise<SkillPinnedRawLoad> {
     validateLookup(skillId, fingerprint);
     const snapshotRoot = this.#snapshotRoot(skillId, fingerprint);
+    await requireDirectory(dirname(snapshotRoot), true);
+    await requireDirectory(snapshotRoot, true);
     const manifest = await this.#readManifest(snapshotRoot, { skillId, fingerprint });
+    await assertSnapshotTopology(snapshotRoot, manifest);
 
     const skillRecord = manifest.files.find((file) => file.path === "SKILL.md");
     if (skillRecord === undefined) throw pinInvalid();
@@ -208,22 +219,30 @@ export class SkillPinStore {
   async unpin(skillId: string, fingerprint: string): Promise<boolean> {
     validateLookup(skillId, fingerprint);
     const snapshotRoot = this.#snapshotRoot(skillId, fingerprint);
+    let snapshotInfo;
     try {
-      await stat(snapshotRoot);
+      snapshotInfo = await lstat(snapshotRoot);
     } catch (error) {
       if (isMissingError(error)) return false;
-      throw error;
+      throw pinInvalid();
     }
+    if (!snapshotInfo.isDirectory() || snapshotInfo.isSymbolicLink()) throw pinInvalid();
 
-    await rm(snapshotRoot, { recursive: true, force: false });
+    try {
+      await rm(snapshotRoot, { recursive: true, force: false });
+    } catch {
+      throw pinInvalid();
+    }
     const skillRoot = dirname(snapshotRoot);
     try {
       const remaining = await readdir(skillRoot);
       if (remaining.length === 0) {
         await rm(skillRoot, { recursive: false, force: false });
+      } else {
+        await syncDirectory(skillRoot);
       }
     } catch (error) {
-      if (!isMissingError(error)) throw error;
+      if (!isMissingError(error)) throw pinInvalid();
     }
     await syncDirectory(this.#root);
     return true;
@@ -234,12 +253,14 @@ export class SkillPinStore {
   }
 
   async #existingManifest(snapshotRoot: string): Promise<SkillPinnedManifest | undefined> {
+    let info;
     try {
-      await stat(snapshotRoot);
+      info = await lstat(snapshotRoot);
     } catch (error) {
       if (isMissingError(error)) return undefined;
-      throw error;
+      throw pinInvalid();
     }
+    if (!info.isDirectory() || info.isSymbolicLink()) throw pinInvalid();
     const skillId = snapshotRoot.split("/").at(-2);
     const fingerprint = snapshotRoot.split("/").at(-1);
     if (skillId === undefined || fingerprint === undefined) throw pinInvalid();
@@ -250,14 +271,13 @@ export class SkillPinStore {
     snapshotRoot: string,
     expected: { skillId: string; fingerprint: string }
   ): Promise<SkillPinnedManifest> {
+    const manifestPath = join(snapshotRoot, "manifest.json");
+    await requireRegularFile(manifestPath);
     let text: string;
     try {
-      text = await readFile(join(snapshotRoot, "manifest.json"), "utf8");
-    } catch (error) {
-      if (isMissingError(error)) {
-        throw new SkillError("SKILL_NOT_FOUND", "Pinned skill snapshot was not found");
-      }
-      throw error;
+      text = await readFile(manifestPath, "utf8");
+    } catch {
+      throw pinInvalid();
     }
 
     let value: unknown;
@@ -354,8 +374,13 @@ function validatePinInput(input: SkillPinInput, now: Date): ValidatedPinInput {
 }
 
 function validateManifest(manifest: SkillPinnedManifest): void {
+  if (!pinnedManifestSchema.safeParse(manifest).success) throw pinInvalid();
   if (!isCanonicalRelativePath(manifest.provenance.sourceRelativePath)) throw pinInvalid();
   if (!Number.isFinite(Date.parse(manifest.provenance.pinnedAt))) throw pinInvalid();
+  const derivedSkillId = `sk_${fingerprintSkillDescriptor(
+    Buffer.from(`${manifest.provenance.sourceId}\0${manifest.name}`, "utf8")
+  )}`;
+  if (manifest.skillId !== derivedSkillId) throw pinInvalid();
   const seen = new Set<string>();
   let totalBytes = 0;
   for (const file of manifest.files) {
@@ -392,6 +417,7 @@ function requireSamePin(existing: SkillPinnedRawLoad, expected: ValidatedPinInpu
 }
 
 async function readAndVerifyFile(path: string, record: SkillPinnedFileRecord): Promise<Uint8Array> {
+  await requireRegularFile(path);
   let bytes: Uint8Array;
   try {
     bytes = await readFile(path);
@@ -404,9 +430,79 @@ async function readAndVerifyFile(path: string, record: SkillPinnedFileRecord): P
   return bytes;
 }
 
+async function assertSnapshotTopology(snapshotRoot: string, manifest: SkillPinnedManifest): Promise<void> {
+  const expectedFiles = new Set<string>(["manifest.json", "SKILL.md"]);
+  const expectedDirectories = new Set<string>();
+  for (const file of manifest.files) {
+    if (file.path === "SKILL.md") continue;
+    const parts = ["resources", ...file.path.split("/")];
+    expectedFiles.add(parts.join("/"));
+    for (let index = 1; index < parts.length; index += 1) {
+      expectedDirectories.add(parts.slice(0, index).join("/"));
+    }
+  }
+
+  const actualFiles = new Set<string>();
+  const actualDirectories = new Set<string>();
+  const visit = async (absoluteRoot: string, relativeRoot: string): Promise<void> => {
+    let entries: Dirent<string>[];
+    try {
+      entries = await readdir(absoluteRoot, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      throw pinInvalid();
+    }
+    for (const entry of entries) {
+      const relativePath = relativeRoot.length === 0 ? entry.name : `${relativeRoot}/${entry.name}`;
+      const absolutePath = join(absoluteRoot, entry.name);
+      if (entry.isDirectory()) {
+        if (!expectedDirectories.has(relativePath)) throw pinInvalid();
+        actualDirectories.add(relativePath);
+        await visit(absolutePath, relativePath);
+        continue;
+      }
+      if (!entry.isFile() || !expectedFiles.has(relativePath)) throw pinInvalid();
+      actualFiles.add(relativePath);
+    }
+  };
+
+  await visit(snapshotRoot, "");
+  if (actualFiles.size !== expectedFiles.size || actualDirectories.size !== expectedDirectories.size) {
+    throw pinInvalid();
+  }
+  for (const path of expectedFiles) if (!actualFiles.has(path)) throw pinInvalid();
+  for (const path of expectedDirectories) if (!actualDirectories.has(path)) throw pinInvalid();
+}
+
+async function requireDirectory(path: string, missingIsNotFound = false): Promise<void> {
+  let info;
+  try {
+    info = await lstat(path);
+  } catch (error) {
+    if (missingIsNotFound && isMissingError(error)) {
+      throw new SkillError("SKILL_NOT_FOUND", "Pinned skill snapshot was not found");
+    }
+    throw pinInvalid();
+  }
+  if (!info.isDirectory() || info.isSymbolicLink()) throw pinInvalid();
+}
+
+async function requireRegularFile(path: string): Promise<void> {
+  let info;
+  try {
+    info = await lstat(path);
+  } catch {
+    throw pinInvalid();
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw pinInvalid();
+}
+
 async function ensurePrivateDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  await chmod(path, 0o700);
+  try {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    await chmod(path, 0o700);
+  } catch {
+    throw pinInvalid();
+  }
 }
 
 async function writePrivateFile(path: string, bytes: Uint8Array): Promise<void> {
@@ -421,12 +517,40 @@ async function writePrivateFile(path: string, bytes: Uint8Array): Promise<void> 
   await chmod(path, 0o600);
 }
 
+async function syncDirectoryTree(path: string): Promise<void> {
+  let entries: Dirent<string>[];
+  try {
+    entries = await readdir(path, { withFileTypes: true, encoding: "utf8" });
+  } catch {
+    throw pinInvalid();
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      await syncDirectoryTree(join(path, entry.name));
+      continue;
+    }
+    if (!entry.isFile()) throw pinInvalid();
+  }
+  await syncDirectory(path);
+}
+
 async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, "r");
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(path, "r");
+  } catch {
+    throw pinInvalid();
+  }
   try {
     await handle.sync();
+  } catch {
+    throw pinInvalid();
   } finally {
-    await handle.close();
+    try {
+      await handle.close();
+    } catch {
+      throw pinInvalid();
+    }
   }
 }
 
