@@ -13,9 +13,12 @@ const MAX_DECLARED_REQUIREMENTS = 64;
 const MAX_REQUIREMENT_BYTES = 256;
 const NATIVE_CAPABILITIES = new Set<string>(NATIVE_CAPABILITY_IDS);
 const INLINE_CODE_PATTERN = /`([^`\r\n]{1,512})`/g;
+const SHELL_FENCE_PATTERN = /```(?:bash|sh|shell|zsh|console|terminal)[ \t]*\r?\n([\s\S]*?)```/gi;
 const CODEX_EXEC_PATTERN = /\bcodex\s+exec\b/i;
 const CODEX_COMMAND_PATTERN = /^codex(?:\s|$)/i;
+const CODEX_PROSE_COMMAND_PATTERN = /\b(?:run|use|invoke|execute|call)\s+codex(?!\s+exec\b)(?=\s|[.,;:!?)]|$)/i;
 const SUBAGENT_SESSION_PATTERN = /\bsub[- ]?agent\b[^\n.]{0,80}\bsession\b|\bsession\b[^\n.]{0,80}\bsub[- ]?agent\b/i;
+const SUBAGENT_REQUIREMENT_PATTERN = /\b(?:use|spawn|create|start)\s+(?:an?\s+)?sub[- ]?agent\b|\bdelegate\b[^\n.]{0,80}\bto\s+(?:an?\s+)?sub[- ]?agent\b/i;
 
 interface DeclaredRequirements {
   present: boolean;
@@ -73,14 +76,23 @@ export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillComp
     missingCapabilities.add("codex.exec");
     reasons.add("CODEX_EXEC_UNSUPPORTED");
   }
-  if (SUBAGENT_SESSION_PATTERN.test(skill.instructions)) {
+  if (CODEX_PROSE_COMMAND_PATTERN.test(skill.instructions)) {
+    unsupported = true;
+    hasStaticFinding = true;
+    missingCapabilities.add("codex.runtime");
+    reasons.add("CODEX_RUNTIME_UNSUPPORTED");
+  }
+  if (
+    SUBAGENT_SESSION_PATTERN.test(skill.instructions) ||
+    SUBAGENT_REQUIREMENT_PATTERN.test(skill.instructions)
+  ) {
     unsupported = true;
     hasStaticFinding = true;
     missingCapabilities.add("subagent.session");
     reasons.add("SUBAGENT_SESSION_UNSUPPORTED");
   }
 
-  for (const snippet of inlineCodeSnippets(skill.instructions)) {
+  for (const snippet of [...inlineCodeSnippets(skill.instructions), ...shellCommandSnippets(skill.instructions)]) {
     const nativeCommand = nativeCapabilityForCommand(snippet);
     if (nativeCommand !== undefined) {
       requiredCapabilities.add(nativeCommand);
@@ -129,8 +141,11 @@ export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillComp
 }
 
 function readDeclaredRequirements(metadata: Record<string, unknown> | undefined): DeclaredRequirements {
-  if (metadata === undefined || !isRecord(metadata.kodegpt)) {
+  if (metadata === undefined || !Object.hasOwn(metadata, "kodegpt")) {
     return { present: false, valid: true, capabilities: [], providers: [], unsupported: [] };
+  }
+  if (!isRecord(metadata.kodegpt)) {
+    return { present: true, valid: false, capabilities: [], providers: [], unsupported: [] };
   }
 
   const kodegpt = metadata.kodegpt;
@@ -206,6 +221,19 @@ function inlineCodeSnippets(instructions: string): string[] {
   while ((match = INLINE_CODE_PATTERN.exec(instructions)) !== null) {
     const snippet = match[1]?.trim();
     if (snippet !== undefined && snippet.length > 0) snippets.push(snippet);
+  }
+  return snippets;
+}
+
+function shellCommandSnippets(instructions: string): string[] {
+  const snippets: string[] = [];
+  SHELL_FENCE_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SHELL_FENCE_PATTERN.exec(instructions)) !== null) {
+    for (const line of (match[1] ?? "").split(/\r?\n/u)) {
+      const snippet = line.trim().replace(/^\$\s+/, "");
+      if (snippet.length > 0 && !snippet.startsWith("#")) snippets.push(snippet);
+    }
   }
   return snippets;
 }

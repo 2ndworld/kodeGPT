@@ -96,14 +96,60 @@ describe("analyzeSkillCompatibility", () => {
   });
 
   it("treats malformed declared KodeGPT requirements conservatively", () => {
+    for (const metadata of [
+      { kodegpt: { requires: { capabilities: "code.search" } } },
+      { kodegpt: "invalid" },
+      { kodegpt: [] }
+    ]) {
+      const report = analyzeSkillCompatibility(skill({ metadata }));
+
+      expect(report.classification).toBe("PARTIAL");
+      expect(report.missingCapabilities).toContain("declared.requirements");
+      expect(report.reasons).toContain("DECLARED_REQUIREMENTS_INVALID");
+      expect(report.analysisBasis).toBe("declared");
+    }
+  });
+
+  it("treats explicit prose Codex command requirements as unsupported", () => {
     const report = analyzeSkillCompatibility(
-      skill({ metadata: { kodegpt: { requires: { capabilities: "code.search" } } } })
+      skill({ instructions: "Inspect the diff, then run codex review before finishing." })
+    );
+
+    expect(report.classification).toBe("UNSUPPORTED");
+    expect(report.missingCapabilities).toContain("codex.runtime");
+    expect(report.reasons).toContain("CODEX_RUNTIME_UNSUPPORTED");
+    expect(report.analysisBasis).toBe("static");
+  });
+
+  it("treats explicit subagent delegation requirements as unsupported without requiring session wording", () => {
+    const report = analyzeSkillCompatibility(
+      skill({ instructions: "Delegate the verification to a subagent before final review." })
+    );
+
+    expect(report.classification).toBe("UNSUPPORTED");
+    expect(report.missingCapabilities).toContain("subagent.session");
+    expect(report.reasons).toContain("SUBAGENT_SESSION_UNSUPPORTED");
+    expect(report.analysisBasis).toBe("static");
+  });
+
+  it("detects explicit external commands in shell code fences conservatively", () => {
+    const report = analyzeSkillCompatibility(
+      skill({ instructions: "Run this check:\n```bash\nterraform plan\n```" })
     );
 
     expect(report.classification).toBe("PARTIAL");
-    expect(report.missingCapabilities).toContain("declared.requirements");
-    expect(report.reasons).toContain("DECLARED_REQUIREMENTS_INVALID");
-    expect(report.analysisBasis).toBe("declared");
+    expect(report.missingCapabilities).toContain("external-cli:terraform");
+    expect(report.reasons).toContain("EXTERNAL_CLI_REQUIRED:terraform");
+    expect(report.analysisBasis).toBe("static");
+  });
+
+  it("does not reinterpret unlabeled generic code fences as shell commands", () => {
+    const report = analyzeSkillCompatibility(
+      skill({ instructions: "Use this example:\n```\nconst value = 1;\n```" })
+    );
+
+    expect(report.classification).toBe("NATIVE");
+    expect(report.missingCapabilities).toEqual([]);
   });
 
   it("treats unknown declared capabilities conservatively and keeps report arrays deterministic", () => {
