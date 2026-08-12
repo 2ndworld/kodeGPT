@@ -42,6 +42,7 @@ export type {
   ProfileCurrentResult,
   ProfileToolContext,
   SystemToolContext,
+  SkillToolContext,
   VerifyToolContext,
   WorkspaceCloseResult,
   WorkspaceFileEditResult,

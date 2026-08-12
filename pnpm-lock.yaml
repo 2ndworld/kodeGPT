@@ -105,6 +105,9 @@ importers:
       '@kodegpt/dev-console':
         specifier: workspace:*
         version: link:../dev-console
+      '@kodegpt/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@modelcontextprotocol/core':
         specifier: 2.0.0
         version: 2.0.0

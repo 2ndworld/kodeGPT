@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@kodegpt/skills": "workspace:*",
     "@kodegpt/auth": "workspace:*",
     "@kodegpt/capabilities": "workspace:*",
     "@kodegpt/dev-console": "workspace:*",

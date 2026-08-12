@@ -511,6 +511,22 @@ describe("SkillCatalog pinned snapshots", () => {
       pinned: false
     });
 
+    const currentInspection = await catalog.inspect({ skillId: pinned.skillId });
+    expect(currentInspection.skill).toMatchObject({ availability: "live", pinned: false });
+    expect(currentInspection.skill.fingerprint).not.toBe(pinned.fingerprint);
+    const pinnedInspection = await catalog.inspect({
+      skillId: pinned.skillId,
+      fingerprint: pinned.fingerprint
+    });
+    expect(pinnedInspection.skill).toMatchObject({
+      fingerprint: pinned.fingerprint,
+      availability: "pinned",
+      pinned: true
+    });
+    await expect(
+      catalog.inspect({ skillId: pinned.skillId, fingerprint: "0".repeat(64) })
+    ).rejects.toMatchObject({ code: "SKILL_FINGERPRINT_MISMATCH" });
+
     manager.unavailableSourceIds.add(SOURCE_A);
     const offline = await catalog.list();
     expect(offline.truncated).toBe(true);
@@ -534,5 +550,19 @@ describe("SkillCatalog pinned snapshots", () => {
     expect(JSON.stringify({ offline, loaded: { ...loaded, skillDocument: undefined, resources: [] } })).not.toContain(
       "/private/"
     );
+  });
+
+  it("reports source unavailability instead of claiming an unresolved live skill is absent", async () => {
+    const manager = new FakeSourceManager();
+    manager.addSource(SOURCE_A, "offline-a");
+    addSkill(manager, SOURCE_A, "portable");
+    const catalog = new SkillCatalog(manager);
+    const skillId = (await catalog.list()).skills[0]!.skillId;
+
+    manager.unavailableSourceIds.add(SOURCE_A);
+
+    await expect(catalog.loadRaw({ skillId })).rejects.toMatchObject({
+      code: "SKILL_SOURCE_UNAVAILABLE"
+    });
   });
 });

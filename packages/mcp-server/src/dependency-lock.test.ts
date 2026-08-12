@@ -23,6 +23,20 @@ describe("MCP v2 dependency lock", () => {
     expect(manifest.dependencies).not.toHaveProperty("@modelcontextprotocol/sdk");
   });
 
+  it("keeps skill runtime imports on lightweight subpaths so CLI bundling does not pull the YAML parser", async () => {
+    const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
+    const packageRoot = dirname(packagePath);
+    const [tools, toolContext] = await Promise.all([
+      readFile(join(packageRoot, "src", "tools.ts"), "utf8"),
+      readFile(join(packageRoot, "src", "tool-context.ts"), "utf8")
+    ]);
+    const runtimeImports = `${tools}\n${toolContext}`;
+
+    expect(runtimeImports).toContain('from "@kodegpt/skills/contracts"');
+    expect(runtimeImports).toContain('from "@kodegpt/skills/errors"');
+    expect(runtimeImports).not.toMatch(/import\s+\{[^}]*SkillError[^}]*\}\s+from\s+"@kodegpt\/skills"/s);
+  });
+
   it("keeps ext-apps isolated to dev-console and forbids server helper imports", async () => {
     const packagePath = fileURLToPath(new URL("../package.json", import.meta.url));
     const packageRoot = dirname(packagePath);

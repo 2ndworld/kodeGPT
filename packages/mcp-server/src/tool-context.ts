@@ -24,6 +24,13 @@ import type {
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
 import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
+import type {
+  SkillCatalogToolAdapter,
+  SkillInspectResult,
+  SkillListResult,
+  SkillLoadResult
+} from "@kodegpt/skills";
+import { SkillError } from "@kodegpt/skills/errors";
 
 export type JsonObject = Record<string, unknown>;
 export type MaybePromise<T> = Promise<T> | T;
@@ -134,6 +141,17 @@ export interface ContextToolContext {
   build(input: ContextBuildInput): Promise<ContextBuildResult>;
 }
 
+export interface SkillToolContext {
+  list(input: { limit?: number; sourceId?: string; pinned?: boolean }): Promise<SkillListResult>;
+  inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
+  load(input: {
+    skillId: string;
+    fingerprint?: string;
+    resources?: string[];
+    maxBytes?: number;
+  }): Promise<SkillLoadResult>;
+}
+
 export interface KodegptToolContext {
   workspace: WorkspaceToolContext;
   git: GitToolContext;
@@ -146,6 +164,7 @@ export interface KodegptToolContext {
   file: FileCapabilityToolContext;
   verify: VerifyToolContext;
   context: ContextToolContext;
+  skill: SkillToolContext;
 }
 
 export type WorkspaceManagerToolAdapter = Pick<
@@ -194,11 +213,13 @@ export function createKodegptToolContext(options: {
   artifactStore: ArtifactStoreToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
+  skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
   health(): MaybePromise<unknown>;
 }): KodegptToolContext {
   const native = options.nativeCapabilities ?? unavailableNativeCapabilities();
+  const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
       list: () => options.workspaceManager.listWorkspaces(),
@@ -266,6 +287,11 @@ export function createKodegptToolContext(options: {
     },
     context: {
       build: (input) => native.buildContext(input)
+    },
+    skill: {
+      list: (input) => skill.list(input),
+      inspect: (input) => skill.inspect(input),
+      load: (input) => skill.load(input)
     }
   };
 }
@@ -275,6 +301,17 @@ function requireJsonObject(value: unknown, source: string): JsonObject {
     throw new TypeError(`${source} must return an object`);
   }
   return value as JsonObject;
+}
+
+function unavailableSkillCatalog(): SkillCatalogToolAdapter {
+  const reject = () => Promise.reject(
+    new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill catalog is unavailable")
+  );
+  return {
+    list: reject,
+    inspect: reject,
+    load: reject
+  };
 }
 
 function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {

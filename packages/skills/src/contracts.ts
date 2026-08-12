@@ -11,6 +11,9 @@ export const SKILL_BUNDLE_MAX_BYTES = 1024 * 1024;
 export const SKILL_LOAD_MAX_BYTES = 1024 * 1024;
 export const MAX_SKILL_NAME_BYTES = 128;
 export const MAX_DESCRIPTION_BYTES = 4 * 1024;
+export const SKILL_TOOL_LIST_MAX = 500;
+export const SKILL_TOOL_LOAD_RESOURCE_MAX = 32;
+export const SKILL_TOOL_LOAD_MAX_BYTES = 512 * 1024;
 
 export interface PersistedSkillSourceIdentity {
   deviceMajor: number;
@@ -162,6 +165,73 @@ export interface SkillCatalogListResult {
 export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
   availability: SkillAvailability;
   pinned: boolean;
+}
+
+export interface SkillCatalogInspection {
+  skill: SkillCatalogEntry;
+  frontmatter: SkillValidatedFrontmatter;
+  resources: SkillResourceInventoryEntry[];
+  instructionBytes: number;
+  bundleBytes: number;
+}
+
+export type SkillListTruncationReason = SkillDiscoveryTruncationReason | "RESULT_LIMIT";
+
+export interface SkillListResult {
+  schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
+  skills: SkillCatalogEntry[];
+  truncated: boolean;
+  truncationReasons: SkillListTruncationReason[];
+}
+
+export interface SkillInspectFrontmatter {
+  license?: string;
+  compatibility?: string;
+  allowedTools?: string[] | string;
+  unknownMetadataKeys: string[];
+}
+
+export interface SkillInspectResult {
+  schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
+  skill: SkillCatalogEntry;
+  frontmatter: SkillInspectFrontmatter;
+  resources: SkillResourceInventoryEntry[];
+  instructionBytes: number;
+  bundleBytes: number;
+}
+
+export interface SkillLoadTextResource {
+  path: string;
+  contents: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface SkillLoadResult {
+  schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
+  skillId: string;
+  name: string;
+  description: string;
+  sourceId: string;
+  sourceKind: "agent-skills";
+  fingerprint: string;
+  availability: SkillAvailability;
+  pinned: boolean;
+  compatibility: SkillCompatibilityReport;
+  instructions: string;
+  resources: SkillLoadTextResource[];
+  totalBytes: number;
+}
+
+export interface SkillCatalogToolAdapter {
+  list(input: { limit?: number; sourceId?: string; pinned?: boolean }): Promise<SkillListResult>;
+  inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
+  load(input: {
+    skillId: string;
+    fingerprint?: string;
+    resources?: string[];
+    maxBytes?: number;
+  }): Promise<SkillLoadResult>;
 }
 
 export type SkillCompatibility = "NATIVE" | "PARTIAL" | "PROVIDER_REQUIRED" | "UNSUPPORTED";

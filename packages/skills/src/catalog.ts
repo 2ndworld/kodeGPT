@@ -11,6 +11,7 @@ import {
   type ParsedSkillDocument,
   type PersistedSkillSource,
   type SkillCatalogEntry,
+  type SkillCatalogInspection,
   type SkillCatalogListResult,
   type SkillCatalogRawLoad,
   type SkillCompatibilityReport,
@@ -68,6 +69,7 @@ interface BundleFile {
 
 interface BuiltBundle {
   inspection: SkillLiveInspection;
+  parsed: ParsedSkillDocument;
   skillDocument: Uint8Array;
   files: Map<string, BundleFile>;
 }
@@ -144,6 +146,37 @@ export class SkillCatalog {
     };
   }
 
+  async inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillCatalogInspection> {
+    const discovery = await this.#discover({ tolerateUnavailableSources: true });
+    const liveSkill = discovery.skills.find((candidate) => candidate.descriptor.skillId === input.skillId);
+    let liveUnavailable = discovery.truncationReasons.includes("SOURCE_UNAVAILABLE");
+
+    if (liveSkill !== undefined) {
+      try {
+        const bundle = await this.#buildBundle(liveSkill);
+        if (input.fingerprint === undefined || input.fingerprint === bundle.inspection.bundleFingerprint) {
+          const pinned = await this.#hasPinned(input.skillId, bundle.inspection.bundleFingerprint);
+          return inspectionFromBundle(bundle, pinned);
+        }
+      } catch (error) {
+        if (!isUnavailableSourceError(error)) throw error;
+        liveUnavailable = true;
+      }
+    }
+
+    const pinnedLoad = await this.#loadPinned(input.skillId, input.fingerprint);
+    if (pinnedLoad !== undefined) {
+      return inspectionFromPinned(pinnedLoad);
+    }
+    if (liveSkill !== undefined && input.fingerprint !== undefined) {
+      throw fingerprintMismatch();
+    }
+    if (liveUnavailable) {
+      throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source operation failed");
+    }
+    throw new SkillError("SKILL_NOT_FOUND", "Skill was not found");
+  }
+
   async pin(input: {
     skillId: string;
     expectedDescriptorFingerprint?: string;
@@ -177,6 +210,7 @@ export class SkillCatalog {
   }): Promise<SkillCatalogRawLoad> {
     const discovery = await this.#discover({ tolerateUnavailableSources: true });
     const liveSkill = discovery.skills.find((candidate) => candidate.descriptor.skillId === input.skillId);
+    let liveUnavailable = discovery.truncationReasons.includes("SOURCE_UNAVAILABLE");
     if (liveSkill !== undefined) {
       try {
         const bundle = await this.#buildBundle(liveSkill);
@@ -191,6 +225,7 @@ export class SkillCatalog {
         }
       } catch (error) {
         if (!isUnavailableSourceError(error)) throw error;
+        liveUnavailable = true;
       }
     }
 
@@ -200,6 +235,9 @@ export class SkillCatalog {
     }
     if (liveSkill !== undefined && input.fingerprint !== undefined) {
       throw fingerprintMismatch();
+    }
+    if (liveUnavailable) {
+      throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source operation failed");
     }
     throw new SkillError("SKILL_NOT_FOUND", "Skill was not found");
   }
@@ -465,6 +503,7 @@ export class SkillCatalog {
 
     return {
       inspection,
+      parsed: skill.parsed,
       skillDocument: skillDocument.bytes.slice(),
       files: loadedFiles
     };
@@ -523,6 +562,49 @@ export class SkillCatalog {
 
 function versionKey(skillId: string, fingerprint: string): string {
   return `${skillId}\0${fingerprint}`;
+}
+
+function inspectionFromBundle(bundle: BuiltBundle, pinned: boolean): SkillCatalogInspection {
+  const descriptor = bundle.inspection.descriptor;
+  return {
+    skill: {
+      skillId: descriptor.skillId,
+      name: descriptor.name,
+      description: descriptor.description,
+      sourceId: descriptor.sourceId,
+      sourceKind: descriptor.sourceKind,
+      fingerprint: bundle.inspection.bundleFingerprint,
+      descriptorFingerprint: descriptor.descriptorFingerprint,
+      nameCollision: descriptor.nameCollision,
+      compatibility: cloneCompatibilityReport(descriptor.compatibility),
+      availability: pinned ? "live+pinned" : "live",
+      pinned
+    },
+    frontmatter: frontmatterFrom(bundle.parsed),
+    resources: bundle.inspection.resources.map((resource) => ({ ...resource })),
+    instructionBytes: Buffer.byteLength(bundle.parsed.instructions, "utf8"),
+    bundleBytes: bundle.inspection.bundleBytes
+  };
+}
+
+function inspectionFromPinned(pinned: SkillPinnedRawLoad): SkillCatalogInspection {
+  const parsed = parsePinnedSkillDocument(pinned);
+  const resources = pinned.resources
+    .map((resource) =>
+      resourceInventoryEntry({
+        path: resource.path,
+        bytes: resource.bytes,
+        sha256: resource.sha256
+      })
+    )
+    .sort((left, right) => compareUtf8(left.path, right.path));
+  return {
+    skill: entryFromPinnedLoad(pinned),
+    frontmatter: frontmatterFrom(parsed),
+    resources,
+    instructionBytes: Buffer.byteLength(parsed.instructions, "utf8"),
+    bundleBytes: pinned.manifest.files.reduce((total, file) => total + file.bytes, 0)
+  };
 }
 
 function parsePinnedSkillDocument(pinned: SkillPinnedRawLoad): ParsedSkillDocument {

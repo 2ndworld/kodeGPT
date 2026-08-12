@@ -127,7 +127,10 @@ describe("full security acceptance invariants", () => {
       "verify.list",
       "verify.run",
       "file.patch",
-      "context.build"
+      "context.build",
+      "skill.list",
+      "skill.inspect",
+      "skill.load"
     ]) {
       expect(names).toContain(required);
     }
