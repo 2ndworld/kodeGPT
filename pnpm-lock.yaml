@@ -19,6 +19,10 @@ importers:
         version: 3.2.4(@types/node@24.3.0)(yaml@2.9.0)
 
   apps/cli:
+    dependencies:
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
     devDependencies:
       '@kodegpt/artifacts':
         specifier: workspace:*
@@ -44,6 +48,9 @@ importers:
       '@kodegpt/profiles':
         specifier: workspace:*
         version: link:../../packages/profiles
+      '@kodegpt/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       '@kodegpt/trust':
         specifier: workspace:*
         version: link:../../packages/trust
