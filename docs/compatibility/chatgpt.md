@@ -76,10 +76,14 @@ Before claiming ChatGPT compatibility for a release candidate, capture a local-o
 | planWorkspace | ChatGPT plan/workspace type used for the test |
 | connectionPath | Exact path used, for example `secure-mcp-tunnel-stdio` or `zrok-public-https-query-credential` |
 | discovery | Whether ChatGPT discovered the KodeGPT server/tools |
+| workspaceOpen | Whether the host successfully opened an already locally trusted workspace |
 | readAction | At least one read-only action and observed result |
-| writeAvailability | Whether write/modify actions were available to that host |
-| writeConfirmation | Whether/how the host requested confirmation for the tested action |
-| appsRendering | Whether `ui://kodegpt/dev-console/v1` rendered as an MCP App |
+| writeAvailability | Whether write/modify actions were exposed to that host |
+| writeRoundTrip | Whether a reversible write/edit was executed, read back, and exactly reverted |
+| processAction | Whether a process action reached KodeGPT and the observed allow/deny/result behavior |
+| skillActionExposure | Whether `skill.list`, `skill.inspect`, and `skill.load` actions reached KodeGPT, even if the catalog was empty/unconfigured |
+| skillPositiveRoundTrip | Whether a configured non-empty host catalog completed `skill.list -> skill.inspect -> skill.load` and verified the expected resource marker |
+| appsRendering | Whether `ui://kodegpt/dev-console/v1` actually rendered as an MCP App |
 | fallbackBehavior | What happened when Apps rendering was unavailable/disabled |
 | notes | Any host-specific limitations or permissions |
 
