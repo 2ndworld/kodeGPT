@@ -29,6 +29,15 @@ import {
   type WorkspaceManagerToolAdapter
 } from "@kodegpt/mcp-server";
 import { getProfilePreset } from "@kodegpt/profiles";
+import {
+  SkillCatalog,
+  SkillPinStore,
+  SkillSourceManager,
+  SkillSourceStore,
+  createSkillCatalogToolAdapter,
+  createSkillSourceRuntimeAdapter,
+  type SkillCatalogToolAdapter
+} from "@kodegpt/skills";
 import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 export const MCP_PROTOCOL_VERSION = "2026-07-28" as const;
@@ -146,6 +155,10 @@ export interface ProductionServiceStackDependencies {
   ): Promise<BearerAuthenticator>;
   prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
   startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
+  prepareSkillCatalog(options: {
+    stateRoot: string;
+    kernel: StartKernel;
+  }): Promise<SkillCatalogToolAdapter & { close(): Promise<void> }>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
   createManagers(options: {
     kernel: StartKernel;
@@ -173,6 +186,7 @@ export async function createProductionServiceStack(
   const stateRoot = options.stateRoot ?? join(homedir(), ".kodegpt");
 
   let kernel: StartKernel | undefined;
+  let skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined;
   try {
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
@@ -186,6 +200,8 @@ export async function createProductionServiceStack(
     kernel = await dependencies.startKernel({ runtimePath: options.runtimePath, stateRoot });
     const hello = await kernel.hello();
     validateKernelCapabilities(hello);
+
+    skillCatalog = await dependencies.prepareSkillCatalog({ stateRoot, kernel });
 
     const trustProfile = dependencies.createTrustProfile(stateRoot);
     const managers = dependencies.createManagers({ kernel, trustProfile });
@@ -289,6 +305,7 @@ export async function createProductionServiceStack(
       artifactStore,
       nativeCapabilities,
       extensionRegistry,
+      skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
       capabilities: async () => systemCapabilities(await kernel!.hello()),
       health: async () =>
@@ -306,11 +323,11 @@ export async function createProductionServiceStack(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
-        await kernel?.stop();
+        await closeProductionStack(skillCatalog, kernel);
       }
     };
   } catch (error) {
-    await kernel?.stop().catch(() => undefined);
+    await closeProductionStack(skillCatalog, kernel).catch(() => undefined);
     throw error;
   }
 }
@@ -372,11 +389,11 @@ export async function startKodegpt(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
-        await closeRuntimeStack(bound, mcp, stack.kernel);
+        await closeRuntimeStack(bound, mcp, stack);
       }
     };
   } catch (error) {
-    await closeRuntimeStack(bound, mcp, stack.kernel).catch(() => undefined);
+    await closeRuntimeStack(bound, mcp, stack).catch(() => undefined);
     throw error;
   }
 }
@@ -399,6 +416,20 @@ export const defaultStartDependencies: StartDependencies = {
   },
   prepareExtensionRegistry: (stateRoot) => ExtensionRegistry.open(stateRoot),
   startKernel: (options) => KernelClient.start(options),
+  prepareSkillCatalog: async ({ stateRoot, kernel }) => {
+    const sourceStore = new SkillSourceStore(stateRoot);
+    const sourceManager = new SkillSourceManager(
+      sourceStore,
+      createSkillSourceRuntimeAdapter(kernel)
+    );
+    const pinStore = new SkillPinStore(stateRoot);
+    const catalog = new SkillCatalog(sourceManager, { pins: pinStore });
+    const adapter = createSkillCatalogToolAdapter(catalog);
+    return {
+      ...adapter,
+      close: () => sourceManager.close()
+    };
+  },
   createTrustProfile: (stateRoot) => ({
     trust: new WorkspaceTrustStore(stateRoot),
     inspectProfile: (name) => getProfilePreset(name)
@@ -505,16 +536,35 @@ async function bindLoopback(mcp: McpNodeHandle, port: number): Promise<BoundLoop
   };
 }
 
+async function closeProductionStack(
+  skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined,
+  kernel: StartKernel | undefined
+): Promise<void> {
+  let firstError: unknown;
+  for (const close of [
+    skillCatalog === undefined ? undefined : () => skillCatalog.close(),
+    kernel === undefined ? undefined : () => kernel.stop()
+  ]) {
+    if (close === undefined) continue;
+    try {
+      await close();
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError !== undefined) throw firstError;
+}
+
 async function closeRuntimeStack(
   bound: BoundLoopbackServer | undefined,
   mcp: McpNodeHandle | undefined,
-  kernel: StartKernel | undefined
+  stack: Pick<ProductionServiceStack, "close"> | undefined
 ): Promise<void> {
   let firstError: unknown;
   for (const close of [
     bound === undefined ? undefined : () => bound.close(),
     mcp === undefined ? undefined : () => mcp.close(),
-    kernel === undefined ? undefined : () => kernel.stop()
+    stack === undefined ? undefined : () => stack.close()
   ]) {
     if (close === undefined) continue;
     try {

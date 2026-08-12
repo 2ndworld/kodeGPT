@@ -132,6 +132,26 @@ function dependencies(
       events.push("kernel.start");
       return kernel;
     },
+    prepareSkillCatalog: async () => {
+      events.push("skill.catalog");
+      return {
+        list: async () => ({
+          schemaVersion: 1 as const,
+          skills: [],
+          truncated: false,
+          truncationReasons: []
+        }),
+        inspect: async () => {
+          throw new Error("not used");
+        },
+        load: async () => {
+          throw new Error("not used");
+        },
+        close: async () => {
+          events.push("skill.close");
+        }
+      };
+    },
     createTrustProfile: () => {
       events.push("trust-profile");
       return {
@@ -180,6 +200,7 @@ describe("kodegpt start orchestration", () => {
       "extensions",
       "kernel.start",
       "kernel.hello",
+      "skill.catalog",
       "trust-profile",
       "managers",
       "mcp",
@@ -197,7 +218,7 @@ describe("kodegpt start orchestration", () => {
     expect(JSON.stringify(started.status)).not.toMatch(/token|secret|verifier|kc_/i);
 
     await started.close();
-    expect(events.slice(-3)).toEqual(["bind.close", "mcp.close", "kernel.stop"]);
+    expect(events.slice(-4)).toEqual(["bind.close", "mcp.close", "skill.close", "kernel.stop"]);
   });
 
   it("production-wires git.changes through the existing workspace manager", async () => {

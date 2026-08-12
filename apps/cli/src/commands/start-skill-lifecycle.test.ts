@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  createProductionServiceStack,
-  type ProductionServiceStackDependencies,
-  type StartKernel
-} from "./start.js";
+import { createProductionServiceStack, startKodegpt, type StartKernel } from "./start.js";
 
 function baseDependencies(events: string[]) {
   const kernel: StartKernel = {
@@ -73,8 +69,12 @@ function baseDependencies(events: string[]) {
   };
 
   const dependencies = {
-    prepareStateRoot: async () => events.push("state-root"),
-    prepareAudit: async () => events.push("audit"),
+    prepareStateRoot: async () => {
+      events.push("state-root");
+    },
+    prepareAudit: async () => {
+      events.push("audit");
+    },
     prepareConnectorAuth: async () => {
       events.push("connector-verifier");
       return { authenticate: async () => true };
@@ -118,7 +118,20 @@ function baseDependencies(events: string[]) {
     createManagers: () => {
       events.push("managers");
       return { workspaceManager };
-    }
+    },
+    createMcp: () => ({
+      handler: async () => undefined,
+      close: async () => {
+        events.push("mcp.close");
+      }
+    }),
+    bindLoopback: async () => ({
+      host: "127.0.0.1" as const,
+      port: 43121,
+      close: async () => {
+        events.push("bind.close");
+      }
+    })
   };
 
   return { dependencies, kernel };
@@ -131,7 +144,7 @@ describe("production skill catalog lifecycle", () => {
 
     const stack = await createProductionServiceStack(
       { runtimePath: "/runtime", stateRoot: "/state" },
-      dependencies as unknown as ProductionServiceStackDependencies
+      dependencies
     );
 
     expect(events).toEqual([
@@ -152,6 +165,10 @@ describe("production skill catalog lifecycle", () => {
 
     await stack.close();
     expect(events.slice(-2)).toEqual(["skill.close", "kernel.stop"]);
+
+    await stack.close();
+    expect(events.filter((event) => event === "skill.close")).toHaveLength(1);
+    expect(events.filter((event) => event === "kernel.stop")).toHaveLength(1);
   });
 
   it("closes an already-created catalog before stopping the kernel when later startup fails", async () => {
@@ -165,10 +182,64 @@ describe("production skill catalog lifecycle", () => {
     await expect(
       createProductionServiceStack(
         { runtimePath: "/runtime", stateRoot: "/state" },
-        dependencies as unknown as ProductionServiceStackDependencies
+        dependencies
       )
     ).rejects.toThrow("trust failed");
 
     expect(events.slice(-3)).toEqual(["trust-profile.fail", "skill.close", "kernel.stop"]);
+  });
+
+  it("closes HTTP resources before the production stack and remains idempotent", async () => {
+    const events: string[] = [];
+    const { dependencies } = baseDependencies(events);
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      dependencies
+    );
+
+    await started.close();
+    expect(events.slice(-4)).toEqual(["bind.close", "mcp.close", "skill.close", "kernel.stop"]);
+
+    await started.close();
+    expect(events.filter((event) => event === "bind.close")).toHaveLength(1);
+    expect(events.filter((event) => event === "mcp.close")).toHaveLength(1);
+    expect(events.filter((event) => event === "skill.close")).toHaveLength(1);
+    expect(events.filter((event) => event === "kernel.stop")).toHaveLength(1);
+  });
+
+  it("still stops the kernel when catalog cleanup fails and propagates the cleanup error", async () => {
+    const events: string[] = [];
+    const { dependencies } = baseDependencies(events);
+    dependencies.prepareSkillCatalog = async () => ({
+      list: async () => ({
+        schemaVersion: 1 as const,
+        skills: [],
+        truncated: false,
+        truncationReasons: []
+      }),
+      inspect: async () => {
+        throw new Error("not used");
+      },
+      load: async () => {
+        throw new Error("not used");
+      },
+      close: async () => {
+        events.push("skill.close.fail");
+        throw new Error("skill cleanup failed");
+      }
+    });
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      dependencies
+    );
+
+    await expect(stack.close()).rejects.toThrow("skill cleanup failed");
+    expect(events.slice(-2)).toEqual(["skill.close.fail", "kernel.stop"]);
+
+    await stack.close();
+    expect(events.filter((event) => event === "skill.close.fail")).toHaveLength(1);
+    expect(events.filter((event) => event === "kernel.stop")).toHaveLength(1);
   });
 });
