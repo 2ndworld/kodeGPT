@@ -106,25 +106,27 @@ Pinned inspection is derived from the immutable pinned `SKILL.md`; mutating the 
 
 ## Host acceptance status
 
-**BLOCKED / pending for this exact advisory candidate.**
+**PASS for the host-tested runtime/code candidate `8b7cbacead18a7c4c72e5e282a9dcbd1f41f2433`.**
 
-The current execution environment used to implement and verify this branch does not expose the `@KodeGPT` ChatGPT action namespace, so a real ChatGPT-host `skill.inspect.capabilityPlan` observation cannot be manufactured or inferred from local/production-MCP tests.
+Fresh ChatGPT-host acceptance on 2026-08-13 observed the repository candidate rather than the previously stale global installation. Actual host calls reported:
 
-Before merge:
+- runtime `0.1`;
+- MCP protocol `2026-07-28`;
+- semantic surface `0.3`;
+- `system.health.ok=true`, `auditHealthy=true`, filesystem boundary available, and production test methods disabled;
+- exactly the read-only skill actions `skill.list`, `skill.inspect`, and `skill.load`, with no `skill.run`, source/pin/workspace-trust mutation, or provider invocation authority;
+- an optional host-visible `skill.list.compatibility` input with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`;
+- successful actual invocation of `skill.list` with `compatibility=NATIVE` against the refreshed host schema;
+- a live native fixture whose `skill.inspect.capabilityPlan` had `schemaVersion=1`, `classification=NATIVE`, native suggestions `file.read`, `verify.run`, and `workspace.inspect`, empty missing/external/blocked findings, explicit non-truncated state, and non-empty bounded guidance;
+- `capabilityPlan.classification == skill.compatibility.classification`;
+- no advisory leakage of state-root/source-root/source-capability/security-handle/credential/process authority;
+- one suggested ordinary KodeGPT capability executing only after a separate explicit host tool call, not as a hidden `skill.inspect` chain;
+- a UTF-8 script resource returned by `skill.load` as text/data without creating its harmless execution marker.
 
-1. deploy the exact candidate;
-2. refresh/rescan the ChatGPT app actions;
-3. confirm healthy `system.health` and semantic surface `0.3`;
-4. confirm the three read-only skill tools and existing `skill.list.compatibility` enum;
-5. inspect a live native fixture and observe the advisory `capabilityPlan` with no path/security leakage;
-6. exercise one suggested native capability through a separate ordinary KodeGPT call;
-7. load a script resource and prove it remains data/text only;
-8. confirm source/pin/trust/provider execution authorities remain absent.
-
-Do not mark this host gate PASS from server tests.
+The final schema blocker from the previous ChatGPT snapshot is therefore superseded by actual refreshed-host observation rather than inferred from integration tests.
 
 ## Remaining release/integration gates
 
-After this documentation closure, run the full candidate matrix on the exact final branch commit and keep the working tree clean. Candidate preservation/push and PR creation may proceed once local gates are green, but the PR must not be merged until the exact-candidate host acceptance above is observed PASS.
+This evidence commit changes the Git head while leaving the host-tested runtime implementation unchanged. After this documentation closure, run the full candidate matrix on the exact final branch commit, push that exact head, require CI success for that SHA, perform the final `main...feature` review, and keep the working tree clean before PR integration. A minimal final-head host correlation may be repeated if repository integration policy requires exact-head confirmation, but the completed script/resource acceptance need not be replayed when the runtime tree is unchanged.
 
 Provider interoperability remains a separate future security/design phase.

@@ -304,3 +304,9 @@ Record each row as `PASS`, `FAIL`, or `BLOCKED` with one-line evidence:
 | Restart |  |  |
 
 Never replace a `BLOCKED` host row with a deterministic integration-test result. Record deterministic backend evidence separately.
+
+### 2026-08-13 advisory orchestration closure
+
+For PR #6's host-tested runtime/code candidate `8b7cbacead18a7c4c72e5e282a9dcbd1f41f2433`, the previously blocked stale-schema row was closed by a fresh ChatGPT action snapshot. The actual host-visible `skill.list` schema exposed optional `compatibility` with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`, and `skill.list compatibility=NATIVE` was accepted by the host and backend.
+
+The same fresh host correlation reported runtime `0.1`, protocol `2026-07-28`, surface `0.3`, healthy audit/filesystem state, and production test methods disabled. Actual native `skill.inspect` returned a bounded `capabilityPlan` whose classification matched skill compatibility and suggested `file.read`, `verify.run`, and `workspace.inspect`. Earlier acceptance on the same runtime candidate additionally proved no advisory path/security leakage, separate explicit ordinary-tool execution rather than hidden chaining, and script-resource non-execution. The public skill inventory remained exactly `skill.list`, `skill.inspect`, and `skill.load`; source/pin/workspace-trust/provider execution authorities remained absent.
