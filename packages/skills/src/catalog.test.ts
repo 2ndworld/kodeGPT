@@ -475,7 +475,7 @@ describe("SkillCatalog pinned snapshots", () => {
     catalogStateRoots.push(stateRoot);
     const manager = new FakeSourceManager();
     manager.addSource(SOURCE_A, "private-a");
-    addSkill(manager, SOURCE_A, "portable");
+    addSkill(manager, SOURCE_A, "portable", { body: "Read file context, then run tests.\n" });
     addDirectory(manager, SOURCE_A, "portable/references");
     manager.setFile(SOURCE_A, "portable/references/guide.md", bytes("old guide\n"));
     const pins = new SkillPinStore(stateRoot, {
@@ -499,6 +499,11 @@ describe("SkillCatalog pinned snapshots", () => {
     });
 
     manager.setFile(SOURCE_A, "portable/references/guide.md", bytes("new guide\n"));
+    manager.setFile(
+      SOURCE_A,
+      "portable/SKILL.md",
+      skillDocument("portable", undefined, "Search code for the target, then review diff output.\n")
+    );
     const changed = await catalog.list();
     const versions = changed.skills.filter((skill) => skill.skillId === pinned.skillId);
     expect(versions).toHaveLength(2);
@@ -514,6 +519,11 @@ describe("SkillCatalog pinned snapshots", () => {
     const currentInspection = await catalog.inspect({ skillId: pinned.skillId });
     expect(currentInspection.skill).toMatchObject({ availability: "live", pinned: false });
     expect(currentInspection.skill.fingerprint).not.toBe(pinned.fingerprint);
+    expect(currentInspection.capabilityPlan).toMatchObject({
+      classification: currentInspection.skill.compatibility.classification,
+      nativeCapabilities: expect.arrayContaining(["code.search", "git.diff"])
+    });
+    expect(currentInspection.capabilityPlan.nativeCapabilities).not.toContain("file.read");
     const pinnedInspection = await catalog.inspect({
       skillId: pinned.skillId,
       fingerprint: pinned.fingerprint
@@ -523,6 +533,11 @@ describe("SkillCatalog pinned snapshots", () => {
       availability: "pinned",
       pinned: true
     });
+    expect(pinnedInspection.capabilityPlan).toMatchObject({
+      classification: pinnedInspection.skill.compatibility.classification,
+      nativeCapabilities: expect.arrayContaining(["file.read", "verify.run"])
+    });
+    expect(pinnedInspection.capabilityPlan.nativeCapabilities).not.toContain("code.search");
     await expect(
       catalog.inspect({ skillId: pinned.skillId, fingerprint: "0".repeat(64) })
     ).rejects.toMatchObject({ code: "SKILL_FINGERPRINT_MISMATCH" });

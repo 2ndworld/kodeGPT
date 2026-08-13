@@ -104,6 +104,17 @@ describe("SkillCatalogToolAdapter", () => {
     const adapter = createSkillCatalogToolAdapter({
       inspect: async () => ({
         skill: entry(),
+        capabilityPlan: {
+          schemaVersion: 1,
+          classification: "NATIVE",
+          nativeCapabilities: ["file.read"],
+          missingCapabilities: [],
+          externalRequirements: [],
+          blockedSemantics: [],
+          guidance: [{ capability: "file.read", purpose: "Read bounded file content." }],
+          truncated: false,
+          truncationReasons: []
+        },
         frontmatter: {
           name: "portable",
           description: "Portable skill",
@@ -136,6 +147,13 @@ describe("SkillCatalogToolAdapter", () => {
         compatibility: "KodeGPT",
         allowedTools: ["Read"],
         unknownMetadataKeys: ["vendor-extra"]
+      },
+      capabilityPlan: {
+        schemaVersion: 1,
+        classification: "NATIVE",
+        nativeCapabilities: ["file.read"],
+        truncated: false,
+        truncationReasons: []
       },
       instructionBytes: 27,
       bundleBytes: 128

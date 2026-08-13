@@ -171,6 +171,7 @@ export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
 
 export interface SkillCatalogInspection {
   skill: SkillCatalogEntry;
+  capabilityPlan: SkillCapabilityPlan;
   frontmatter: SkillValidatedFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
@@ -196,6 +197,7 @@ export interface SkillInspectFrontmatter {
 export interface SkillInspectResult {
   schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
   skill: SkillCatalogEntry;
+  capabilityPlan: SkillCapabilityPlan;
   frontmatter: SkillInspectFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
