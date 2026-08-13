@@ -1,6 +1,6 @@
 # ChatGPT Compatibility Claim Gate
 
-Status date: 2026-08-12.
+Status date: 2026-08-13.
 
 KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compatibility. Passing KodeGPT's local protocol, security, Apps, and packaging suites is necessary but is not evidence that a specific ChatGPT plan/workspace can connect to or invoke every KodeGPT capability.
 
@@ -29,8 +29,11 @@ The compatibility claim is therefore scoped to observed evidence:
 - Any confirmation prompt or action-control behavior must be recorded as observed host behavior, not inferred from MCP annotations.
 - MCP Apps rendering must be recorded separately from text fallback behavior.
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
+- After the MCP tool inventory or tool input definitions change, the ChatGPT app/connector actions must be refreshed/rescanned before new host evidence is collected. ChatGPT may retain an approved/frozen tool snapshot; a running server with a newer surface version does not by itself prove the host is using that newer inventory.
 
 For the reconciled `0.3` candidate, begin host acceptance by calling `system.capabilities` and require `mcpProtocolVersion:"2026-07-28"` plus `mcpSurfaceVersion:"0.3"`. A still-running `0.2` connector is a stale deployment and must not be used as evidence that the `0.3` candidate passed or failed host behavior; restart/reinstall the exact candidate first.
+
+When the `0.3` host action inventory is refreshed, inspect the actual host-visible `skill.list` input schema rather than inferring it from server tests. It must expose optional `compatibility` with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`. Also inspect the action names themselves: the host must not expose `skill.run`, source/pin mutation, workspace-trust mutation, or provider invocation authority.
 
 ## Native capability hub semantics
 
