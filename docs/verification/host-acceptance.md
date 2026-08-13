@@ -1,6 +1,6 @@
 # KodeGPT Host Acceptance Runbook
 
-Status date: 2026-08-12.
+Status date: 2026-08-13.
 
 This is the canonical manual acceptance runbook for proving an actual ChatGPT Web → KodeGPT path. It complements deterministic protocol/integration/security suites; it does not replace them.
 
@@ -106,7 +106,10 @@ Expected:
 - `auditHealthy=true`;
 - filesystem boundary is available;
 - production test methods are disabled;
-- reported MCP protocol/surface versions match the release candidate.
+- MCP protocol is exactly `2026-07-28`;
+- semantic MCP surface is exactly `0.3` for the current v0.1 baseline.
+
+Then inspect the host-visible action inventory itself. Do not use tool count alone as evidence: verify the expected action names, confirm the three read-only skill actions are present, and confirm forbidden mutation/provider/trust authorities are absent.
 
 ## 5. Disposable workspace fixture
 
@@ -174,6 +177,13 @@ Before calling skill tools, confirm the ChatGPT host currently discovers exactly
 - `skill.inspect`
 - `skill.load`
 
+Confirm the host-visible `skill.list` input schema has optional `compatibility` with exactly these enum values:
+
+- `NATIVE`
+- `PARTIAL`
+- `PROVIDER_REQUIRED`
+- `UNSUPPORTED`
+
 Confirm the host does **not** discover:
 
 - `skill.run`
@@ -184,7 +194,7 @@ Confirm the host does **not** discover:
 - workspace trust mutation
 - Codex/Claude/provider invocation tools
 
-If the current ChatGPT app/connector still exposes an older frozen tool snapshot, refresh/rescan the app actions and reconnect as required by the host product. Until the three read-only skill tools are visible, mark the following host skill scenarios `BLOCKED`.
+If the current ChatGPT app/connector still exposes an older frozen tool snapshot or a stale `skill.list` schema, refresh/rescan the app actions and reconnect as required by the host product. Until both the three read-only skill tools and the `compatibility` input are visible, mark the affected host action-schema scenarios `BLOCKED`.
 
 ## 10. Portable live-skill fixture
 
@@ -278,6 +288,7 @@ Record each row as `PASS`, `FAIL`, or `BLOCKED` with one-line evidence:
 | Audit behavior |  |  |
 | Workspace identity replacement |  |  |
 | `skill.list` |  |  |
+| `skill.list.compatibility` host schema |  |  |
 | `skill.inspect` |  |  |
 | `skill.load` |  |  |
 | Script non-execution |  |  |

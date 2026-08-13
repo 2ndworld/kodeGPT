@@ -1,5 +1,7 @@
 # Native Skill Execution Orchestration Implementation Plan
 
+> **Baseline reconciliation (2026-08-13):** this remains future advisory/read-only work and has not been implemented. The current released candidate baseline is MCP semantic surface `0.3` with protocol `2026-07-28`, including the host-visible optional `skill.list.compatibility` filter. Reconcile any implementation of this plan against that baseline; do not revive the earlier `0.2` assumption, add provider invocation, or create `skill.run`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add deterministic, read-only skill-to-native-capability guidance to `skill.inspect` so GPT Web can orchestrate existing KodeGPT primitives without introducing `skill.run` or provider-agent execution.
@@ -10,7 +12,7 @@
 
 ## Global Constraints
 
-- MCP semantic surface remains `0.2` unless the repository's existing compatibility/versioning policy requires a schema-version increment for the additive `skill.inspect` result field; do not invent a new versioning scheme.
+- MCP semantic surface baseline is `0.3`. Any future additive `skill.inspect` result-field version treatment must follow the repository's existing compatibility/versioning policy; do not invent a new versioning scheme or regress the baseline to `0.2`.
 - The public skill tool inventory remains exactly `skill.list`, `skill.inspect`, and `skill.load`.
 - Do not add `skill.run`, provider invocation, provider process spawning, provider credential forwarding, or provider session attachment.
 - Source add/remove, pin/unpin, and workspace trust remain local CLI only.

@@ -1,6 +1,9 @@
 # KodeGPT Post-Merge Host Acceptance and Release Readiness
 
-Status date: 2026-08-12.
+> **Historical evidence — superseded for current readiness.** This document records the 2026-08-12 post-PR-#3 acceptance state at semantic surface `0.2`, including the then-frozen 21-tool ChatGPT snapshot. It must not be used as the current v0.1/surface-`0.3` readiness truth. The current authority is source/tests, `docs/implementation/v0.1-execution-tracker.md`, `docs/release/v0.1-checklist.md`, `docs/compatibility/chatgpt.md`, and `docs/verification/host-acceptance.md`.
+
+Status date: 2026-08-12 (historical snapshot).
+Superseded for current readiness: 2026-08-13.
 
 ## Verdict
 
