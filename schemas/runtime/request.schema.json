@@ -237,11 +237,12 @@
         "params": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["capabilityId", "path", "maxEntries"],
+          "required": ["capabilityId", "path", "maxEntries", "scope"],
           "properties": {
             "capabilityId": { "type": "string", "minLength": 1 },
             "path": { "type": "string" },
-            "maxEntries": { "type": "integer", "minimum": 1, "maximum": 10000 }
+            "maxEntries": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "scope": { "enum": ["literal", "semantic"] }
           }
         }
       }
@@ -257,12 +258,13 @@
         "params": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["capabilityId", "path", "query", "maxMatches"],
+          "required": ["capabilityId", "path", "query", "maxMatches", "scope"],
           "properties": {
             "capabilityId": { "type": "string", "minLength": 1 },
             "path": { "type": "string" },
             "query": { "type": "string", "minLength": 1 },
-            "maxMatches": { "type": "integer", "minimum": 1, "maximum": 500 }
+            "maxMatches": { "type": "integer", "minimum": 1, "maximum": 500 },
+            "scope": { "enum": ["literal", "semantic"] }
           }
         }
       }

@@ -119,7 +119,11 @@ describe("MCP skill surface", () => {
     expect(list.config.inputSchema?.limit?.safeParse(501).success).toBe(false);
     expect(list.config.inputSchema?.sourceId?.safeParse(SOURCE_ID).success).toBe(true);
     expect(list.config.inputSchema?.sourceId?.safeParse("/private/source").success).toBe(false);
-    await list.handler({ limit: 10, sourceId: SOURCE_ID, pinned: true });
+    for (const classification of ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"] as const) {
+      expect(list.config.inputSchema?.compatibility?.safeParse(classification).success).toBe(true);
+    }
+    expect(list.config.inputSchema?.compatibility?.safeParse("UNKNOWN").success).toBe(false);
+    await list.handler({ limit: 10, sourceId: SOURCE_ID, compatibility: "NATIVE", pinned: true });
 
     const inspect = required(tools, "skill.inspect");
     expect(inspect.config.inputSchema?.skillId?.safeParse(SKILL_ID).success).toBe(true);
@@ -132,7 +136,7 @@ describe("MCP skill surface", () => {
     expect(load.config.inputSchema?.resources?.safeParse(Array.from({ length: 33 }, () => "x")).success).toBe(false);
     await load.handler({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
 
-    expect(seen).toContainEqual({ limit: 10, sourceId: SOURCE_ID, pinned: true });
+    expect(seen).toContainEqual({ limit: 10, sourceId: SOURCE_ID, compatibility: "NATIVE", pinned: true });
     expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
     expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
   });

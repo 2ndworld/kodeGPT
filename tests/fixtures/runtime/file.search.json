@@ -6,6 +6,7 @@
     "capabilityId": "kc_fixture_1",
     "path": ".",
     "query": "needle",
-    "maxMatches": 100
+    "maxMatches": 100,
+    "scope": "literal"
   }
 }

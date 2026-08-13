@@ -16,6 +16,7 @@ import {
   type WorkspaceInspectResult
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
+import { isSemanticDiscoveryPath } from "./semantic-scope.js";
 
 export const INTENT_WEIGHTS = {
   understand: { target: 100, changed: 40, tests: 20, config: 50, search: 30 },
@@ -74,6 +75,11 @@ export async function buildContext(
   const verify = await adapter.verify({ workspaceId: input.workspaceId });
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
+  const relevantMatches = sortedMatches(
+    search.matches.filter(
+      (match) => match.path === input.target || isSemanticDiscoveryPath(match.path)
+    )
+  );
   const warnings = [...workspace.warnings];
   if (git.truncated) warnings.push("git-change-evidence-truncated");
   if (search.truncated) warnings.push("search-evidence-truncated");
@@ -132,7 +138,7 @@ export async function buildContext(
     workspace,
     git,
     selectedFiles,
-    relevantMatches: sortedMatches(search.matches),
+    relevantMatches,
     verifications: sortedVerifications(verify.recipes),
     warnings: [...new Set(warnings)],
     totalBytes,
@@ -152,6 +158,7 @@ function selectCandidates(
 
   const add = (path: string, reason: string, kind: CandidateKind) => {
     if (!isSafeRelativePath(path)) return;
+    if (kind !== "target" && !isSemanticDiscoveryPath(path)) return;
     const candidate = {
       path,
       reason,

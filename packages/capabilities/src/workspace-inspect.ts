@@ -30,7 +30,7 @@ export async function inspectWorkspace(
   }
 
   const root = input.path ?? ".";
-  const treeResult = await workspace.tree(input.workspaceId, root, maxEntries);
+  const treeResult = await workspace.tree(input.workspaceId, root, maxEntries, "semantic");
   const tree = [...treeResult.entries].sort(compareTreeEntries);
   const adapterExceededBound = tree.length > maxEntries;
   const entries = tree.slice(0, maxEntries);
@@ -192,7 +192,11 @@ function detectAreas(
         areas.set(entry.path, { path: entry.path, kind: "package" });
         continue;
       }
-      if (segments.length === 1 && !["apps", "packages", "crates", "tests", "docs", ".github"].includes(segments[0]!)) {
+      if (
+        segments.length === 1 &&
+        !segments[0]!.startsWith(".") &&
+        !["apps", "packages", "crates", "tests", "docs"].includes(segments[0]!)
+      ) {
         areas.set(entry.path, { path: entry.path, kind: "other" });
       }
       continue;

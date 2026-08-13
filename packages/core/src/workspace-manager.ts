@@ -150,6 +150,7 @@ export interface WorkspaceVerificationRunInput {
   background?: boolean;
 }
 
+export type WorkspaceTraversalScope = "literal" | "semantic";
 export type WorkspaceTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
 export interface WorkspaceTreeEntry {
@@ -681,7 +682,8 @@ export class WorkspaceManager {
   async treeBounded(
     workspaceId: string,
     path = ".",
-    maxEntries = 2_000
+    maxEntries = 2_000,
+    scope: WorkspaceTraversalScope = "literal"
   ): Promise<WorkspaceTreeResult> {
     if (path.length === 0) {
       throw new TypeError("Workspace tree path must not be empty");
@@ -689,11 +691,15 @@ export class WorkspaceManager {
     if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0 || maxEntries > 10_000) {
       throw new TypeError("Workspace tree maxEntries must be between 1 and 10000");
     }
+    if (scope !== "literal" && scope !== "semantic") {
+      throw new TypeError("Workspace tree scope must be literal or semantic");
+    }
     const state = this.#requireReadyState(workspaceId);
     const result = await this.#kernel.request<unknown>("file.tree", {
       capabilityId: state.capabilityId,
       path,
-      maxEntries
+      maxEntries,
+      scope
     });
     if (
       !isRecord(result) ||
@@ -719,7 +725,8 @@ export class WorkspaceManager {
     workspaceId: string,
     query: string,
     path = ".",
-    maxMatches = 200
+    maxMatches = 200,
+    scope: WorkspaceTraversalScope = "literal"
   ): Promise<WorkspaceSearchResult> {
     if (query.length === 0) {
       throw new TypeError("Workspace search query must not be empty");
@@ -730,12 +737,16 @@ export class WorkspaceManager {
     if (!Number.isSafeInteger(maxMatches) || maxMatches <= 0 || maxMatches > 500) {
       throw new TypeError("Workspace search maxMatches must be between 1 and 500");
     }
+    if (scope !== "literal" && scope !== "semantic") {
+      throw new TypeError("Workspace search scope must be literal or semantic");
+    }
     const state = this.#requireReadyState(workspaceId);
     const result = await this.#kernel.request<unknown>("file.search", {
       capabilityId: state.capabilityId,
       path,
       query,
-      maxMatches
+      maxMatches,
+      scope
     });
     if (
       !isRecord(result) ||

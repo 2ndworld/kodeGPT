@@ -117,12 +117,20 @@ pub struct FileReadParams {
     pub max_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceTraversalScope {
+    Literal,
+    Semantic,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileTreeParams {
     pub capability_id: String,
     pub path: String,
     pub max_entries: usize,
+    pub scope: WorkspaceTraversalScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +140,7 @@ pub struct FileSearchParams {
     pub path: String,
     pub query: String,
     pub max_matches: usize,
+    pub scope: WorkspaceTraversalScope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -31,9 +31,11 @@ The compatibility claim is therefore scoped to observed evidence:
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
 - After the MCP tool inventory or tool input definitions change, the ChatGPT app/connector actions must be refreshed/rescanned before new host evidence is collected. ChatGPT may retain an approved/frozen tool snapshot; a running server with a newer surface version does not by itself prove the host is using that newer inventory.
 
+For the reconciled `0.3` candidate, begin host acceptance by calling `system.capabilities` and require `mcpProtocolVersion:"2026-07-28"` plus `mcpSurfaceVersion:"0.3"`. A still-running `0.2` connector is a stale deployment and must not be used as evidence that the `0.3` candidate passed or failed host behavior; restart/reinstall the exact candidate first.
+
 ## Native capability hub semantics
 
-KodeGPT's released Phase 1 native capability hub is the `0.2` MCP tool surface. GPT Web remains the reasoning actor: KodeGPT provides bounded, typed, policy-checked desktop/repository capabilities and does not introduce an autonomous coding agent, a Codex execution path, or a general shell shortcut.
+KodeGPT's released native capability + read-only skill hub is the `0.3` semantic MCP tool surface; the MCP protocol remains `2026-07-28`. GPT Web remains the reasoning actor: KodeGPT provides bounded, typed, policy-checked desktop/repository capabilities and does not introduce an autonomous coding agent, a Codex execution path, or a general shell shortcut.
 
 The higher-level tools reduce repeated primitive round trips without replacing lower-level authority:
 
@@ -43,6 +45,8 @@ The higher-level tools reduce repeated primitive round trips without replacing l
 - `verify.list` discovers only named deterministic recipes. `verify.run` selects and re-resolves one of those recipes through the existing process sandbox; it does not accept an arbitrary replacement executable/argv or shell command.
 - `file.patch` defaults to `check`. It parses a bounded text-only unified patch, performs full preflight for all affected files before the first mutation, then in `apply` mode uses per-file conditional retained-root commits. It is **not** a globally atomic multi-file transaction: a host/runtime failure during commit may leave already committed earlier paths in place, and KodeGPT reports `committedPaths` plus `failedPath` rather than claiming rollback.
 
+High-level repository understanding uses an internal **semantic traversal scope** by default for `workspace.inspect`, all `code.search` modes, `context.build` discovery evidence, and verification project discovery. The fixed VCS/worktree/generated/vendor/cache directory set is skipped for relevance before traversal/search budgets are consumed; this is not an access-control deny list. Primitive `file.tree`/`file.search` remain literal, arbitrary hidden first-party config directories are not excluded merely because they begin with `.`, and explicitly asking a high-level operation to start inside an otherwise excluded subtree opts that requested root back in.
+
 Workspace trust remains local-only and is deliberately absent from the MCP tool inventory. The public surface also contains no `shell.run`, `codex.run`, `codex.exec`, or `skill.run` execution tools.
 
 ## Hybrid skill interoperability
@@ -51,7 +55,9 @@ Hybrid skill interoperability keeps GPT Web as the reasoning actor over skill se
 
 The release does **not** launch, proxy, or depend on Codex or Claude agents. Skill scripts and resources are data: an explicitly requested UTF-8 script resource may be returned as text, but it is never executed merely because a skill references or contains it. Live skills reflect source changes automatically, while pinned skills preserve immutable, reproducible snapshots that remain loadable when the corresponding live source is unavailable. A persisted source path that is replaced with a different filesystem identity is not treated as ordinary unavailability: identity replacement remains fail-closed even when an older snapshot is pinned.
 
-Source admission/removal and pin/unpin are local CLI actions. MCP exposes only the read-only `skill.list`, `skill.inspect`, and `skill.load` tools; it does not expose source mutation, pin mutation, workspace trust, host paths, state-root paths, canonical source roots, or source capability IDs.
+Source admission/removal and pin/unpin are local CLI actions. MCP exposes only the read-only `skill.list`, `skill.inspect`, and `skill.load` tools; it does not expose source mutation, pin mutation, workspace trust, host paths, state-root paths, canonical source roots, or source capability IDs. `skill.list` can optionally filter by `sourceId`, compatibility classification, and pinned state before applying its public result limit. Public bounds remain 500 list results, 32 explicitly requested `skill.load` resources, and 512 KiB returned load bytes.
+
+Skill identity is stable across live and pinned state: `ss_...` identifies an admitted source, `sk_...` identifies the skill, and `(skillId, fingerprint)` selects an immutable version. The current private pin layout is `<stateRoot>/skills/pinned/<skillId>/<fingerprint>/`; no separate public `sp_...` pin identity is part of the shipped contract.
 
 Compatibility classification is advisory semantic-portability metadata, not a permission grant:
 
@@ -73,10 +79,14 @@ Before claiming ChatGPT compatibility for a release candidate, capture a local-o
 | planWorkspace | ChatGPT plan/workspace type used for the test |
 | connectionPath | Exact path used, for example `secure-mcp-tunnel-stdio` or `zrok-public-https-query-credential` |
 | discovery | Whether ChatGPT discovered the KodeGPT server/tools |
+| workspaceOpen | Whether the host successfully opened an already locally trusted workspace |
 | readAction | At least one read-only action and observed result |
-| writeAvailability | Whether write/modify actions were available to that host |
-| writeConfirmation | Whether/how the host requested confirmation for the tested action |
-| appsRendering | Whether `ui://kodegpt/dev-console/v1` rendered as an MCP App |
+| writeAvailability | Whether write/modify actions were exposed to that host |
+| writeRoundTrip | Whether a reversible write/edit was executed, read back, and exactly reverted |
+| processAction | Whether a process action reached KodeGPT and the observed allow/deny/result behavior |
+| skillActionExposure | Whether `skill.list`, `skill.inspect`, and `skill.load` actions reached KodeGPT, even if the catalog was empty/unconfigured |
+| skillPositiveRoundTrip | Whether a configured non-empty host catalog completed `skill.list -> skill.inspect -> skill.load` and verified the expected resource marker |
+| appsRendering | Whether `ui://kodegpt/dev-console/v1` actually rendered as an MCP App |
 | fallbackBehavior | What happened when Apps rendering was unavailable/disabled |
 | notes | Any host-specific limitations or permissions |
 

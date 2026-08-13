@@ -73,7 +73,8 @@ export interface WorkspaceInspectionAdapter {
   tree(
     workspaceId: string,
     path: string | undefined,
-    maxEntries: number
+    maxEntries: number,
+    scope: "literal" | "semantic"
   ): Promise<CapabilityTreeResult>;
 }
 
@@ -82,7 +83,8 @@ export interface CodeSearchAdapter {
     workspaceId: string,
     query: string,
     path: string | undefined,
-    maxMatches: number
+    maxMatches: number,
+    scope: "literal" | "semantic"
   ): Promise<CapabilitySearchResult>;
 }
 
@@ -138,6 +140,12 @@ export interface VerificationWorkspaceAdapter {
     path: string,
     options?: { offset?: number; maxBytes?: number }
   ): Promise<{ contents: string; bytesRead: number; eof: boolean }>;
+  tree(
+    workspaceId: string,
+    path: string | undefined,
+    maxEntries: number,
+    scope: "literal" | "semantic"
+  ): Promise<CapabilityTreeResult>;
   pathIdentity(workspaceId: string, path: string): Promise<CapabilityPathIdentityResult>;
   effectivePolicy(workspaceId: string): {
     allowProcess: boolean;

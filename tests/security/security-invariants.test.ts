@@ -120,7 +120,7 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships the native capability hub surface without trust, shell, Codex, or skill execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.2");
+    expect(MCP_SURFACE_VERSION).toBe("0.3");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
@@ -145,7 +145,10 @@ describe("full security acceptance invariants", () => {
       "skill.pin",
       "skill.unpin",
       "skill.source.add",
-      "skill.source.remove"
+      "skill.source.remove",
+      "provider.list",
+      "provider.tools",
+      "provider.invoke"
     ]) {
       expect(names).not.toContain(forbidden);
     }

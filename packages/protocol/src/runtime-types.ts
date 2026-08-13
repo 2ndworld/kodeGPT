@@ -100,11 +100,14 @@ const fileReadParamsSchema = z
   })
   .strict();
 
+const workspaceTraversalScopeSchema = z.enum(["literal", "semantic"]);
+
 const fileTreeParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
     path: z.string(),
-    maxEntries: z.number().int().positive().max(10_000).safe()
+    maxEntries: z.number().int().positive().max(10_000).safe(),
+    scope: workspaceTraversalScopeSchema
   })
   .strict();
 
@@ -113,7 +116,8 @@ const fileSearchParamsSchema = z
     capabilityId: z.string().min(1),
     path: z.string(),
     query: z.string().min(1),
-    maxMatches: z.number().int().positive().max(500).safe()
+    maxMatches: z.number().int().positive().max(500).safe(),
+    scope: workspaceTraversalScopeSchema
   })
   .strict();
 

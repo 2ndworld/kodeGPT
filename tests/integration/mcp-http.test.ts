@@ -396,6 +396,12 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
       expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
+
+      const skillList = tools.find((tool) => tool.name === "skill.list");
+      expect(skillList?.inputSchema?.properties?.compatibility).toEqual({
+        type: "string",
+        enum: ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"]
+      });
     } finally {
       await handler.close();
     }

@@ -6,6 +6,8 @@ Baseline: `main@b8a3b71` (`chore(capabilities): complete native capability surfa
 Supersedes for Phase 2 execution only: stale assumptions in `2026-08-11-kodegpt-hybrid-skill-interoperability.md`
 Preserves: `2026-08-11-kodegpt-capability-hub-skill-interoperability-design.md`
 
+> **Execution reconciliation (2026-08-13):** Phase 2 is now shipped and the semantic MCP surface is `0.3` with protocol `2026-07-28`. Current source/tests define the final public bounds, stable `sk_... + fingerprint` identity model, `skill.list.compatibility` filter, and private `skills/pinned/<skillId>/<fingerprint>` storage layout documented below. Baseline references to surface `0.2` describe the pre-Phase-2 starting point, not the current release state.
+
 ## 1. Goal
 
 Phase 2 lets GPT Web discover, inspect, and load portable Agent Skills-compatible instruction/resource bundles without executing Codex, Codex CLI, Codex app-server, a second reasoning agent, or bundled skill scripts.
@@ -183,6 +185,16 @@ Discovery is shallow at source-root skill-directory level: identify direct child
 
 Limit exhaustion is explicit; no result may claim completeness after silently skipping entries because of a bound.
 
+The public MCP skill tools intentionally use stricter bounds than the internal catalog/bundle ceilings:
+
+```text
+skill.list result limit            <= 500
+skill.load requested resources     <= 32
+skill.load returned bytes          <= 512 KiB
+```
+
+The internal 1,000-skill/source, 64 loaded-resource, and 1 MiB bundle/load ceilings remain internal implementation bounds and must not be presented as the public MCP contract.
+
 ## 8. Progressive disclosure
 
 ### `skill.list`
@@ -199,6 +211,8 @@ descriptor fingerprint
 compatibility summary
 warnings/truncation metadata
 ```
+
+Optional read-only filters are applied before the public result limit in this order: `sourceId`, `compatibility`, `pinned`, then limit. `compatibility` accepts only `NATIVE | PARTIAL | PROVIDER_REQUIRED | UNSUPPORTED`.
 
 ### `skill.inspect`
 
@@ -237,13 +251,16 @@ Binary/non-UTF8 resources may appear in inventory metadata but are not inlined b
 
 Public identity never depends on a host absolute path.
 
-Use opaque IDs:
+Use opaque IDs and immutable version selectors:
 
 ```text
-ss_... live source
-sk_... skill identity
-sp_... pinned immutable skill
+ss_... source identity
+sk_... stable skill identity
+(skillId, fingerprint) immutable live/pinned version selector
+availability/pinned live-vs-pinned state
 ```
+
+The shipped contract does not create a second public `sp_...` identity for pinned content. Keeping the same `sk_...` identity across live and pinned versions avoids identity churn while the fingerprint preserves immutable reproducibility.
 
 Duplicate skill names across sources are not shadowed. They remain separate opaque IDs and may expose `nameCollision:true`.
 
@@ -273,27 +290,25 @@ The same content at another admitted path yields the same bundle fingerprint.
 
 ## 11. Immutable pin store
 
-Pinned content is KodeGPT-owned state under:
+Pinned content is KodeGPT-owned private state under the current shipped layout:
 
 ```text
-~/.kodegpt/skills/pins/<bundleFingerprint>/
+<stateRoot>/skills/pinned/<skillId>/<fingerprint>/
 ```
 
-with a versioned manifest containing provenance-safe metadata:
+with a versioned manifest containing provenance-safe metadata equivalent to:
 
 ```text
 schemaVersion
-pinId
-bundleFingerprint
-originalSkillName
-sourceId
-sourceKind
-sourceDescriptorFingerprint
-pinnedAt
-files[{relativePath, bytes, sha256}]
+skillId
+name
+description
+fingerprint
+provenance { sourceId, sourceKind, sourceRelativePath, pinnedAt }
+files[{path, bytes, sha256}]
 ```
 
-No canonical source root is stored in the model-visible pin manifest.
+There is no separate public pin ID. No canonical source root is stored in model-visible skill results or in the pin manifest.
 
 Pin creation uses the Rust source authority to read the complete bounded bundle, writes to a temporary private state directory, fsyncs, then atomically publishes the content-addressed directory. Same fingerprint is idempotent. Failed pin creation leaves no visible partial pin.
 

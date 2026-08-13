@@ -5,6 +5,8 @@
 **Base commit:** `be5da38` (`feat(capabilities): add safe verification recipes`)  
 **Implementation branch:** `feat/native-capability-layer-hardening`
 
+> **Execution reconciliation (2026-08-13):** the status/header and later “Task 7 remains unimplemented” statements are historical to this hardening pass. Current source/tests now ship `file.patch`, `context.build`, semantic repository traversal, and nested verification discovery. Current contract authority is the v0.1 execution tracker plus `docs/superpowers/specs/2026-08-12-kodegpt-capability-quality-reconciliation-design.md`; MCP semantic surface is now `0.3` while protocol remains `2026-07-28`. Historical scope statements below are preserved to show what this 2026-08-11 design itself intended, not to describe present implementation status.
+
 ## 1. Purpose
 
 This hardening pass corrects semantic, boundedness, audit, error-contract, and maintainability weaknesses found during the post-implementation review of:

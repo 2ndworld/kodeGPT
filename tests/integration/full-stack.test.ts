@@ -143,8 +143,31 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     const workspaceB = await tempRoot("kodegpt-task23-b-");
     await mkdir(join(workspaceA, "nested"));
     await mkdir(join(workspaceA, "src"));
+    await mkdir(join(workspaceA, "frontend"));
+    await mkdir(join(workspaceA, "node_modules/pkg"), { recursive: true });
+    await mkdir(join(workspaceA, ".worktrees/old"), { recursive: true });
+    await mkdir(join(workspaceA, "target/generated"), { recursive: true });
     await writeFile(join(workspaceA, "tracked.txt"), "before\n");
     await writeFile(join(workspaceA, "src/main.ts"), "export function needle() {}\nneedle();\n");
+    await writeFile(
+      join(workspaceA, "frontend/package.json"),
+      JSON.stringify({
+        name: "frontend",
+        scripts: { test: "frontend-test", lint: "frontend-lint", typecheck: "frontend-typecheck", build: "frontend-build" }
+      }) + "\n"
+    );
+    await writeFile(
+      join(workspaceA, "node_modules/pkg/package.json"),
+      JSON.stringify({ name: "dependency-copy", marker: "dependency-marker" }) + "\n"
+    );
+    await writeFile(
+      join(workspaceA, ".worktrees/old/package.json"),
+      JSON.stringify({ name: "worktree-copy", marker: "worktree-marker" }) + "\n"
+    );
+    await writeFile(
+      join(workspaceA, "target/generated/package.json"),
+      JSON.stringify({ name: "generated-copy", marker: "generated-marker" }) + "\n"
+    );
     await writeFile(
       join(workspaceA, "package.json"),
       JSON.stringify({
@@ -158,6 +181,10 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     await writeFile(join(workspaceA, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
+    await writeFile(
+      join(workspaceA, ".git/info/exclude"),
+      "/frontend/\n/node_modules/\n/.worktrees/\n/target/\n"
+    );
     runGit(workspaceA, ["add", "tracked.txt"]);
 
     const trust = new WorkspaceTrustStore(stateRoot);
@@ -269,6 +296,17 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       );
       expect(JSON.stringify(tree)).toContain("tracked.txt");
 
+      const literalDependencySearch = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "file.search",
+          { workspaceId: openedA.id, query: "dependency-marker", path: "node_modules" },
+          "req_full_literal_dependency_search"
+        )
+      );
+      expect(JSON.stringify(literalDependencySearch)).toContain("node_modules/pkg/package.json");
+
       const inspectResult = await callTool(
         port,
         credential.token,
@@ -285,6 +323,28 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         projectTypes: ["node-pnpm"],
         truncated: false
       });
+      const serializedInspect = JSON.stringify(inspect);
+      expect(serializedInspect).not.toContain("node_modules");
+      expect(serializedInspect).not.toContain(".worktrees");
+      expect(serializedInspect).not.toContain("target/generated");
+      expect(serializedInspect).not.toContain(".git");
+
+      const manifestSearch = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "code.search",
+          { workspaceId: openedA.id, query: "package.json", mode: "path" },
+          "req_full_semantic_manifest_search"
+        )
+      );
+      expect(manifestSearch.matches).toContainEqual({ path: "package.json", kind: "path" });
+      expect(manifestSearch.matches).toContainEqual({ path: "frontend/package.json", kind: "path" });
+      const serializedManifestSearch = JSON.stringify(manifestSearch);
+      expect(serializedManifestSearch).not.toContain("node_modules");
+      expect(serializedManifestSearch).not.toContain(".worktrees");
+      expect(serializedManifestSearch).not.toContain("target/generated");
+      expect(serializedManifestSearch).not.toContain(".git");
 
       const codeSearchResult = await callTool(
         port,
@@ -332,6 +392,20 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         allowed: false,
         blockedReason: "EXECUTABLE_UNAVAILABLE"
       });
+      expect(verifyList.recipes).toContainEqual({
+        id: "package:frontend:test",
+        label: "Package test",
+        category: "test",
+        logicalExecutable: "pnpm",
+        argv: ["run", "test"],
+        cwd: "frontend",
+        source: "package-script",
+        allowed: false,
+        blockedReason: "EXECUTABLE_UNAVAILABLE"
+      });
+      expect(JSON.stringify(verifyList)).not.toContain("node_modules");
+      expect(JSON.stringify(verifyList)).not.toContain(".worktrees");
+      expect(JSON.stringify(verifyList)).not.toContain("target/generated");
       expect(JSON.stringify(verifyList)).not.toContain("/home/");
       expect(JSON.stringify(verifyList)).not.toContain("/usr/");
 
@@ -364,7 +438,11 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         expect.objectContaining({ path: "package.json", reason: "governing-manifest" })
       );
       expect(contextBuild.totalBytes).toBeLessThanOrEqual(4_096);
-      expect(JSON.stringify(contextBuild)).not.toContain(workspaceA);
+      const serializedContextBuild = JSON.stringify(contextBuild);
+      expect(serializedContextBuild).not.toContain(workspaceA);
+      expect(serializedContextBuild).not.toContain("node_modules");
+      expect(serializedContextBuild).not.toContain(".worktrees");
+      expect(serializedContextBuild).not.toContain("target/generated");
 
       const gitChangesResult = await callTool(
         port,
