@@ -194,7 +194,7 @@ Confirm the host does **not** discover:
 - workspace trust mutation
 - Codex/Claude/provider invocation tools
 
-If the current ChatGPT app/connector still exposes an older frozen tool snapshot or a stale `skill.list` schema, refresh/rescan the app actions and reconnect as required by the host product. Until both the three read-only skill tools and the `compatibility` input are visible, mark the affected host action-schema scenarios `BLOCKED`.
+If the current ChatGPT app/connector still exposes an older frozen tool snapshot or a stale `skill.list` schema, refresh/rescan the app actions and reconnect as required by the host product. Until both the three read-only skill tools and the `compatibility` input are visible, mark the affected host action-schema scenarios `BLOCKED`. When validating a candidate that adds advisory `skill.inspect` result fields, refresh/rescan before claiming those fields are host-visible; local integration output is not a substitute for actual ChatGPT observation.
 
 ## 10. Portable live-skill fixture
 
@@ -210,9 +210,11 @@ Through ChatGPT:
 
 1. `skill.list` and record the public skill ID plus compatibility classification.
 2. `skill.inspect` and record the fingerprint.
-3. Verify the result does not reveal the state root, canonical source root, source capability ID, or unnecessary host path.
-4. `skill.load` the instructions, UTF-8 reference, and UTF-8 script resource.
-5. Verify the script is returned as text and the side-effect marker still does not exist.
+3. For candidates with advisory orchestration, verify `capabilityPlan.schemaVersion == 1`, `classification` matches the skill compatibility verdict, arrays are bounded, and at least one relevant existing native capability is suggested for a native fixture.
+4. Verify the inspection result does not reveal the state root, canonical source root, source capability ID, workspace/security handles, credentials, or unnecessary host path.
+5. If exercising a suggested native capability, invoke it as a **separate ordinary KodeGPT tool call** and record the result; the plan itself must not execute anything.
+6. `skill.load` the instructions, UTF-8 reference, and UTF-8 script resource.
+7. Verify the script is returned as data/text and the side-effect marker still does not exist.
 
 Binary/unsupported resources should be rejected according to the bounded resource contract rather than silently executed or decoded as text.
 

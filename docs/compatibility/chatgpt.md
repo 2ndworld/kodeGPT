@@ -70,6 +70,8 @@ Compatibility classification is advisory semantic-portability metadata, not a pe
 
 Runtime/security policy remains the final authority regardless of compatibility classification. Provider interoperability (`provider.list`, `provider.tools`, `provider.invoke`) and `skill.run` are intentionally out of scope for this phase.
 
+`skill.inspect` may also return a bounded `capabilityPlan` with `schemaVersion: 1`. The plan is deterministic advisory metadata derived from the selected skill bundle and the existing native capability registry. It can name relevant native capability IDs, missing capabilities, external requirements, blocked semantics, and bounded guidance. It is **not** permission, does not execute any capability, does not invoke a provider, and does not weaken runtime policy. GPT Web remains the orchestration/reasoning actor and must make separate ordinary KodeGPT tool calls for any actual host operation. The three public skill tools remain exactly `skill.list`, `skill.inspect`, and `skill.load`; `skill.load` returns requested UTF-8 resources as data/text and never executes them.
+
 ## Required manual host evidence matrix
 
 Before claiming ChatGPT compatibility for a release candidate, capture a local-only evidence record containing at least:
@@ -88,6 +90,7 @@ Before claiming ChatGPT compatibility for a release candidate, capture a local-o
 | processAction | Whether a process action reached KodeGPT and the observed allow/deny/result behavior |
 | skillActionExposure | Whether `skill.list`, `skill.inspect`, and `skill.load` actions reached KodeGPT, even if the catalog was empty/unconfigured |
 | skillPositiveRoundTrip | Whether a configured non-empty host catalog completed `skill.list -> skill.inspect -> skill.load` and verified the expected resource marker |
+| skillCapabilityPlan | Whether actual host `skill.inspect` returned bounded advisory `capabilityPlan` semantics for the exact candidate, with no authority/path leakage and a separate ordinary native tool call used for any suggested host operation |
 | appsRendering | Whether `ui://kodegpt/dev-console/v1` actually rendered as an MCP App |
 | fallbackBehavior | What happened when Apps rendering was unavailable/disabled |
 | notes | Any host-specific limitations or permissions |
