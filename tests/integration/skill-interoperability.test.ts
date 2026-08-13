@@ -189,7 +189,7 @@ describe("hybrid skill interoperability release fixtures", () => {
     const sourceRoot = await tempRoot("kodegpt-task10-source-");
     const executionMarker = join(sourceRoot, "portable", "script-was-executed");
 
-    for (const name of ["portable", "volatile", "provider-skill"]) {
+    for (const name of ["portable", "volatile", "provider-skill", "declared-provider"]) {
       await mkdir(join(sourceRoot, name), { recursive: true });
     }
     await mkdir(join(sourceRoot, "portable", "references"), { recursive: true });
@@ -197,7 +197,11 @@ describe("hybrid skill interoperability release fixtures", () => {
     await mkdir(join(sourceRoot, "portable", "scripts"), { recursive: true });
     await writeFile(
       join(sourceRoot, "portable", "SKILL.md"),
-      skillDocument("portable", "Portable release skill", "Follow the portable instructions.\n")
+      skillDocument(
+        "portable",
+        "Portable release skill",
+        "Inspect workspace structure, read file context, then run tests.\n"
+      )
     );
     await writeFile(join(sourceRoot, "portable", "references", "guide.md"), "release guide\n");
     await writeFile(join(sourceRoot, "portable", "assets", "binary.bin"), Buffer.from([0xff, 0xfe, 0xfd]));
@@ -218,6 +222,22 @@ describe("hybrid skill interoperability release fixtures", () => {
         `Run \`${providerCommand}\` and continue in a dedicated subagent session.\n`
       )
     );
+    await writeFile(
+      join(sourceRoot, "declared-provider", "SKILL.md"),
+      [
+        "---",
+        "name: declared-provider",
+        "description: Declared provider release skill",
+        "metadata:",
+        "  kodegpt:",
+        "    requires:",
+        "      providers:",
+        "        - figma",
+        "---",
+        "Inspect workspace structure before using the declared provider.",
+        ""
+      ].join("\n")
+    );
 
     const admitted = await withLocalCatalog(stateRoot, ({ sourceManager }) =>
       sourceManager.addSource(sourceRoot, "release-fixture")
@@ -232,16 +252,39 @@ describe("hybrid skill interoperability release fixtures", () => {
 
     const first = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: PORT });
     try {
+      const toolInventory = await rawMcpRequest(
+        PORT,
+        credential.token,
+        "tools/list",
+        { _meta: requestMeta() },
+        "req_tools_list_skills"
+      );
+      const toolNames = (toolInventory.result?.tools as Array<{ name: string }>).map(({ name }) => name);
+      for (const forbidden of [
+        "skill.run",
+        "skill.pin",
+        "skill.unpin",
+        "skill.source.add",
+        "skill.source.remove",
+        "provider.list",
+        "provider.tools",
+        "provider.invoke"
+      ]) {
+        expect(toolNames).not.toContain(forbidden);
+      }
+
       const listed = textJson(
         await callTool(PORT, credential.token, "skill.list", {}, "req_skill_list_live")
       );
-      expect(listed.skills).toHaveLength(3);
+      expect(listed.skills).toHaveLength(4);
       const portable = listed.skills.find((skill: any) => skill.name === "portable");
       const volatile = listed.skills.find((skill: any) => skill.name === "volatile");
       const provider = listed.skills.find((skill: any) => skill.name === "provider-skill");
+      const declaredProvider = listed.skills.find((skill: any) => skill.name === "declared-provider");
       expect(portable).toBeDefined();
       expect(volatile).toBeDefined();
       expect(provider?.compatibility?.classification).toBe("UNSUPPORTED");
+      expect(declaredProvider?.compatibility?.classification).toBe("PROVIDER_REQUIRED");
       const unsupported = textJson(
         await callTool(
           PORT,
@@ -257,6 +300,36 @@ describe("hybrid skill interoperability release fixtures", () => {
         compatibility: { classification: "UNSUPPORTED" }
       });
       expect(unsupported.truncated).toBe(false);
+
+      const providerInspected = textJson(
+        await callTool(
+          PORT,
+          credential.token,
+          "skill.inspect",
+          { skillId: provider.skillId },
+          "req_skill_inspect_unsupported"
+        )
+      );
+      expect(providerInspected.capabilityPlan).toMatchObject({
+        classification: "UNSUPPORTED",
+        blockedSemantics: expect.arrayContaining(["codex.exec", "subagent.session"])
+      });
+
+      const declaredProviderInspected = textJson(
+        await callTool(
+          PORT,
+          credential.token,
+          "skill.inspect",
+          { skillId: declaredProvider.skillId },
+          "req_skill_inspect_declared_provider"
+        )
+      );
+      expect(declaredProviderInspected.capabilityPlan).toMatchObject({
+        classification: "PROVIDER_REQUIRED",
+        externalRequirements: ["provider:figma"]
+      });
+      expect(declaredProviderInspected.capabilityPlan.nativeCapabilities).toContain("workspace.inspect");
+
       portableId = portable.skillId;
       volatileId = volatile.skillId;
 
@@ -271,6 +344,17 @@ describe("hybrid skill interoperability release fixtures", () => {
       );
       portableFingerprint = inspected.skill.fingerprint;
       expect(portableFingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(inspected.capabilityPlan).toMatchObject({
+        schemaVersion: 1,
+        classification: "NATIVE",
+        nativeCapabilities: expect.arrayContaining(["workspace.inspect", "file.read", "verify.run"]),
+        missingCapabilities: [],
+        externalRequirements: [],
+        blockedSemantics: [],
+        truncated: false,
+        truncationReasons: []
+      });
+      expect(inspected.capabilityPlan.guidance.length).toBeGreaterThan(0);
       const serializedInspection = JSON.stringify(inspected);
       expect(serializedInspection).not.toContain(sourceRoot);
       expect(serializedInspection).not.toContain(stateRoot);
@@ -301,7 +385,7 @@ describe("hybrid skill interoperability release fixtures", () => {
           "req_skill_load_live"
         )
       );
-      expect(loaded.instructions).toContain("Follow the portable instructions.");
+      expect(loaded.instructions).toContain("Inspect workspace structure, read file context, then run tests.");
       expect(loaded.resources).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "references/guide.md", contents: "release guide\n" }),
@@ -355,7 +439,7 @@ describe("hybrid skill interoperability release fixtures", () => {
         )
       );
       expect(pinnedLoad.pinned).toBe(true);
-      expect(pinnedLoad.instructions).toContain("Follow the portable instructions.");
+      expect(pinnedLoad.instructions).toContain("Inspect workspace structure, read file context, then run tests.");
       expect(pinnedLoad.instructions).not.toContain("Changed live instructions.");
 
       const current = textJson(
@@ -411,7 +495,7 @@ describe("hybrid skill interoperability release fixtures", () => {
         availability: "pinned",
         pinned: true
       });
-      expect(pinnedAfterDeletion.instructions).toContain("Follow the portable instructions.");
+      expect(pinnedAfterDeletion.instructions).toContain("Inspect workspace structure, read file context, then run tests.");
     } finally {
       await third.close();
     }
