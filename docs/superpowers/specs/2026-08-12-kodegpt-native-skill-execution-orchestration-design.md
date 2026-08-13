@@ -76,6 +76,12 @@ interface SkillCapabilityPlan {
   externalRequirements: readonly string[];
   blockedSemantics: readonly string[];
   guidance: readonly SkillCapabilityGuidanceStep[];
+  truncated: boolean;
+  truncationReasons: readonly (
+    | "MISSING_CAPABILITIES"
+    | "EXTERNAL_REQUIREMENTS"
+    | "BLOCKED_SEMANTICS"
+  )[];
 }
 
 interface SkillCapabilityGuidanceStep {
@@ -85,6 +91,10 @@ interface SkillCapabilityGuidanceStep {
 ```
 
 `guidance` is declarative and deterministic. It is derived from declared/static skill semantics and existing capability metadata. It contains no generated shell command, host path, credential, provider invocation, workspace ID, or security handle.
+
+`truncated` is advisory-output completeness only; it never changes `classification`. `truncationReasons` identifies which finding arrays were deterministically capped after bytewise sort/deduplication, so bounded output never silently drops a security-relevant compatibility finding.
+
+**Baseline implementation reconciliation (2026-08-13):** the current three skill tools return `structuredContent` but do not advertise MCP `outputSchema`. This phase extends the typed `SkillInspectResult`/structured result contract and descriptions only; it must not add a new `outputSchema` solely to carry `capabilityPlan`. Repository precedent keeps additive fields within an already-established semantic phase version, so this additive result field remains surface `0.3` unless implementation demonstrates an actually incompatible contract break. MCP protocol remains `2026-07-28`.
 
 This keeps the number of MCP skill tools unchanged and avoids a new orchestration authority.
 
@@ -145,7 +155,7 @@ The capability planner must be pure for a parsed skill plus static capability re
 - use host-specific paths;
 - mutate skill/source/pin state.
 
-All output arrays must have explicit hard bounds. Ordering must be bytewise/deterministic, matching the current compatibility report conventions.
+All output arrays must have explicit hard bounds. `nativeCapabilities` and `guidance` are bounded by the exact current `NATIVE_CAPABILITY_IDS` registry size. `missingCapabilities`, `externalRequirements`, and `blockedSemantics` are each capped at 64 entries after bytewise sort/deduplication; exceeding a cap sets `truncated=true` and the matching stable `truncationReasons` entry. Ordering must be bytewise/deterministic, matching the current compatibility report conventions. The planner may reduce advisory detail only with this explicit truncation signal; it must never change or downgrade the full compatibility `classification` to fit a bound.
 
 ## Error handling
 
