@@ -13,8 +13,12 @@ import {
   type VerifyRunResult
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
+import { isSemanticDiscoveryPath } from "./semantic-scope.js";
 
+const PACKAGE_JSON = "package.json";
 const MANIFEST_READ_MAX_BYTES = 64 * 1024;
+const MAX_VERIFICATION_PROJECT_MANIFESTS = 128;
+const VERIFICATION_TREE_MAX_ENTRIES = 10_000;
 const ROOT_EVIDENCE_PATHS = [
   "package.json",
   "Cargo.toml",
@@ -99,19 +103,44 @@ export async function listVerifications(
     throw discoveryError();
   }
 
+  const packageManifestPaths = await discoverPackageManifestPaths(workspace, input.workspaceId);
+  if (
+    (evidence.get("package.json") === true) !== packageManifestPaths.includes(PACKAGE_JSON)
+  ) {
+    throw discoveryError();
+  }
+
   const effectivePolicy = workspace.effectivePolicy(input.workspaceId);
   const policy: PolicySnapshot = {
     allowProcess: effectivePolicy.allowProcess,
     allowedExecutableNames: new Set(effectivePolicy.allowedExecutableNames)
   };
   const recipes: VerificationRecipe[] = [];
+  const rootPackageJson = packageManifestPaths.includes(PACKAGE_JSON)
+    ? await readPackageManifest(workspace, input.workspaceId, PACKAGE_JSON)
+    : undefined;
+  const rootManager = resolvePackageManager(rootPackageJson ?? {}, evidence);
 
-  if (evidence.get("package.json") === true) {
-    const packageJson = await readPackageManifest(workspace, input.workspaceId);
-    const manager = resolvePackageManager(packageJson, evidence);
+  for (const manifestPath of packageManifestPaths) {
+    const packageJson =
+      manifestPath === PACKAGE_JSON
+        ? rootPackageJson!
+        : await readPackageManifest(workspace, input.workspaceId, manifestPath);
+    const manager =
+      manifestPath === PACKAGE_JSON
+        ? rootManager
+        : resolveNestedPackageManager(packageJson, evidence, rootManager);
     const scripts = packageScripts(packageJson);
+    const projectDir = manifestDirectory(manifestPath);
     recipes.push(
-      ...(await packageRecipes(input.workspaceId, scripts, manager, policy, availability))
+      ...(await packageRecipes(
+        input.workspaceId,
+        scripts,
+        manager,
+        policy,
+        availability,
+        projectDir
+      ))
     );
   }
 
@@ -177,20 +206,56 @@ export async function runVerification(
   };
 }
 
-async function readPackageManifest(
+async function discoverPackageManifestPaths(
   workspace: VerificationWorkspaceAdapter,
   workspaceId: string
+): Promise<string[]> {
+  let tree;
+  try {
+    tree = await workspace.tree(workspaceId, ".", VERIFICATION_TREE_MAX_ENTRIES, "semantic");
+  } catch {
+    throw discoveryError();
+  }
+  if (tree.truncated) throw discoveryError();
+
+  const manifests = [...new Set(
+    tree.entries
+      .filter((entry) => entry.kind === "file" && basename(entry.path) === PACKAGE_JSON)
+      .map((entry) => entry.path)
+      .filter(isSemanticDiscoveryPath)
+  )].sort(compareText);
+  if (manifests.length > MAX_VERIFICATION_PROJECT_MANIFESTS) throw discoveryError();
+
+  const rootIndex = manifests.indexOf(PACKAGE_JSON);
+  if (rootIndex > 0) {
+    manifests.splice(rootIndex, 1);
+    manifests.unshift(PACKAGE_JSON);
+  }
+  return manifests;
+}
+
+async function readPackageManifest(
+  workspace: VerificationWorkspaceAdapter,
+  workspaceId: string,
+  path: string
 ): Promise<Record<string, unknown>> {
   let manifest;
   try {
-    manifest = await workspace.readFile(workspaceId, "package.json", {
+    manifest = await workspace.readFile(workspaceId, path, {
       offset: 0,
       maxBytes: MANIFEST_READ_MAX_BYTES
     });
   } catch {
     throw discoveryError();
   }
-  if (!manifest.eof) throw discoveryError();
+  const actualBytes = Buffer.byteLength(manifest.contents, "utf8");
+  if (
+    !manifest.eof ||
+    manifest.bytesRead !== actualBytes ||
+    actualBytes > MANIFEST_READ_MAX_BYTES
+  ) {
+    throw discoveryError();
+  }
 
   let parsed: unknown;
   try {
@@ -211,7 +276,8 @@ async function packageRecipes(
   scripts: Record<string, unknown>,
   manager: ManagerResolution,
   policy: PolicySnapshot,
-  availability: VerificationAvailabilityAdapter
+  availability: VerificationAvailabilityAdapter,
+  projectDir: string
 ): Promise<VerificationRecipe[]> {
   const definitions = PACKAGE_RECIPES.filter(
     (definition) => typeof scripts[definition.script] === "string"
@@ -221,7 +287,7 @@ async function packageRecipes(
     const blockedReason =
       manager.kind === "conflict" ? "PACKAGE_MANAGER_CONFLICT" : "PACKAGE_MANAGER_UNKNOWN";
     return definitions.map((definition) => ({
-      id: `package:${definition.script}`,
+      id: packageRecipeId(projectDir, definition.script),
       label: definition.label,
       category: definition.category,
       source: "package-script",
@@ -235,12 +301,12 @@ async function packageRecipes(
       withStaticAvailability(
         workspaceId,
         {
-          id: `package:${definition.script}`,
+          id: packageRecipeId(projectDir, definition.script),
           label: definition.label,
           category: definition.category,
           logicalExecutable: manager.manager,
           argv: ["run", definition.script],
-          cwd: ".",
+          cwd: projectDir,
           source: "package-script"
         },
         policy,
@@ -277,6 +343,34 @@ function resolvePackageManager(
   if (lockManagers.size > 1) return { kind: "conflict" };
   const [manager] = [...lockManagers];
   return manager === undefined ? { kind: "unknown" } : { kind: "resolved", manager };
+}
+
+function resolveNestedPackageManager(
+  packageJson: Record<string, unknown>,
+  evidence: ReadonlyMap<string, boolean>,
+  rootManager: ManagerResolution
+): ManagerResolution {
+  const local = resolvePackageManager(packageJson, evidence);
+  if (local.kind !== "unknown") return local;
+  return rootManager.kind === "resolved" ? rootManager : local;
+}
+
+function packageRecipeId(projectDir: string, script: string): string {
+  return projectDir === "." ? `package:${script}` : `package:${projectDir}:${script}`;
+}
+
+function manifestDirectory(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index < 0 ? "." : path.slice(0, index);
+}
+
+function basename(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index < 0 ? path : path.slice(index + 1);
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function parseExplicitManager(value: unknown): PackageManager | undefined {

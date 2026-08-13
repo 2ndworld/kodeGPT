@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "date": "<absolute ISO-8601 timestamp>",
+  "kodegptCommit": "<exact commit>",
+  "planWorkspace": "<ChatGPT plan/workspace>",
+  "connectionPath": "<exact connection path>",
+  "discovery": {
+    "observed": false,
+    "notes": ""
+  },
+  "workspaceOpen": {
+    "observed": false,
+    "notes": ""
+  },
+  "readAction": {
+    "observed": false,
+    "tool": "",
+    "notes": ""
+  },
+  "writeAvailability": {
+    "observed": false,
+    "tool": "",
+    "notes": ""
+  },
+  "writeRoundTrip": {
+    "observed": false,
+    "tool": "",
+    "reverted": false,
+    "notes": ""
+  },
+  "processAction": {
+    "observed": false,
+    "tool": "process.run",
+    "notes": ""
+  },
+  "skillActionExposure": {
+    "observed": false,
+    "tools": ["skill.list", "skill.inspect", "skill.load"],
+    "notes": ""
+  },
+  "skillPositiveRoundTrip": {
+    "observed": false,
+    "markerVerified": false,
+    "notes": ""
+  },
+  "appsRendering": {
+    "observed": false,
+    "resource": "ui://kodegpt/dev-console/v1",
+    "notes": ""
+  },
+  "fallbackBehavior": {
+    "observed": false,
+    "notes": ""
+  },
+  "limitations": []
+}

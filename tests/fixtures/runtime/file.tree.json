@@ -5,6 +5,7 @@
   "params": {
     "capabilityId": "kc_fixture_1",
     "path": ".",
-    "maxEntries": 2000
+    "maxEntries": 2000,
+    "scope": "literal"
   }
 }

@@ -15,8 +15,9 @@ use crate::path_identity::{PathIdentityError, PathIdentityResult, path_identity_
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
     ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult, WorkspaceReadError,
-    read_file_beneath, search_utf8_beneath, tree_beneath,
+    read_file_beneath, search_utf8_beneath_scoped, tree_beneath_scoped,
 };
+use crate::semantic_scope::TraversalScope;
 use crate::write::{
     EditFileResult, PatchFileAction, PatchFileCommitResult, WorkspaceWriteError, WriteFileResult,
     commit_patch_file_beneath, edit_file_exact_beneath, write_file_atomic_beneath,
@@ -292,9 +293,11 @@ impl<P> WorkspaceRegistry<P> {
         capability_id: &str,
         relative_path: &Path,
         max_entries: usize,
+        scope: TraversalScope,
     ) -> Result<TreeResult, WorkspaceRegistryError> {
         let context = self.ready_context(capability_id)?;
-        tree_beneath(&context.root_fd, relative_path, max_entries).map_err(map_workspace_read_error)
+        tree_beneath_scoped(&context.root_fd, relative_path, max_entries, scope)
+            .map_err(map_workspace_read_error)
     }
 
     pub fn search(
@@ -303,14 +306,16 @@ impl<P> WorkspaceRegistry<P> {
         relative_path: &Path,
         query: &str,
         max_matches: usize,
+        scope: TraversalScope,
     ) -> Result<SearchResult, WorkspaceRegistryError> {
         let context = self.ready_context(capability_id)?;
-        search_utf8_beneath(
+        search_utf8_beneath_scoped(
             &context.root_fd,
             relative_path,
             query,
             max_matches,
             SEARCH_MAX_SNIPPET_BYTES,
+            scope,
         )
         .map_err(map_workspace_read_error)
     }

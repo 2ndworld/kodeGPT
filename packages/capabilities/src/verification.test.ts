@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   CapabilityPathIdentityResult,
+  CapabilityTreeEntry,
   VerificationAvailabilityAdapter,
   VerificationExecutionAdapter,
   VerificationWorkspaceAdapter
@@ -22,29 +23,44 @@ function missing(): CapabilityPathIdentityResult {
 function service(options: {
   packageJson?: Record<string, unknown>;
   packageJsonText?: string;
+  packageJsonByPath?: Record<string, Record<string, unknown> | string>;
   files?: string[];
+  treeEntries?: CapabilityTreeEntry[];
+  treeTruncated?: boolean;
   allowProcess?: boolean;
   allowedExecutables?: readonly string[];
   availability?: Partial<Record<string, { executableAvailable: boolean; sandboxAvailable: boolean }>>;
   run?: VerificationExecutionAdapter["run"];
   onPathIdentity?: (path: string) => void;
   onRead?: (path: string) => void;
+  onTree?: (scope: "literal" | "semantic" | undefined) => void;
 } = {}): NativeCapabilityService {
   const files = new Set(options.files ?? []);
-  if (options.packageJson !== undefined || options.packageJsonText !== undefined) files.add(PACKAGE_JSON);
-  const workspace: VerificationWorkspaceAdapter = {
-    readFile: async (_workspaceId, path) => {
+  const packageJsonByPath = new Map<string, string>();
+  if (options.packageJson !== undefined || options.packageJsonText !== undefined) {
+    files.add(PACKAGE_JSON);
+    packageJsonByPath.set(PACKAGE_JSON, options.packageJsonText ?? JSON.stringify(options.packageJson));
+  }
+  for (const [path, value] of Object.entries(options.packageJsonByPath ?? {})) {
+    files.add(path);
+    packageJsonByPath.set(path, typeof value === "string" ? value : JSON.stringify(value));
+  }
+  const defaultTreeEntries = [...packageJsonByPath.keys()].map((path) => ({ path, kind: "file" as const }));
+  const workspace = {
+    readFile: async (_workspaceId: string, path: string) => {
       options.onRead?.(path);
-      if (
-        path !== PACKAGE_JSON ||
-        (options.packageJson === undefined && options.packageJsonText === undefined)
-      ) {
-        throw new Error(`unexpected read: ${path}`);
-      }
-      const contents = options.packageJsonText ?? JSON.stringify(options.packageJson);
+      const contents = packageJsonByPath.get(path);
+      if (contents === undefined) throw new Error(`unexpected read: ${path}`);
       return { contents, bytesRead: Buffer.byteLength(contents), eof: true };
     },
-    pathIdentity: async (_workspaceId, path) => {
+    tree: async (_workspaceId: string, _path: string | undefined, _maxEntries: number, scope?: "literal" | "semantic") => {
+      options.onTree?.(scope);
+      return {
+        entries: options.treeEntries ?? defaultTreeEntries,
+        truncated: options.treeTruncated ?? false
+      };
+    },
+    pathIdentity: async (_workspaceId: string, path: string) => {
       options.onPathIdentity?.(path);
       return files.has(path) ? presentFile() : missing();
     },
@@ -166,15 +182,18 @@ describe("safe verification recipes", () => {
     });
   });
 
-  it("uses exact known-path probes and never recursive tree discovery", async () => {
+  it("uses one semantic bounded tree for package manifests while keeping root lock/Cargo probes exact", async () => {
     const probed: string[] = [];
+    const scopes: Array<"literal" | "semantic" | undefined> = [];
     const capability = service({
       packageJson: packageFixture("pnpm@10"),
       files: ["pnpm-lock.yaml", "Cargo.toml"],
-      onPathIdentity: (path) => probed.push(path)
+      onPathIdentity: (path) => probed.push(path),
+      onTree: (scope) => scopes.push(scope)
     });
 
     await capability.listVerifications({ workspaceId: "ws_probe" });
+    expect(scopes).toEqual(["semantic"]);
     expect(probed).toEqual([
       "package.json",
       "Cargo.toml",
@@ -185,6 +204,61 @@ describe("safe verification recipes", () => {
       "bun.lock",
       "bun.lockb"
     ]);
+  });
+
+  it("discovers collision-free nested first-party package recipes and preserves root IDs", async () => {
+    const capability = service({
+      packageJson: {
+        ...packageFixture("pnpm@10"),
+        scripts: { test: "root-test" }
+      },
+      packageJsonByPath: {
+        "frontend/package.json": {
+          name: "frontend",
+          scripts: { test: "frontend-test", lint: "frontend-lint", typecheck: "tsc", build: "build" }
+        },
+        "backend/package.json": {
+          name: "backend",
+          scripts: { test: "backend-test" }
+        }
+      },
+      files: ["pnpm-lock.yaml"],
+      treeEntries: [
+        { path: "package.json", kind: "file" },
+        { path: "frontend/package.json", kind: "file" },
+        { path: "backend/package.json", kind: "file" }
+      ]
+    });
+
+    const result = await capability.listVerifications({ workspaceId: "ws_nested" });
+    expect(result.recipes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "package:test", cwd: ".", logicalExecutable: "pnpm" }),
+        expect.objectContaining({ id: "package:frontend:test", cwd: "frontend", logicalExecutable: "pnpm" }),
+        expect.objectContaining({ id: "package:frontend:lint", cwd: "frontend", logicalExecutable: "pnpm" }),
+        expect.objectContaining({ id: "package:frontend:typecheck", cwd: "frontend", logicalExecutable: "pnpm" }),
+        expect.objectContaining({ id: "package:frontend:build", cwd: "frontend", logicalExecutable: "pnpm" }),
+        expect.objectContaining({ id: "package:backend:test", cwd: "backend", logicalExecutable: "pnpm" })
+      ])
+    );
+  });
+
+  it("fails closed when semantic project discovery is incomplete", async () => {
+    const truncated = service({ packageJson: packageFixture("pnpm@10"), treeTruncated: true });
+    await expect(truncated.listVerifications({ workspaceId: "ws_truncated_tree" })).rejects.toMatchObject({
+      code: "VERIFICATION_DISCOVERY_INVALID"
+    });
+
+    const packageJsonByPath = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `packages/p${String(index).padStart(3, "0")}/package.json`,
+        { name: `p${index}`, scripts: { test: "test" } }
+      ])
+    );
+    const tooMany = service({ packageJsonByPath, files: ["pnpm-lock.yaml"] });
+    await expect(tooMany.listVerifications({ workspaceId: "ws_too_many" })).rejects.toMatchObject({
+      code: "VERIFICATION_DISCOVERY_INVALID"
+    });
   });
 
   it("applies policy and static availability in fail-closed precedence", async () => {

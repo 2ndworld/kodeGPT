@@ -24,11 +24,12 @@ export type SkillCatalogToolSource = Pick<SkillCatalog, "list" | "inspect" | "lo
 
 export function createSkillCatalogToolAdapter(source: SkillCatalogToolSource): SkillCatalogToolAdapter {
   return {
-    list: async ({ limit, sourceId, pinned }) => {
+    list: async ({ limit, sourceId, compatibility, pinned }) => {
       const boundedLimit = requireListLimit(limit);
       const catalog = await source.list();
       const filtered = catalog.skills.filter((skill) => {
         if (sourceId !== undefined && skill.sourceId !== sourceId) return false;
+        if (compatibility !== undefined && skill.compatibility.classification !== compatibility) return false;
         if (pinned !== undefined && skill.pinned !== pinned) return false;
         return true;
       });

@@ -8,6 +8,8 @@
 
 **Tech Stack:** Node.js >=24, TypeScript 5.9, pnpm 10, Vitest 3, Zod 4, Rust workspace crates, existing framed runtime protocol and workspace-io retained-root authority.
 
+> **Execution reconciliation (2026-08-13):** this is the historical Phase 1 capability implementation plan. Its `MCP_SURFACE_VERSION = "0.2"` statements describe the Phase 1 surface at that time; the later shipped read-only hybrid-skill reconciliation advances the current semantic surface to `0.3` without changing MCP protocol `2026-07-28`. Current source/tests and the v0.1 execution tracker are authoritative for present status.
+
 ## Global Constraints
 
 - KodeGPT MUST NOT spawn `codex`, invoke `codex exec`, attach to Codex sessions, or require a Codex process.

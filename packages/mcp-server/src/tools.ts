@@ -488,12 +488,13 @@ export function registerKodegptTools(
       inputSchema: {
         limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
         sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
+        compatibility: z.enum(["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"]).optional(),
         pinned: z.boolean().optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ limit, sourceId, pinned }) =>
-      skillToolResult(() => context.skill.list({ limit, sourceId, pinned }))
+    async ({ limit, sourceId, compatibility, pinned }) =>
+      skillToolResult(() => context.skill.list({ limit, sourceId, compatibility, pinned }))
   );
 
   server.registerTool(

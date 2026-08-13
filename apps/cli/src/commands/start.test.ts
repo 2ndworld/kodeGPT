@@ -308,6 +308,10 @@ describe("kodegpt start orchestration", () => {
             : {}),
           hashTruncated: false
         }),
+        treeBounded: async () => ({
+          entries: [{ path: "package.json", kind: "file" as const }],
+          truncated: false
+        }),
         readFile: async () => ({ contents: packageJson, bytesRead: packageJson.length, eof: true }),
         inspectExecutable: async () => ({
           schemaVersion: 1 as const,

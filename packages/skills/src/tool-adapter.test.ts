@@ -77,6 +77,29 @@ describe("SkillCatalogToolAdapter", () => {
     expect(capped.truncationReasons).toContain("RESULT_LIMIT");
   });
 
+  it("filters compatibility before applying the public result limit", async () => {
+    const classifications = ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"] as const;
+    const skills = classifications.map((classification, index) =>
+      entry({
+        skillId: `sk_${String(index + 1).repeat(64)}`,
+        name: classification.toLowerCase(),
+        fingerprint: String(index + 2).repeat(64),
+        compatibility: { ...compatibility, classification }
+      })
+    );
+    const adapter = createSkillCatalogToolAdapter({
+      list: async () => ({ skills, truncated: false, truncationReasons: [] })
+    } as never);
+
+    for (const classification of classifications) {
+      const result = await adapter.list({ compatibility: classification, limit: 1 });
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.compatibility.classification).toBe(classification);
+      expect(result.truncated).toBe(false);
+      expect(result.truncationReasons).toEqual([]);
+    }
+  });
+
   it("returns provenance-safe inspect metadata without raw metadata values or host paths", async () => {
     const adapter = createSkillCatalogToolAdapter({
       inspect: async () => ({

@@ -14,5 +14,5 @@ pub use types::{
     SkillSourceInspectRootParams, SkillSourceReadEncoding, SkillSourceReadParams,
     SkillSourceRegisterParams, SkillSourceTreeParams, SystemInspectRootParams, VerifyRunParams,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams,
+    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope,
 };

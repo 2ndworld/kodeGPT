@@ -8,6 +8,8 @@
 
 **Tech Stack:** Node.js 24, TypeScript 5.9, pnpm 10, Vitest 3, Zod 4, `yaml@2`, Rust/Tokio/serde/rustix, existing framed JSON-RPC protocol, retained-root openat2/mount boundary primitives, existing state-store conventions.
 
+> **Execution reconciliation (2026-08-13):** this plan is retained as an auditable implementation plan, but current source/tests are now the contract of record. The shipped skill surface is `skill.list` / `skill.inspect` / `skill.load` at MCP semantic surface `0.3` with protocol `2026-07-28`; `skill.list.compatibility` is read-only and filters before the result limit; public limits are 500 list results, 32 requested load resources, and 512 KiB returned load bytes; pinned versions keep the same `sk_...` identity and are selected by fingerprint. Historical draft details below that mention a public `sp_...` ID, `skills/pins`, 1000 public results, 64 public resources, or 1 MiB public load are superseded where not individually reconciled.
+
 ## Global Constraints
 
 - Exact implementation base: `main@b8a3b71` or a verified descendant with no conflicting Phase 2 work.
@@ -576,29 +578,16 @@ git commit -m "feat(skills): discover and fingerprint agent skills"
 
 **Interfaces:**
 
-Layout:
+**Execution reconciliation (shipped contract):** the implemented pin store uses stable `sk_...` identity plus fingerprint rather than a separate public pin ID. Its current private layout is:
 
 ```text
-<stateRoot>/skills/pins/<bundleFingerprint>/
+<stateRoot>/skills/pinned/<skillId>/<fingerprint>/
+  SKILL.md
   manifest.json
-  files/<relative bundle files>
+  resources/<requested bundle resources>
 ```
 
-Manifest:
-
-```ts
-interface PinnedSkillManifest {
-  schemaVersion: 1;
-  pinId: string; // sp_<opaque>
-  bundleFingerprint: string;
-  originalSkillName: string;
-  sourceId: string;
-  sourceKind: "agent-skills";
-  sourceDescriptorFingerprint: string;
-  pinnedAt: string;
-  files: Array<{ relativePath:string; bytes:number; sha256:string }>;
-}
-```
+The versioned manifest contains `skillId`, `name`, `description`, `fingerprint`, provenance-safe source metadata, `pinnedAt`, and file hashes. There is no public `sp_...` identifier; `(skillId, fingerprint)` is the immutable version selector.
 
 - [ ] **Step 1: Write RED pin-store persistence tests**
 
@@ -610,7 +599,7 @@ Test live mutation after inspect but before/during copy, source identity replace
 
 - [ ] **Step 3: Implement atomic pin publication**
 
-Pin receives a complete validated bundle from catalog/source manager; writes private temp directory under `skills/pins`, fsyncs every file + manifest + directory, then atomically renames to final content-addressed fingerprint directory. Never modify external source.
+Pin receives a complete validated bundle from catalog/source manager; the shipped store writes a private temp directory under `skills/pinned/<skillId>/`, fsyncs every file + manifest + directory, then atomically renames to the final `<fingerprint>` snapshot directory. Never modify external source.
 
 - [ ] **Step 4: Merge live + pinned catalog views**
 
@@ -898,22 +887,22 @@ Public schemas:
 
 ```ts
 skill.list {
-  limit?: number;                 // <=1000
+  limit?: number;                 // <=500 public result bound
   sourceId?: string;              // ss_
   compatibility?: "NATIVE"|"PARTIAL"|"PROVIDER_REQUIRED"|"UNSUPPORTED";
   pinned?: boolean;
 }
 
 skill.inspect {
-  skillId: string;                // sk_ or sp_
-  fingerprint?: string;           // 64 lowercase hex
+  skillId: string;                // stable sk_ identity
+  fingerprint?: string;           // 64 lowercase hex immutable version selector
 }
 
 skill.load {
   skillId: string;
   fingerprint?: string;
-  resources?: string[];           // <=64, must be inventory members
-  maxBytes?: number;              // <=1 MiB
+  resources?: string[];           // <=32 public requested-resource bound
+  maxBytes?: number;              // <=512 KiB public returned-byte bound
 }
 ```
 

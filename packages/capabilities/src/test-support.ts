@@ -40,6 +40,7 @@ export function createTestCapabilityDependencies(
     verification: {
       workspace: {
         readFile: async () => unexpected("verification.workspace.readFile"),
+        tree: async () => unexpected("verification.workspace.tree"),
         pathIdentity: async () => unexpected("verification.workspace.pathIdentity"),
         effectivePolicy: () => unexpected("verification.workspace.effectivePolicy")
       },

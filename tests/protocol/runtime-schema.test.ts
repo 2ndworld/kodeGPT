@@ -58,6 +58,20 @@ describe("canonical runtime JSON Schemas", () => {
     expect(identity.additionalProperties).toBe(false);
   });
 
+  it("requires a closed literal-or-semantic traversal scope for private tree/search requests", async () => {
+    const request = await schema("request.schema.json");
+    const variants = request.oneOf as JsonSchema[];
+    const byMethod = new Map(
+      variants.map((variant) => [variant.properties.method.const as string, variant])
+    );
+
+    for (const method of ["file.tree", "file.search"] as const) {
+      const params = byMethod.get(method)?.properties.params as JsonSchema | undefined;
+      expect(params?.required).toContain("scope");
+      expect(params?.properties.scope).toEqual({ enum: ["literal", "semantic"] });
+    }
+  });
+
   it("closes success and error response envelopes", async () => {
     const success = await schema("success-response.schema.json");
     const error = await schema("error-response.schema.json");
