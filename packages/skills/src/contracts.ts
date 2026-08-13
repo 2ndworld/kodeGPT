@@ -1,3 +1,5 @@
+import type { NativeCapabilityId } from "@kodegpt/capabilities";
+
 export const SKILL_STATE_SCHEMA_VERSION = 1 as const;
 export const MAX_SOURCES = 16;
 export const MAX_SKILLS_PER_SOURCE = 1_000;
@@ -169,6 +171,7 @@ export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
 
 export interface SkillCatalogInspection {
   skill: SkillCatalogEntry;
+  capabilityPlan: SkillCapabilityPlan;
   frontmatter: SkillValidatedFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
@@ -194,6 +197,7 @@ export interface SkillInspectFrontmatter {
 export interface SkillInspectResult {
   schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
   skill: SkillCatalogEntry;
+  capabilityPlan: SkillCapabilityPlan;
   frontmatter: SkillInspectFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
@@ -249,6 +253,28 @@ export interface SkillCompatibilityReport {
   requiredProviders: string[];
   reasons: string[];
   analysisBasis: SkillCompatibilityAnalysisBasis;
+}
+
+export interface SkillCapabilityGuidanceStep {
+  readonly capability: NativeCapabilityId;
+  readonly purpose: string;
+}
+
+export type SkillCapabilityPlanTruncationReason =
+  | "MISSING_CAPABILITIES"
+  | "EXTERNAL_REQUIREMENTS"
+  | "BLOCKED_SEMANTICS";
+
+export interface SkillCapabilityPlan {
+  readonly schemaVersion: 1;
+  readonly classification: SkillCompatibility;
+  readonly nativeCapabilities: readonly NativeCapabilityId[];
+  readonly missingCapabilities: readonly string[];
+  readonly externalRequirements: readonly string[];
+  readonly blockedSemantics: readonly string[];
+  readonly guidance: readonly SkillCapabilityGuidanceStep[];
+  readonly truncated: boolean;
+  readonly truncationReasons: readonly SkillCapabilityPlanTruncationReason[];
 }
 
 export interface ParsedSkillDocument {

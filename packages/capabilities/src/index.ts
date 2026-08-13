@@ -76,6 +76,11 @@ export type {
 } from "./adapters.js";
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
 export type { CapabilityErrorCode } from "./errors.js";
+export {
+  NATIVE_CAPABILITY_SEMANTICS,
+  getNativeCapabilitySemanticMetadata
+} from "./skill-metadata.js";
+export type { NativeCapabilitySemanticMetadata } from "./skill-metadata.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
 export type { NativeCapabilityDependencies, NativeCapabilityName } from "./native-capability-service.js";
 export {

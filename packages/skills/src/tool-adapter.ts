@@ -99,6 +99,15 @@ function publicInspection(inspection: SkillCatalogInspection): SkillInspectResul
   return {
     schemaVersion: SKILL_STATE_SCHEMA_VERSION,
     skill: cloneCatalogEntry(inspection.skill),
+    capabilityPlan: {
+      ...inspection.capabilityPlan,
+      nativeCapabilities: [...inspection.capabilityPlan.nativeCapabilities],
+      missingCapabilities: [...inspection.capabilityPlan.missingCapabilities],
+      externalRequirements: [...inspection.capabilityPlan.externalRequirements],
+      blockedSemantics: [...inspection.capabilityPlan.blockedSemantics],
+      guidance: inspection.capabilityPlan.guidance.map((step) => ({ ...step })),
+      truncationReasons: [...inspection.capabilityPlan.truncationReasons]
+    },
     frontmatter: publicFrontmatter(inspection.frontmatter),
     resources: inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: inspection.instructionBytes,

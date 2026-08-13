@@ -21,7 +21,14 @@ const FINGERPRINT = "c".repeat(64);
 const HOST_ROOT = "/private/skill-source";
 
 type Handler = (input: Record<string, unknown>) => Promise<unknown>;
-interface Registration { config: { inputSchema?: Record<string, { safeParse(value: unknown): { success: boolean } }>; annotations?: unknown }; handler: Handler }
+interface Registration {
+  config: {
+    description?: string;
+    inputSchema?: Record<string, { safeParse(value: unknown): { success: boolean } }>;
+    annotations?: unknown;
+  };
+  handler: Handler;
+}
 
 function entry(): SkillCatalogEntry {
   return {
@@ -54,6 +61,17 @@ function inspectResult(): SkillInspectResult {
   return {
     schemaVersion: 1,
     skill: entry(),
+    capabilityPlan: {
+      schemaVersion: 1,
+      classification: "NATIVE",
+      nativeCapabilities: ["git.status"],
+      missingCapabilities: [],
+      externalRequirements: [],
+      blockedSemantics: [],
+      guidance: [{ capability: "git.status", purpose: "Inspect repository status without mutation." }],
+      truncated: false,
+      truncationReasons: []
+    },
     frontmatter: { unknownMetadataKeys: [] },
     resources: [{ path: "references/guide.md", bytes: 6, sha256: "e".repeat(64), kind: "text", textInlineEligible: true }],
     instructionBytes: 24,
@@ -113,6 +131,10 @@ describe("MCP skill surface", () => {
     for (const name of READ_ONLY_SKILL_TOOLS) {
       expect(required(tools, name).config.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
     }
+    expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("advisory");
+    expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("native capabilities");
+    expect(required(tools, "skill.load").config.description?.toLowerCase()).toContain("data");
+    expect(required(tools, "skill.load").config.description?.toLowerCase()).toContain("not executed");
 
     const list = required(tools, "skill.list");
     expect(list.config.inputSchema?.limit?.safeParse(500).success).toBe(true);
@@ -150,6 +172,26 @@ describe("MCP skill surface", () => {
       expect(serialized).not.toContain("canonicalRoot");
       expect(result).toHaveProperty("structuredContent");
     }
+
+    const inspected = (await required(tools, "skill.inspect").handler({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT
+    })) as {
+      content: Array<{ type: "text"; text: string }>;
+      structuredContent: SkillInspectResult;
+    };
+    expect(inspected.structuredContent.capabilityPlan).toMatchObject({
+      schemaVersion: 1,
+      classification: "NATIVE",
+      nativeCapabilities: ["git.status"],
+      missingCapabilities: [],
+      externalRequirements: [],
+      blockedSemantics: [],
+      guidance: [{ capability: "git.status", purpose: expect.any(String) }],
+      truncated: false,
+      truncationReasons: []
+    });
+    expect(JSON.parse(inspected.content[0]!.text)).toEqual(inspected.structuredContent);
   });
 
   it("maps SkillError to a stable code without exposing a host-looking error message", async () => {

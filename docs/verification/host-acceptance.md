@@ -194,7 +194,7 @@ Confirm the host does **not** discover:
 - workspace trust mutation
 - Codex/Claude/provider invocation tools
 
-If the current ChatGPT app/connector still exposes an older frozen tool snapshot or a stale `skill.list` schema, refresh/rescan the app actions and reconnect as required by the host product. Until both the three read-only skill tools and the `compatibility` input are visible, mark the affected host action-schema scenarios `BLOCKED`.
+If the current ChatGPT app/connector still exposes an older frozen tool snapshot or a stale `skill.list` schema, refresh/rescan the app actions and reconnect as required by the host product. Until both the three read-only skill tools and the `compatibility` input are visible, mark the affected host action-schema scenarios `BLOCKED`. When validating a candidate that adds advisory `skill.inspect` result fields, refresh/rescan before claiming those fields are host-visible; local integration output is not a substitute for actual ChatGPT observation.
 
 ## 10. Portable live-skill fixture
 
@@ -210,9 +210,11 @@ Through ChatGPT:
 
 1. `skill.list` and record the public skill ID plus compatibility classification.
 2. `skill.inspect` and record the fingerprint.
-3. Verify the result does not reveal the state root, canonical source root, source capability ID, or unnecessary host path.
-4. `skill.load` the instructions, UTF-8 reference, and UTF-8 script resource.
-5. Verify the script is returned as text and the side-effect marker still does not exist.
+3. For candidates with advisory orchestration, verify `capabilityPlan.schemaVersion == 1`, `classification` matches the skill compatibility verdict, arrays are bounded, and at least one relevant existing native capability is suggested for a native fixture.
+4. Verify the inspection result does not reveal the state root, canonical source root, source capability ID, workspace/security handles, credentials, or unnecessary host path.
+5. If exercising a suggested native capability, invoke it as a **separate ordinary KodeGPT tool call** and record the result; the plan itself must not execute anything.
+6. `skill.load` the instructions, UTF-8 reference, and UTF-8 script resource.
+7. Verify the script is returned as data/text and the side-effect marker still does not exist.
 
 Binary/unsupported resources should be rejected according to the bounded resource contract rather than silently executed or decoded as text.
 
@@ -302,3 +304,9 @@ Record each row as `PASS`, `FAIL`, or `BLOCKED` with one-line evidence:
 | Restart |  |  |
 
 Never replace a `BLOCKED` host row with a deterministic integration-test result. Record deterministic backend evidence separately.
+
+### 2026-08-13 advisory orchestration closure
+
+For PR #6's host-tested runtime/code candidate `8b7cbacead18a7c4c72e5e282a9dcbd1f41f2433`, the previously blocked stale-schema row was closed by a fresh ChatGPT action snapshot. The actual host-visible `skill.list` schema exposed optional `compatibility` with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`, and `skill.list compatibility=NATIVE` was accepted by the host and backend.
+
+The same fresh host correlation reported runtime `0.1`, protocol `2026-07-28`, surface `0.3`, healthy audit/filesystem state, and production test methods disabled. Actual native `skill.inspect` returned a bounded `capabilityPlan` whose classification matched skill compatibility and suggested `file.read`, `verify.run`, and `workspace.inspect`. Earlier acceptance on the same runtime candidate additionally proved no advisory path/security leakage, separate explicit ordinary-tool execution rather than hidden chaining, and script-resource non-execution. The public skill inventory remained exactly `skill.list`, `skill.inspect`, and `skill.load`; source/pin/workspace-trust/provider execution authorities remained absent.

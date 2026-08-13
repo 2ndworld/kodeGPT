@@ -500,7 +500,7 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.inspect",
     {
-      description: "Inspect bounded skill metadata, compatibility, and resource inventory without resource bodies.",
+      description: "Inspect bounded skill metadata, compatibility, resource inventory, and an advisory plan for relevant native capabilities; actual operations require separate normal KodeGPT tool calls.",
       inputSchema: {
         skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional()
@@ -514,7 +514,7 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.load",
     {
-      description: "Load a bounded skill instruction body and explicitly requested UTF-8 resources.",
+      description: "Load a bounded skill instruction body and explicitly requested UTF-8 resources as data/text only; returned resources are not executed.",
       inputSchema: {
         skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),

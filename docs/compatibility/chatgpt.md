@@ -70,6 +70,14 @@ Compatibility classification is advisory semantic-portability metadata, not a pe
 
 Runtime/security policy remains the final authority regardless of compatibility classification. Provider interoperability (`provider.list`, `provider.tools`, `provider.invoke`) and `skill.run` are intentionally out of scope for this phase.
 
+`skill.inspect` may also return a bounded `capabilityPlan` with `schemaVersion: 1`. The plan is deterministic advisory metadata derived from the selected skill bundle and the existing native capability registry. It can name relevant native capability IDs, missing capabilities, external requirements, blocked semantics, and bounded guidance. It is **not** permission, does not execute any capability, does not invoke a provider, and does not weaken runtime policy. GPT Web remains the orchestration/reasoning actor and must make separate ordinary KodeGPT tool calls for any actual host operation. The three public skill tools remain exactly `skill.list`, `skill.inspect`, and `skill.load`; `skill.load` returns requested UTF-8 resources as data/text and never executes them.
+
+### Observed advisory-candidate host evidence — 2026-08-13
+
+The Native Skill Execution Orchestration candidate `8b7cbacead18a7c4c72e5e282a9dcbd1f41f2433` was exercised through an actual refreshed ChatGPT action snapshot against runtime `0.1`, protocol `2026-07-28`, and semantic surface `0.3`. The host-visible `skill.list` definition exposed optional `compatibility` with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`, and an actual `skill.list compatibility=NATIVE` call reached the backend successfully.
+
+For the disposable native fixture, actual `skill.inspect` returned `capabilityPlan.schemaVersion=1`, classification `NATIVE`, and the relevant native suggestions `file.read`, `verify.run`, and `workspace.inspect`; the plan classification matched the skill compatibility classification. Inspection exposed no private state/source/security authority. A suggested ordinary operation ran only through a separate explicit KodeGPT action, and an explicitly loaded UTF-8 script resource remained data/text without executing its marker side effect. No skill execution, source/pin/workspace-trust mutation, Codex/Claude execution, or provider invocation action was present.
+
 ## Required manual host evidence matrix
 
 Before claiming ChatGPT compatibility for a release candidate, capture a local-only evidence record containing at least:
@@ -88,6 +96,7 @@ Before claiming ChatGPT compatibility for a release candidate, capture a local-o
 | processAction | Whether a process action reached KodeGPT and the observed allow/deny/result behavior |
 | skillActionExposure | Whether `skill.list`, `skill.inspect`, and `skill.load` actions reached KodeGPT, even if the catalog was empty/unconfigured |
 | skillPositiveRoundTrip | Whether a configured non-empty host catalog completed `skill.list -> skill.inspect -> skill.load` and verified the expected resource marker |
+| skillCapabilityPlan | Whether actual host `skill.inspect` returned bounded advisory `capabilityPlan` semantics for the exact candidate, with no authority/path leakage and a separate ordinary native tool call used for any suggested host operation |
 | appsRendering | Whether `ui://kodegpt/dev-console/v1` actually rendered as an MCP App |
 | fallbackBehavior | What happened when Apps rendering was unavailable/disabled |
 | notes | Any host-specific limitations or permissions |

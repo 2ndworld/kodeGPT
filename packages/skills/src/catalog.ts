@@ -27,6 +27,7 @@ import {
   type SkillSourceTreeResult,
   type SkillValidatedFrontmatter
 } from "./contracts.js";
+import { buildSkillCapabilityPlan } from "./capability-plan.js";
 import { analyzeSkillCompatibility } from "./compatibility.js";
 import { SkillError } from "./errors.js";
 import { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
@@ -580,6 +581,7 @@ function inspectionFromBundle(bundle: BuiltBundle, pinned: boolean): SkillCatalo
       availability: pinned ? "live+pinned" : "live",
       pinned
     },
+    capabilityPlan: buildSkillCapabilityPlan(bundle.parsed, descriptor.compatibility),
     frontmatter: frontmatterFrom(bundle.parsed),
     resources: bundle.inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: Buffer.byteLength(bundle.parsed.instructions, "utf8"),
@@ -589,6 +591,7 @@ function inspectionFromBundle(bundle: BuiltBundle, pinned: boolean): SkillCatalo
 
 function inspectionFromPinned(pinned: SkillPinnedRawLoad): SkillCatalogInspection {
   const parsed = parsePinnedSkillDocument(pinned);
+  const skill = entryFromPinnedLoad(pinned);
   const resources = pinned.resources
     .map((resource) =>
       resourceInventoryEntry({
@@ -599,7 +602,8 @@ function inspectionFromPinned(pinned: SkillPinnedRawLoad): SkillCatalogInspectio
     )
     .sort((left, right) => compareUtf8(left.path, right.path));
   return {
-    skill: entryFromPinnedLoad(pinned),
+    skill,
+    capabilityPlan: buildSkillCapabilityPlan(parsed, skill.compatibility),
     frontmatter: frontmatterFrom(parsed),
     resources,
     instructionBytes: Buffer.byteLength(parsed.instructions, "utf8"),

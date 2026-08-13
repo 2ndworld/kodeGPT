@@ -205,14 +205,21 @@ export interface SkillCapabilityGuidanceStep {
   purpose: string;
 }
 
+export type SkillCapabilityPlanTruncationReason =
+  | "MISSING_CAPABILITIES"
+  | "EXTERNAL_REQUIREMENTS"
+  | "BLOCKED_SEMANTICS";
+
 export interface SkillCapabilityPlan {
   schemaVersion: 1;
   classification: SkillCompatibility;
-  nativeCapabilities: NativeCapabilityId[];
-  missingCapabilities: string[];
-  externalRequirements: string[];
-  blockedSemantics: string[];
-  guidance: SkillCapabilityGuidanceStep[];
+  nativeCapabilities: readonly NativeCapabilityId[];
+  missingCapabilities: readonly string[];
+  externalRequirements: readonly string[];
+  blockedSemantics: readonly string[];
+  guidance: readonly SkillCapabilityGuidanceStep[];
+  truncated: boolean;
+  truncationReasons: readonly SkillCapabilityPlanTruncationReason[];
 }
 ```
 
@@ -229,7 +236,9 @@ Import `NativeCapabilityId` as a type from `@kodegpt/capabilities`. Keep array-s
 5. map existing unsupported reasons (`CODEX_EXEC_UNSUPPORTED`, `CODEX_RUNTIME_UNSUPPORTED`, `SUBAGENT_SESSION_UNSUPPORTED`, declared unsupported requirements) into stable `blockedSemantics` values;
 6. optionally recognize aliases from Task 1 in the parsed skill instructions only to add existing native capability IDs, never to remove a missing/provider/unsupported finding;
 7. create one `guidance` row per selected native capability using the registry purpose;
-8. bytewise-sort/dedupe all arrays and enforce explicit hard maximum counts.
+8. bytewise-sort/dedupe all arrays; `nativeCapabilities`/`guidance` are naturally capped by the exact `NATIVE_CAPABILITY_IDS` set, while each finding array is capped at 64 entries;
+9. set `truncated=true` plus stable `truncationReasons` when a finding array exceeds its cap, without changing `compatibility.classification` or silently pretending the omitted advisory details are complete;
+10. freeze the returned plan and nested arrays/steps so internal consumers cannot mutate advisory evidence after planning.
 
 The module must import no filesystem, child-process, network, environment, credential, workspace-manager, or runtime code.
 
@@ -331,12 +340,12 @@ git commit -m "feat(skills): expose advisory capability plans"
 **Files:**
 - Modify: `packages/mcp-server/src/tools.ts:485-520`
 - Modify: `packages/mcp-server/src/skills.test.ts`
-- Modify: `packages/mcp-server/src/structured-results.test.ts`
-- Modify: `tests/fixtures/mcp-surface.ts` only if its result-schema fixture explicitly models `skill.inspect` output; do not change its expected tool-name inventory.
+- Reference only: `packages/mcp-server/src/structured-results.test.ts` (the current baseline uses it for capability tools that advertise MCP `outputSchema`; skill tools do not)
+- `tests/fixtures/mcp-surface.ts` should remain unchanged because this phase changes neither tool names nor required input fields.
 
 **Interfaces:**
 - Consumes: extended `SkillInspectResult` from Task 3.
-- Produces: unchanged tool name/input inventory; clearer `skill.inspect`/`skill.load` descriptions and structured result schema for the advisory plan.
+- Produces: unchanged tool name/input inventory; clearer `skill.inspect`/`skill.load` descriptions and typed/structured result coverage for the advisory plan. Current skill tools do not advertise MCP `outputSchema`; do not introduce one solely for this additive field.
 
 - [ ] **Step 1: Add RED inventory/description assertions**
 
@@ -350,9 +359,9 @@ Add assertions that `skill.inspect` description contains the concepts `advisory`
 
 Continue asserting mutation/execution names are absent.
 
-- [ ] **Step 2: Add RED structured-result schema coverage**
+- [ ] **Step 2: Add RED structured-result contract coverage**
 
-Extend `structured-results.test.ts` so `skill.inspect`'s structured result includes:
+Extend the existing MCP skill-result tests (use `skills.test.ts`; `structured-results.test.ts` is capability-output-schema-specific on the current baseline) so `skill.inspect`'s returned structured result includes:
 
 ```ts
 capabilityPlan: {

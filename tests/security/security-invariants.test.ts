@@ -12,6 +12,11 @@ import {
 } from "../../packages/core/src/kernel-client.js";
 import { READ_ONLY_TOOL_ANNOTATIONS } from "../../packages/mcp-server/src/annotations.js";
 import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
+import {
+  analyzeSkillCompatibility,
+  buildSkillCapabilityPlan,
+  type ParsedSkillDocument
+} from "../../packages/skills/src/index.js";
 import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/surface-version.js";
 import { registerKodegptTools } from "../../packages/mcp-server/src/tools.js";
 
@@ -117,6 +122,43 @@ describe("full security acceptance invariants", () => {
     expect(facadeSource).not.toContain('from "node:child_process');
     expect(facadeSource).not.toMatch(/\b(?:spawn|exec|execFile|fork)\s*\(/);
     expect(facadeSource).toContain("kernel.request");
+  });
+
+  it("keeps skill capability planning advisory and free of authority-bearing execution state", () => {
+    const skill: ParsedSkillDocument = {
+      name: "provider-advisory",
+      description: "Advisory provider workflow",
+      unknownMetadataKeys: [],
+      instructions: "Run tests before using the declared provider.",
+      metadata: {
+        kodegpt: {
+          requires: {
+            providers: ["figma"]
+          }
+        }
+      }
+    };
+    const compatibility = analyzeSkillCompatibility(skill);
+    const plan = buildSkillCapabilityPlan(skill, compatibility);
+
+    expect(plan.classification).toBe("PROVIDER_REQUIRED");
+    expect(plan.externalRequirements).toEqual(["provider:figma"]);
+    expect(plan.nativeCapabilities).toContain("verify.run");
+    const serialized = JSON.stringify(plan);
+    for (const forbidden of [
+      "workspaceId",
+      "sourceCapabilityId",
+      "canonicalRoot",
+      "stateRoot",
+      "credential",
+      "operationId",
+      "argv",
+      "process.env",
+      "provider.invoke",
+      "skill.run"
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
   it("ships the native capability hub surface without trust, shell, Codex, or skill execution tools", () => {
