@@ -151,7 +151,14 @@ async function start(args: string[]): Promise<void> {
   const startArgs = args.includes("--runtime") ? args : [...args, "--runtime", runtimePath];
   const started = await runStartCommand(startArgs);
   process.stdout.write(`${formatKodegptStartStatus(started.status)}\n`);
-  await waitForShutdown(started.close);
+  if (started.termination === undefined) {
+    await waitForShutdown(started.close);
+  } else {
+    await Promise.race([
+      waitForShutdown(started.close),
+      started.termination.finally(() => started.close())
+    ]);
+  }
   process.exit(0);
 }
 

@@ -51,6 +51,7 @@ export interface StartKernel {
   request<T>(method: string, params: Record<string, unknown>, requestId?: string): Promise<T>;
   hello(): Promise<KernelHello>;
   stop(): Promise<void>;
+  unexpectedTermination?: Promise<never>;
 }
 
 export interface TrustProfileBundle {
@@ -119,6 +120,7 @@ export interface KodegptStartStatus {
 
 export interface StartedKodegpt {
   status: KodegptStartStatus;
+  termination?: Promise<never>;
   close(): Promise<void>;
 }
 
@@ -386,13 +388,21 @@ export async function startKodegpt(
     };
 
     let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await closeRuntimeStack(bound, mcp, stack);
+    };
+    const runtimeTermination = stack.kernel.unexpectedTermination;
+    const termination = runtimeTermination?.catch(async (error) => {
+      await close().catch(() => undefined);
+      throw error;
+    }) as Promise<never> | undefined;
+    if (termination !== undefined) void termination.catch(() => undefined);
     return {
       status,
-      async close(): Promise<void> {
-        if (closed) return;
-        closed = true;
-        await closeRuntimeStack(bound, mcp, stack);
-      }
+      ...(termination === undefined ? {} : { termination }),
+      close
     };
   } catch (error) {
     await closeRuntimeStack(bound, mcp, stack).catch(() => undefined);

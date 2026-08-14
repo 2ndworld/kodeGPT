@@ -221,6 +221,38 @@ describe("service start, stop, restart, and status", () => {
     expect(output).toContain(`active=${releaseB.releaseId}`);
   });
 
+  it("rolls back exactly once when a staged restart fails readiness", async () => {
+    const fixture = await serviceFixture();
+    const releaseB = secondRelease(fixture.release);
+    await fixture.metadataStore.stageRelease(fixture.release);
+    await fixture.metadataStore.promoteStagedRelease();
+    await fixture.metadataStore.stageRelease(releaseB);
+    fixture.dependencies.waitForReady = async (releaseId) => {
+      fixture.managerCalls.push(`wait:${releaseId}`);
+      if (releaseId === releaseB.releaseId) throw new Error("candidate readiness failed");
+      return readyFor(releaseId);
+    };
+
+    await expect(
+      restartService({ command: "restart", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/candidate readiness failed/);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${releaseB.releaseId}`,
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+  });
+
   it("normalizes sanitized running status from manager, metadata, and runtime readiness", async () => {
     const fixture = await serviceFixture();
     await fixture.metadataStore.stageRelease(fixture.release);

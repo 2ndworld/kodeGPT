@@ -364,6 +364,11 @@ export async function exposeZrok(
       (closeError) => rejectTermination(closeError)
     );
   };
+  if (started.termination !== undefined) {
+    void started.termination.catch((error) => {
+      failExposure(error instanceof Error ? error : new Error("KodeGPT runtime terminated unexpectedly"));
+    });
+  }
   child.once("error", () => failExposure(new Error("zrok process failed")));
   child.once("exit", (code, signal) => {
     failExposure(new Error(

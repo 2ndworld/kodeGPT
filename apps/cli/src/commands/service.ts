@@ -167,7 +167,35 @@ export async function restartService(
   await dependencies.manager.resetFailed();
   if (metadata.activeReleaseId === undefined) await dependencies.manager.start();
   else await dependencies.manager.restart();
-  await dependencies.waitForReady(targetReleaseId);
+  try {
+    await dependencies.waitForReady(targetReleaseId);
+  } catch (candidateError) {
+    if (
+      metadata.activeReleaseId !== undefined &&
+      metadata.stagedReleaseId !== undefined &&
+      metadata.stagedReleaseId !== metadata.activeReleaseId
+    ) {
+      const rollbackRelease = metadata.releases[metadata.activeReleaseId];
+      if (rollbackRelease !== undefined) {
+        try {
+          await writeUserUnitAtomic(
+            dependencies.unitPath,
+            renderKodegptUserUnit(rollbackRelease, options.stateRoot)
+          );
+          await dependencies.manager.daemonReload();
+          await dependencies.manager.resetFailed();
+          await dependencies.manager.restart();
+          await dependencies.waitForReady(rollbackRelease.releaseId);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [candidateError, rollbackError],
+            "candidate service activation failed and rollback also failed"
+          );
+        }
+      }
+    }
+    throw candidateError;
+  }
   if (metadata.stagedReleaseId === targetReleaseId) await dependencies.metadataStore.promoteStagedRelease();
   return `KodeGPT service running active=${targetReleaseId}`;
 }
