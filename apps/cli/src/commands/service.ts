@@ -114,14 +114,12 @@ export async function installService(
   if (release.reservedName !== options.name || release.port !== options.port) {
     throw new Error("prepared service release does not match requested exposure identity");
   }
+  await dependencies.metadataStore.stageRelease(release);
   if (current.activeReleaseId === undefined) {
     await writeUserUnitAtomic(
       dependencies.unitPath,
       renderKodegptUserUnit(release, options.stateRoot)
     );
-  }
-  await dependencies.metadataStore.stageRelease(release);
-  if (current.activeReleaseId === undefined) {
     await dependencies.manager.daemonReload();
   }
   await dependencies.manager.enable();
