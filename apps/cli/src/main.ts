@@ -15,6 +15,7 @@ import { WorkspaceTrustStore } from "@kodegpt/trust";
 import { runAuthCommand } from "./commands/auth.js";
 import { runBridgeCommand } from "./commands/bridge.js";
 import { formatExposeZrokStatus, runExposeZrokCommand } from "./commands/expose-zrok.js";
+import { parseServiceArguments } from "./commands/service.js";
 import { runSkillCommand, type SkillCommandDependencies } from "./commands/skill.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
@@ -34,6 +35,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "skill":
       await skill(rest);
+      return;
+    case "service":
+      await service(rest);
       return;
     case "start":
       await start(rest);
@@ -113,6 +117,11 @@ async function skill(args: string[]): Promise<void> {
   };
   const output = await runSkillCommand(remaining, dependencies);
   process.stdout.write(`${output}\n`);
+}
+
+async function service(args: string[]): Promise<void> {
+  const parsed = parseServiceArguments(args, homedir());
+  throw new Error(`service lifecycle command not implemented yet: ${parsed.command}`);
 }
 
 async function withSkillRuntime<T>(
@@ -237,6 +246,12 @@ function helpText(): string {
     "  kodegpt skill source remove <source-id> [--state-root <path>]",
     "  kodegpt skill pin <skill-id> [--fingerprint <sha256>] [--state-root <path>]",
     "  kodegpt skill unpin <skill-id> [--fingerprint <sha256>] [--state-root <path>]",
+    "  kodegpt service install --name <namespace:name> [--port <port>] [--state-root <path>]",
+    "  kodegpt service start [--state-root <path>]",
+    "  kodegpt service stop [--state-root <path>]",
+    "  kodegpt service restart [--state-root <path>]",
+    "  kodegpt service status [--json] [--state-root <path>]",
+    "  kodegpt service uninstall [--state-root <path>]",
     "  kodegpt start [--state-root <path>] [--port <port>] [--public-url <https-url>]",
     "  kodegpt bridge [--state-root <path>]",
     "  kodegpt expose zrok --name <namespace:name> [--port <port>] [--state-root <path>]",

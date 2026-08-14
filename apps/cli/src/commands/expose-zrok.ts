@@ -168,6 +168,10 @@ export function parseExposeZrokArguments(args: string[]): ExposeZrokOptions {
   };
 }
 
+export function validateZrokReservedNameSelection(value: string): void {
+  parseZrokNameSelection(value);
+}
+
 function parseZrokNameSelection(value: string): { namespaceToken: string; name: string } {
   if (/[\s/@?#]/.test(value)) throw new Error("invalid zrok reserved name selection");
   const parts = value.split(":");

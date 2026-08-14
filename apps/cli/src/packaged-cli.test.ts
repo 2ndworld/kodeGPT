@@ -87,6 +87,24 @@ describe("packaged CLI skill surface", () => {
     expect(result.stdout).toContain("kodegpt skill source remove <source-id>");
     expect(result.stdout).toContain("kodegpt skill pin <skill-id> [--fingerprint <sha256>]");
     expect(result.stdout).toContain("kodegpt skill unpin <skill-id> [--fingerprint <sha256>]");
+    expect(result.stdout).toContain("kodegpt service install --name <namespace:name>");
+    expect(result.stdout).toContain("kodegpt service start [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt service stop [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt service restart [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt service status [--json] [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt service uninstall [--state-root <path>]");
+    expect(result.stdout).not.toContain("kodegpt service run");
+  });
+
+  it("dispatches service arguments through the local-only parser", () => {
+    const result = spawnSync(process.execPath, [cliPath, "service", "wat"], {
+      cwd: cliRoot,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("unknown service command: wat");
   });
 
   it("lists empty local skill state without starting or requiring the runtime", async () => {
