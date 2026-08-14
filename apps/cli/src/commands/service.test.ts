@@ -16,6 +16,7 @@ import {
   installService,
   parseServiceArguments,
   restartService,
+  runInstalledService,
   startService,
   stopService,
   uninstallService,
@@ -68,6 +69,28 @@ describe("service CLI contract", () => {
         parseServiceArguments([command, "--state-root", "/tmp/kodegpt-state"], "/home/test")
       ).toEqual({ command, stateRoot: "/tmp/kodegpt-state" });
     }
+  });
+
+  it("parses the hidden systemd run entrypoint without exposing it in help", () => {
+    expect(
+      parseServiceArguments([
+        "run",
+        "--state-root",
+        "/state",
+        "--release-id",
+        `rel_${"e".repeat(32)}`,
+        "--name",
+        "public:kodegpt-dev",
+        "--port",
+        "43121"
+      ], "/home/test")
+    ).toEqual({
+      command: "run",
+      stateRoot: "/state",
+      releaseId: `rel_${"e".repeat(32)}`,
+      name: "public:kodegpt-dev",
+      port: 43_121
+    });
   });
 
   it("rejects unknown service subcommands and duplicate options", () => {
@@ -230,6 +253,102 @@ describe("service start, stop, restart, and status", () => {
       expect(output).not.toContain("verifier");
       expect(output).not.toContain("rawZrok");
     }
+  });
+});
+
+describe("installed service run entrypoint", () => {
+  it("runs the exact installed release through existing managed zrok and writes sanitized readiness", async () => {
+    const fixture = await serviceFixture();
+    await fixture.metadataStore.stageRelease(fixture.release);
+    const calls: Array<Record<string, unknown>> = [];
+    let closed = 0;
+    const never = new Promise<never>(() => undefined);
+
+    const running = await runInstalledService(
+      {
+        command: "run",
+        stateRoot: fixture.stateRoot,
+        releaseId: fixture.release.releaseId,
+        name: fixture.release.reservedName,
+        port: fixture.release.port
+      },
+      {
+        metadataStore: fixture.metadataStore,
+        runtimeStatusStore: fixture.runtimeStatusStore,
+        pid: 7788,
+        exposeZrok: async (options) => {
+          calls.push(options as unknown as Record<string, unknown>);
+          return {
+            status: {
+              local: {
+                host: "127.0.0.1",
+                port: 43_121,
+                protocolVersion: "2026-07-28",
+                surfaceVersion: "0.3",
+                runtimeVersion: "0.1",
+                auditHealthy: true,
+                filesystemBoundaryAvailable: true
+              },
+              publicUrl: "https://kodegpt.example.invalid/mcp",
+              credentialCreated: false
+            },
+            termination: never,
+            close: async () => {
+              closed += 1;
+            }
+          };
+        }
+      }
+    );
+
+    expect(calls).toEqual([{
+      runtimePath: fixture.release.runtimePath,
+      stateRoot: fixture.stateRoot,
+      name: fixture.release.reservedName,
+      port: fixture.release.port,
+      requireExistingConnectorCredential: true
+    }]);
+    expect(await fixture.runtimeStatusStore.read()).toEqual({
+      schemaVersion: 1,
+      releaseId: fixture.release.releaseId,
+      pid: 7788,
+      ready: true,
+      localPort: 43_121,
+      runtimeVersion: "0.1",
+      protocolVersion: "2026-07-28",
+      surfaceVersion: "0.3",
+      reservedName: fixture.release.reservedName,
+      publicUrl: "https://kodegpt.example.invalid/mcp"
+    });
+
+    await running.close();
+    expect(closed).toBe(1);
+    await expect(fixture.runtimeStatusStore.read()).resolves.toBeUndefined();
+  });
+
+  it("rejects unit arguments that do not match installed release metadata", async () => {
+    const fixture = await serviceFixture();
+    await fixture.metadataStore.stageRelease(fixture.release);
+
+    await expect(
+      runInstalledService(
+        {
+          command: "run",
+          stateRoot: fixture.stateRoot,
+          releaseId: fixture.release.releaseId,
+          name: "public:other",
+          port: fixture.release.port
+        },
+        {
+          metadataStore: fixture.metadataStore,
+          runtimeStatusStore: fixture.runtimeStatusStore,
+          pid: 7788,
+          exposeZrok: async () => {
+            throw new Error("must not run");
+          }
+        }
+      )
+    ).rejects.toThrow(/service run arguments do not match installed release metadata/);
   });
 });
 

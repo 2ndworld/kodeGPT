@@ -292,6 +292,28 @@ describe("kodegpt expose zrok", () => {
     expect(output).toContain("shown only when newly issued");
   });
 
+  it("refuses service-mode exposure when connector credential is not already configured", async () => {
+    const { calls, dependencies } = makeDependencies({ configured: false });
+
+    await expect(
+      exposeZrok(
+        {
+          runtimePath: "/runtime",
+          stateRoot: "/state",
+          name: "public:kodegpt-dev",
+          port: 43121,
+          requireExistingConnectorCredential: true
+        },
+        dependencies
+      )
+    ).rejects.toThrow(/requires an existing connector credential/);
+
+    expect(calls.order).toEqual(["list-names", "status"]);
+    expect(calls.start).toHaveLength(0);
+    expect(calls.spawn).toHaveLength(0);
+    expect(calls.rotate).toBe(0);
+  });
+
   it("reuses an existing connector verifier without revealing a token", async () => {
     const { calls, dependencies } = makeDependencies({ configured: true });
     const exposed = await exposeZrok(

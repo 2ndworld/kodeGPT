@@ -27,6 +27,7 @@ export interface ExposeZrokOptions {
   name: string;
   stateRoot?: string;
   port?: number;
+  requireExistingConnectorCredential?: boolean;
 }
 
 export interface ZrokReservedName {
@@ -305,6 +306,9 @@ export async function exposeZrok(
 
   const store = dependencies.createCredentialStore(stateRoot);
   const credentialStatus = await store.status();
+  if (options.requireExistingConnectorCredential === true && !credentialStatus.configured) {
+    throw new Error("managed service exposure requires an existing connector credential");
+  }
   const started = await dependencies.startKodegpt({
     runtimePath: options.runtimePath,
     stateRoot,

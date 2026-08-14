@@ -12,10 +12,14 @@ import {
   writeUserUnitAtomic,
   type SystemdUserManager
 } from "../service/systemd.js";
+import {
+  validateZrokReservedNameSelection,
+  type ExposedZrokKodegpt,
+  type ExposeZrokOptions
+} from "./expose-zrok.js";
 import { DEFAULT_MCP_PORT } from "./start.js";
-import { validateZrokReservedNameSelection } from "./expose-zrok.js";
 
-export type ServiceCommand = "install" | "start" | "stop" | "restart" | "status" | "uninstall";
+export type ServiceCommand = "install" | "start" | "stop" | "restart" | "status" | "uninstall" | "run";
 
 export interface ServiceInstallOptions {
   command: "install";
@@ -35,10 +39,19 @@ export interface ServiceStatusOptions {
   json: boolean;
 }
 
+export interface ServiceRunOptions {
+  command: "run";
+  stateRoot: string;
+  releaseId: string;
+  name: string;
+  port: number;
+}
+
 export type ParsedServiceArguments =
   | ServiceInstallOptions
   | ServiceSimpleOptions
-  | ServiceStatusOptions;
+  | ServiceStatusOptions
+  | ServiceRunOptions;
 
 export interface ServiceOperatorDependencies {
   metadataStore: ServiceMetadataStore;
@@ -48,6 +61,18 @@ export interface ServiceOperatorDependencies {
   unitPath: string;
   prepareRelease(options: ServiceInstallOptions): Promise<ServiceReleaseRecord>;
   waitForReady(releaseId: string): Promise<ServiceRuntimeStatusV1>;
+}
+
+export interface InstalledServiceRunDependencies {
+  metadataStore: ServiceMetadataStore;
+  runtimeStatusStore: ServiceRuntimeStatusStore;
+  pid?: number;
+  exposeZrok(options: ExposeZrokOptions): Promise<ExposedZrokKodegpt>;
+}
+
+export interface RunningInstalledService {
+  termination: Promise<never>;
+  close(): Promise<void>;
 }
 
 export interface ServiceStatusSnapshot {
@@ -225,6 +250,62 @@ function normalizeServiceState(activeState: string): ServiceStatusSnapshot["stat
   return "unknown";
 }
 
+export async function runInstalledService(
+  options: ServiceRunOptions,
+  dependencies: InstalledServiceRunDependencies
+): Promise<RunningInstalledService> {
+  const metadata = await dependencies.metadataStore.read();
+  const release = metadata.releases[options.releaseId];
+  if (
+    release === undefined ||
+    release.reservedName !== options.name ||
+    release.port !== options.port
+  ) {
+    throw new Error("service run arguments do not match installed release metadata");
+  }
+
+  const pid = dependencies.pid ?? process.pid;
+  const exposed = await dependencies.exposeZrok({
+    runtimePath: release.runtimePath,
+    stateRoot: options.stateRoot,
+    name: release.reservedName,
+    port: release.port,
+    requireExistingConnectorCredential: true
+  });
+  if (exposed.status.credentialCreated || exposed.status.chatgptServerUrl !== undefined) {
+    await exposed.close().catch(() => undefined);
+    throw new Error("managed service exposure must not issue connector credentials");
+  }
+
+  await dependencies.runtimeStatusStore.write({
+    schemaVersion: 1,
+    releaseId: release.releaseId,
+    pid,
+    ready: true,
+    localPort: exposed.status.local.port,
+    runtimeVersion: exposed.status.local.runtimeVersion,
+    protocolVersion: exposed.status.local.protocolVersion,
+    surfaceVersion: exposed.status.local.surfaceVersion,
+    reservedName: release.reservedName,
+    publicUrl: exposed.status.publicUrl
+  });
+
+  const removeReady = async () => {
+    await dependencies.runtimeStatusStore.removeIfMatches(release.releaseId, pid).catch(() => undefined);
+  };
+  const termination = exposed.termination.finally(removeReady) as Promise<never>;
+  return {
+    termination,
+    async close() {
+      try {
+        await exposed.close();
+      } finally {
+        await removeReady();
+      }
+    }
+  };
+}
+
 export function parseServiceArguments(args: string[], homeDir: string): ParsedServiceArguments {
   const [command, ...rest] = args;
   if (command === undefined) {
@@ -236,6 +317,7 @@ export function parseServiceArguments(args: string[], homeDir: string): ParsedSe
 
   if (command === "install") return parseInstall(rest, homeDir);
   if (command === "status") return parseStatus(rest, homeDir);
+  if (command === "run") return parseRun(rest, homeDir);
   return parseSimple(command, rest, homeDir);
 }
 
@@ -277,6 +359,47 @@ function parseInstall(args: string[], homeDir: string): ServiceInstallOptions {
 
   if (name === undefined) throw new Error("service install requires --name <namespace:name>");
   return { command: "install", stateRoot, name, port };
+}
+
+function parseRun(args: string[], homeDir: string): ServiceRunOptions {
+  let stateRoot = join(homeDir, ".kodegpt");
+  let releaseId: string | undefined;
+  let name: string | undefined;
+  let port: number | undefined;
+  const seen = new Set<string>();
+
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (flag === undefined || !flag.startsWith("--")) throw new Error("service run accepts only named options");
+    if (value === undefined || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+    if (seen.has(flag)) throw new Error(`${flag} may be specified only once`);
+    seen.add(flag);
+    index += 1;
+    switch (flag) {
+      case "--state-root":
+        stateRoot = value;
+        break;
+      case "--release-id":
+        if (!/^rel_[a-f0-9]{32}$/.test(value)) throw new Error("invalid service release id");
+        releaseId = value;
+        break;
+      case "--name":
+        validateZrokReservedNameSelection(value);
+        name = value;
+        break;
+      case "--port":
+        port = parsePort(value);
+        break;
+      default:
+        throw new Error(`unknown service run option: ${flag}`);
+    }
+  }
+
+  if (releaseId === undefined || name === undefined || port === undefined) {
+    throw new Error("service run requires --release-id, --name, and --port");
+  }
+  return { command: "run", stateRoot, releaseId, name, port };
 }
 
 function parseStatus(args: string[], homeDir: string): ServiceStatusOptions {
@@ -337,5 +460,6 @@ function isServiceCommand(value: string): value is ServiceCommand {
     value === "stop" ||
     value === "restart" ||
     value === "status" ||
-    value === "uninstall";
+    value === "uninstall" ||
+    value === "run";
 }
