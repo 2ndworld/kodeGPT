@@ -77,12 +77,16 @@ export class ServiceMetadataStore {
   async stageRelease(release: ServiceReleaseRecord): Promise<ServiceMetadataV1> {
     const parsedRelease = parseRelease(release);
     const current = await this.read();
+    const existing = current.releases[parsedRelease.releaseId];
+    if (existing !== undefined && !sameReleaseRecord(existing, parsedRelease)) {
+      throw new Error("service release identity already exists with different metadata");
+    }
     const next: ServiceMetadataV1 = {
       ...current,
       stagedReleaseId: parsedRelease.releaseId,
       releases: {
         ...current.releases,
-        [parsedRelease.releaseId]: parsedRelease
+        [parsedRelease.releaseId]: existing ?? parsedRelease
       }
     };
     await this.write(next);
@@ -183,6 +187,21 @@ function parseRelease(value: unknown): ServiceReleaseRecord {
     reservedName: requiredString(value.reservedName, "reservedName"),
     port: value.port as number
   };
+}
+
+function sameReleaseRecord(a: ServiceReleaseRecord, b: ServiceReleaseRecord): boolean {
+  return a.releaseId === b.releaseId &&
+    a.packageVersion === b.packageVersion &&
+    a.runtimePackage === b.runtimePackage &&
+    a.cliSha256 === b.cliSha256 &&
+    a.runtimeSha256 === b.runtimeSha256 &&
+    a.releaseRoot === b.releaseRoot &&
+    a.cliPath === b.cliPath &&
+    a.runtimePath === b.runtimePath &&
+    a.nodePath === b.nodePath &&
+    a.zrokPath === b.zrokPath &&
+    a.reservedName === b.reservedName &&
+    a.port === b.port;
 }
 
 function optionalReleaseId(value: unknown, field: string): string | undefined {
