@@ -4,7 +4,7 @@ use std::os::fd::OwnedFd;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use kodegpt_protocol::GitRevisionSpec;
+use kodegpt_protocol::{GitRangeMode, GitRevisionSpec};
 use kodegpt_sandbox::{BubblewrapProvider, TrustedExecutable, resolve_trusted_executable};
 use serde::Serialize;
 
@@ -30,6 +30,7 @@ const SUBJECT_MAX_BYTES: usize = 512;
 pub(crate) const GIT_HISTORY_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const GIT_LOG_DEFAULT_LIMIT: u16 = 20;
 pub(crate) const GIT_LOG_MAX_LIMIT: u16 = 100;
+pub(crate) const GIT_RANGE_MAX_LIMIT: u16 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GitHistoryError {
@@ -89,6 +90,45 @@ pub(crate) struct GitLogResult {
     pub schema_version: u32,
     pub resolved_oid: String,
     pub commits: Vec<GitCommitSummary>,
+    pub returned_count: usize,
+    pub truncated: bool,
+    pub truncation_reasons: Vec<GitHistoryTruncationReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitBoundedCount {
+    pub value: u64,
+    pub exact: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum GitRangeSide {
+    Base,
+    Head,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitRangeCommit {
+    #[serde(flatten)]
+    pub commit: GitCommitSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<GitRangeSide>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitRangeResult {
+    pub schema_version: u32,
+    pub base_oid: String,
+    pub head_oid: String,
+    pub is_ancestor: bool,
+    pub merge_base_oid: Option<String>,
+    pub ahead: GitBoundedCount,
+    pub behind: GitBoundedCount,
+    pub commits: Vec<GitRangeCommit>,
     pub returned_count: usize,
     pub truncated: bool,
     pub truncation_reasons: Vec<GitHistoryTruncationReason>,
@@ -832,6 +872,204 @@ fn resolve_revision(
     parse_resolved_oid(&commit.stdout)
 }
 
+fn count_range_args(base_oid: &str, head_oid: &str) -> Vec<String> {
+    vec![
+        "rev-list".to_owned(),
+        "--count".to_owned(),
+        "--max-count=10001".to_owned(),
+        format!("{base_oid}..{head_oid}"),
+    ]
+}
+
+fn parse_bounded_count(stdout: &[u8]) -> Result<GitBoundedCount, GitHistoryError> {
+    let text = std::str::from_utf8(stdout).map_err(|_| GitHistoryError::GitReadFailed)?;
+    let value = text
+        .strip_suffix('\n')
+        .ok_or(GitHistoryError::GitReadFailed)?;
+    if value.is_empty() || value.contains('\n') || !value.as_bytes().iter().all(u8::is_ascii_digit)
+    {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| GitHistoryError::GitReadFailed)?;
+    match parsed {
+        0..=10_000 => Ok(GitBoundedCount {
+            value: parsed,
+            exact: true,
+        }),
+        10_001 => Ok(GitBoundedCount {
+            value: 10_000,
+            exact: false,
+        }),
+        _ => Err(GitHistoryError::GitReadFailed),
+    }
+}
+
+fn direct_range_args(base_oid: &str, head_oid: &str, limit: u16) -> Vec<String> {
+    vec![
+        "rev-list".to_owned(),
+        "--topo-order".to_owned(),
+        format!("--max-count={}", u32::from(limit) + 1),
+        format!("{base_oid}..{head_oid}"),
+    ]
+}
+
+fn symmetric_range_args(base_oid: &str, head_oid: &str, limit: u16) -> Vec<String> {
+    vec![
+        "rev-list".to_owned(),
+        "--left-right".to_owned(),
+        "--topo-order".to_owned(),
+        format!("--max-count={}", u32::from(limit) + 1),
+        format!("{base_oid}...{head_oid}"),
+    ]
+}
+
+fn parse_symmetric_walk(stdout: &[u8]) -> Result<Vec<(String, GitRangeSide)>, GitHistoryError> {
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    let text = std::str::from_utf8(stdout).map_err(|_| GitHistoryError::GitReadFailed)?;
+    let mut commits = Vec::new();
+    for line in text.lines() {
+        let (side, oid) = match line.as_bytes().split_first() {
+            Some((b'<', oid)) => (GitRangeSide::Base, oid),
+            Some((b'>', oid)) => (GitRangeSide::Head, oid),
+            _ => return Err(GitHistoryError::GitReadFailed),
+        };
+        let oid = std::str::from_utf8(oid).map_err(|_| GitHistoryError::GitReadFailed)?;
+        if !valid_full_oid(oid) {
+            return Err(GitHistoryError::GitReadFailed);
+        }
+        commits.push((oid.to_owned(), side));
+    }
+    Ok(commits)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bounded_count(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    base_oid: &str,
+    head_oid: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitBoundedCount, GitHistoryError> {
+    if !valid_full_oid(base_oid) || !valid_full_oid(head_oid) {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let output = run_history_command(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        count_range_args(base_oid, head_oid),
+        RESOLUTION_STDOUT_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    if output.exit_code != 0 {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    if output.stdout_truncated || output.source_truncated {
+        return Err(GitHistoryError::OutputLimitExceeded);
+    }
+    parse_bounded_count(&output.stdout)
+}
+
+fn ancestry_args(base_oid: &str, head_oid: &str) -> Vec<String> {
+    vec![
+        "merge-base".to_owned(),
+        "--is-ancestor".to_owned(),
+        base_oid.to_owned(),
+        head_oid.to_owned(),
+    ]
+}
+
+fn merge_base_args(base_oid: &str, head_oid: &str) -> Vec<String> {
+    vec![
+        "merge-base".to_owned(),
+        base_oid.to_owned(),
+        head_oid.to_owned(),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_ancestor(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    base_oid: &str,
+    head_oid: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<bool, GitHistoryError> {
+    if !valid_full_oid(base_oid) || !valid_full_oid(head_oid) {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let output = run_history_command(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        ancestry_args(base_oid, head_oid),
+        RESOLUTION_STDOUT_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    if output.stdout_truncated || output.source_truncated {
+        return Err(GitHistoryError::OutputLimitExceeded);
+    }
+    match output.exit_code {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => Err(GitHistoryError::GitReadFailed),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_base_oid(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    base_oid: &str,
+    head_oid: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<Option<String>, GitHistoryError> {
+    if !valid_full_oid(base_oid) || !valid_full_oid(head_oid) {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let output = run_history_command(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        merge_base_args(base_oid, head_oid),
+        RESOLUTION_STDOUT_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    if output.stdout_truncated || output.source_truncated {
+        return Err(GitHistoryError::OutputLimitExceeded);
+    }
+    match output.exit_code {
+        0 => parse_resolved_oid(&output.stdout).map(Some),
+        1 => Ok(None),
+        _ => Err(GitHistoryError::GitReadFailed),
+    }
+}
+
 fn log_walk_args(
     resolved_oid: &str,
     path: Option<&ValidatedHistoryPath>,
@@ -948,6 +1186,173 @@ pub(crate) fn run_git_log(
     Ok(GitLogResult {
         schema_version: 1,
         resolved_oid,
+        returned_count: commits.len(),
+        commits,
+        truncated: !truncation_reasons.is_empty(),
+        truncation_reasons,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_git_range(
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    base_revision: ValidatedRevision,
+    head_revision: ValidatedRevision,
+    mode: GitRangeMode,
+    limit: u16,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitRangeResult, GitHistoryError> {
+    if limit == 0 || limit > GIT_RANGE_MAX_LIMIT {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+
+    let prepared = prepare_history_git(
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        spool,
+        executions,
+    )?;
+    let base_oid = resolve_revision(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        base_revision,
+        spool,
+        executions,
+    )?;
+    let head_oid = resolve_revision(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        head_revision,
+        spool,
+        executions,
+    )?;
+    let is_ancestor = is_ancestor(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        &base_oid,
+        &head_oid,
+        spool,
+        executions,
+    )?;
+    let merge_base_oid = merge_base_oid(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        &base_oid,
+        &head_oid,
+        spool,
+        executions,
+    )?;
+    let ahead = bounded_count(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        &base_oid,
+        &head_oid,
+        spool,
+        executions,
+    )?;
+    let behind = bounded_count(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        &head_oid,
+        &base_oid,
+        spool,
+        executions,
+    )?;
+
+    let walk_args = match mode {
+        GitRangeMode::Direct => direct_range_args(&base_oid, &head_oid, limit),
+        GitRangeMode::Symmetric => symmetric_range_args(&base_oid, &head_oid, limit),
+    };
+    let walk = run_history_command(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        walk_args,
+        OID_WALK_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    if walk.exit_code != 0 {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    if walk.stdout_truncated || walk.source_truncated {
+        return Err(GitHistoryError::OutputLimitExceeded);
+    }
+
+    let mut entries = match mode {
+        GitRangeMode::Direct => parse_oid_walk(&walk.stdout)?
+            .into_iter()
+            .map(|oid| (oid, None))
+            .collect::<Vec<_>>(),
+        GitRangeMode::Symmetric => parse_symmetric_walk(&walk.stdout)?
+            .into_iter()
+            .map(|(oid, side)| (oid, Some(side)))
+            .collect::<Vec<_>>(),
+    };
+    if entries.len() > usize::from(limit) + 1 {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let truncated = entries.len() > usize::from(limit);
+    if truncated {
+        entries.truncate(usize::from(limit));
+    }
+
+    let mut commits = Vec::with_capacity(entries.len());
+    for (oid, side) in entries {
+        commits.push(GitRangeCommit {
+            commit: read_commit_summary(
+                &prepared,
+                root_fd,
+                capability_id,
+                request_id,
+                operation_id,
+                &oid,
+                spool,
+                executions,
+            )?,
+            side,
+        });
+    }
+    let truncation_reasons = if truncated {
+        vec![GitHistoryTruncationReason::CommitLimit]
+    } else {
+        Vec::new()
+    };
+
+    Ok(GitRangeResult {
+        schema_version: 1,
+        base_oid,
+        head_oid,
+        is_ancestor,
+        merge_base_oid,
+        ahead,
+        behind,
         returned_count: commits.len(),
         commits,
         truncated: !truncation_reasons.is_empty(),
@@ -1177,18 +1582,20 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use kodegpt_protocol::GitRevisionSpec;
+    use kodegpt_protocol::{GitRangeMode, GitRevisionSpec};
 
     use crate::audit::AuditSink;
     use crate::execution::ExecutionRegistry;
     use crate::spool::RawSpoolStore;
 
     use super::{
-        GitChangedPathStatus, GitHistoryError, GitHistoryTruncationReason, ValidatedHistoryPath,
-        ValidatedRevision, commit_object_args, log_walk_args, name_status_args, numstat_args,
-        parse_changed_paths, parse_commit_object, patch_args, prepare_history_git,
-        read_commit_summary, resolve_revision, revision_probe_suffixes, run_git_log, run_git_show,
-        validate_history_path, validate_revision,
+        GitBoundedCount, GitChangedPathStatus, GitHistoryError, GitHistoryTruncationReason,
+        GitRangeSide, ValidatedHistoryPath, ValidatedRevision, ancestry_args, commit_object_args,
+        count_range_args, direct_range_args, is_ancestor, log_walk_args, merge_base_args,
+        merge_base_oid, name_status_args, numstat_args, parse_bounded_count, parse_changed_paths,
+        parse_commit_object, parse_symmetric_walk, patch_args, prepare_history_git,
+        read_commit_summary, resolve_revision, revision_probe_suffixes, run_git_log, run_git_range,
+        run_git_show, symmetric_range_args, validate_history_path, validate_revision,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -1475,6 +1882,350 @@ mod tests {
         );
         raw.extend_from_slice(message);
         raw
+    }
+
+    #[test]
+    fn range_direct_and_symmetric_walks_are_bounded_and_side_typed() {
+        let repo = temporary_root("range-walks");
+        let state = temporary_root("range-walks-state");
+        git(&repo, &["init", "-q"]);
+        deterministic_commit(&repo, "graph.txt", "A\n", "A", 1_700_003_001);
+        deterministic_commit(&repo, "graph.txt", "B\n", "B", 1_700_003_002);
+        let b = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["branch", "head-side"]);
+        deterministic_commit(&repo, "graph.txt", "C\n", "C", 1_700_003_003);
+        let c = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["checkout", "-q", "head-side"]);
+        deterministic_commit(&repo, "graph.txt", "D\n", "D", 1_700_003_004);
+        deterministic_commit(&repo, "graph.txt", "E\n", "E", 1_700_003_005);
+        let e = git(&repo, &["rev-parse", "HEAD"]);
+
+        let synthetic = format!(">{e}\n<{c}\n");
+        assert_eq!(
+            parse_symmetric_walk(synthetic.as_bytes()),
+            Ok(vec![
+                (e.clone(), GitRangeSide::Head),
+                (c.clone(), GitRangeSide::Base),
+            ])
+        );
+        for invalid in [
+            format!("{e}\n"),
+            format!(">{}\n", &e[..12]),
+            format!("*{e}\n"),
+        ] {
+            assert_eq!(
+                parse_symmetric_walk(invalid.as_bytes()),
+                Err(GitHistoryError::GitReadFailed)
+            );
+        }
+
+        assert_eq!(
+            direct_range_args(&b, &e, 1),
+            vec![
+                "rev-list".to_owned(),
+                "--topo-order".to_owned(),
+                "--max-count=2".to_owned(),
+                format!("{b}..{e}"),
+            ]
+        );
+        assert_eq!(
+            symmetric_range_args(&c, &e, 2),
+            vec![
+                "rev-list".to_owned(),
+                "--left-right".to_owned(),
+                "--topo-order".to_owned(),
+                "--max-count=3".to_owned(),
+                format!("{c}...{e}"),
+            ]
+        );
+
+        let root_fd = OwnedFd::from(File::open(&repo).expect("repo root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let direct_limited = run_git_range(
+            &root_fd,
+            "kc_range_walks",
+            "req_range_direct_limited",
+            "op_range_direct_limited",
+            ValidatedRevision::Oid(b.clone()),
+            ValidatedRevision::Oid(e.clone()),
+            GitRangeMode::Direct,
+            1,
+            &spool,
+            &executions,
+        )
+        .expect("direct bounded range");
+        assert_eq!(direct_limited.returned_count, 1);
+        assert!(direct_limited.truncated);
+        assert_eq!(
+            direct_limited.truncation_reasons,
+            vec![GitHistoryTruncationReason::CommitLimit]
+        );
+        assert!(direct_limited.commits[0].side.is_none());
+
+        let direct = run_git_range(
+            &root_fd,
+            "kc_range_walks",
+            "req_range_direct",
+            "op_range_direct",
+            ValidatedRevision::Oid(b.clone()),
+            ValidatedRevision::Oid(e.clone()),
+            GitRangeMode::Direct,
+            3,
+            &spool,
+            &executions,
+        )
+        .expect("direct complete range");
+        assert_eq!(direct.base_oid, b);
+        assert_eq!(direct.head_oid, e);
+        assert!(direct.is_ancestor);
+        assert_eq!(direct.merge_base_oid, Some(direct.base_oid.clone()));
+        assert_eq!(
+            direct.ahead,
+            GitBoundedCount {
+                value: 2,
+                exact: true
+            }
+        );
+        assert_eq!(
+            direct.behind,
+            GitBoundedCount {
+                value: 0,
+                exact: true
+            }
+        );
+        assert_eq!(direct.returned_count, 2);
+        assert!(!direct.truncated);
+        assert!(direct.commits.iter().all(|commit| commit.side.is_none()));
+
+        let symmetric_limited = run_git_range(
+            &root_fd,
+            "kc_range_walks",
+            "req_range_symmetric_limited",
+            "op_range_symmetric_limited",
+            ValidatedRevision::Oid(c.clone()),
+            ValidatedRevision::Oid(direct.head_oid.clone()),
+            GitRangeMode::Symmetric,
+            2,
+            &spool,
+            &executions,
+        )
+        .expect("symmetric bounded range");
+        assert_eq!(symmetric_limited.returned_count, 2);
+        assert_eq!(
+            symmetric_limited.truncation_reasons,
+            vec![GitHistoryTruncationReason::CommitLimit]
+        );
+
+        let symmetric = run_git_range(
+            &root_fd,
+            "kc_range_walks",
+            "req_range_symmetric",
+            "op_range_symmetric",
+            ValidatedRevision::Oid(c.clone()),
+            ValidatedRevision::Oid(direct.head_oid.clone()),
+            GitRangeMode::Symmetric,
+            3,
+            &spool,
+            &executions,
+        )
+        .expect("symmetric complete range");
+        assert_eq!(symmetric.base_oid, c);
+        assert!(!symmetric.is_ancestor);
+        assert_eq!(
+            symmetric.ahead,
+            GitBoundedCount {
+                value: 2,
+                exact: true
+            }
+        );
+        assert_eq!(
+            symmetric.behind,
+            GitBoundedCount {
+                value: 1,
+                exact: true
+            }
+        );
+        assert_eq!(symmetric.returned_count, 3);
+        assert!(!symmetric.truncated);
+        assert_eq!(
+            symmetric
+                .commits
+                .iter()
+                .filter(|commit| commit.side == Some(GitRangeSide::Head))
+                .count(),
+            2
+        );
+        assert_eq!(
+            symmetric
+                .commits
+                .iter()
+                .filter(|commit| commit.side == Some(GitRangeSide::Base))
+                .count(),
+            1
+        );
+        assert!(
+            executions
+                .lock()
+                .expect("registry")
+                .ids_for_workspace("kc_range_walks")
+                .is_empty()
+        );
+
+        fs::remove_dir_all(repo).expect("repo cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn range_capped_count_parser_and_builder_enforce_ten_thousand_cap() {
+        assert_eq!(
+            parse_bounded_count(b"10001\n"),
+            Ok(GitBoundedCount {
+                value: 10_000,
+                exact: false,
+            })
+        );
+        assert_eq!(
+            parse_bounded_count(b"3\n"),
+            Ok(GitBoundedCount {
+                value: 3,
+                exact: true,
+            })
+        );
+        for invalid in [b"10002\n".as_slice(), b"-1\n".as_slice(), b"3".as_slice()] {
+            assert_eq!(
+                parse_bounded_count(invalid),
+                Err(GitHistoryError::GitReadFailed)
+            );
+        }
+
+        let base = "a".repeat(40);
+        let head = "b".repeat(40);
+        assert_eq!(
+            count_range_args(&base, &head),
+            vec![
+                "rev-list".to_owned(),
+                "--count".to_owned(),
+                "--max-count=10001".to_owned(),
+                format!("{base}..{head}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn range_ancestry_and_merge_base_follow_constructed_graph() {
+        let repo = temporary_root("range-ancestry");
+        let state = temporary_root("range-ancestry-state");
+        git(&repo, &["init", "-q"]);
+        deterministic_commit(&repo, "graph.txt", "A\n", "A", 1_700_002_001);
+        deterministic_commit(&repo, "graph.txt", "B\n", "B", 1_700_002_002);
+        let b = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["branch", "head-side"]);
+        deterministic_commit(&repo, "graph.txt", "C\n", "C", 1_700_002_003);
+        let c = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["checkout", "-q", "head-side"]);
+        deterministic_commit(&repo, "graph.txt", "D\n", "D", 1_700_002_004);
+        deterministic_commit(&repo, "graph.txt", "E\n", "E", 1_700_002_005);
+        let e = git(&repo, &["rev-parse", "HEAD"]);
+
+        git(&repo, &["checkout", "--orphan", "orphan"]);
+        git(&repo, &["rm", "-rf", "."]);
+        deterministic_commit(&repo, "orphan.txt", "orphan\n", "orphan", 1_700_002_006);
+        let orphan = git(&repo, &["rev-parse", "HEAD"]);
+
+        let root_fd = OwnedFd::from(File::open(&repo).expect("repo root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+        let prepared = prepare_history_git(
+            &root_fd,
+            "kc_range_ancestry",
+            "req_range_ancestry",
+            "op_range_ancestry",
+            &spool,
+            &executions,
+        )
+        .expect("history git prepared");
+
+        assert!(
+            is_ancestor(
+                &prepared,
+                &root_fd,
+                "kc_range_ancestry",
+                "req_range_b_e",
+                "op_range_b_e",
+                &b,
+                &e,
+                &spool,
+                &executions,
+            )
+            .expect("B ancestor E")
+        );
+        assert!(
+            !is_ancestor(
+                &prepared,
+                &root_fd,
+                "kc_range_ancestry",
+                "req_range_e_b",
+                "op_range_e_b",
+                &e,
+                &b,
+                &spool,
+                &executions,
+            )
+            .expect("E not ancestor B")
+        );
+        assert_eq!(
+            merge_base_oid(
+                &prepared,
+                &root_fd,
+                "kc_range_ancestry",
+                "req_range_c_e",
+                "op_range_c_e",
+                &c,
+                &e,
+                &spool,
+                &executions,
+            )
+            .expect("C/E merge base"),
+            Some(b.clone())
+        );
+        assert_eq!(
+            merge_base_oid(
+                &prepared,
+                &root_fd,
+                "kc_range_ancestry",
+                "req_range_orphan",
+                "op_range_orphan",
+                &e,
+                &orphan,
+                &spool,
+                &executions,
+            )
+            .expect("unrelated merge base"),
+            None
+        );
+
+        assert_eq!(
+            ancestry_args(&b, &e),
+            vec!["merge-base", "--is-ancestor", b.as_str(), e.as_str()]
+        );
+        assert_eq!(
+            merge_base_args(&c, &e),
+            vec!["merge-base", c.as_str(), e.as_str()]
+        );
+        assert!(
+            executions
+                .lock()
+                .expect("registry")
+                .ids_for_workspace("kc_range_ancestry")
+                .is_empty()
+        );
+
+        fs::remove_dir_all(repo).expect("repo cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
     }
 
     #[test]
