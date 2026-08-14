@@ -1,6 +1,6 @@
 # Native Skill Execution Orchestration Implementation Plan
 
-> **Baseline reconciliation (2026-08-13):** this remains future advisory/read-only work and has not been implemented. The current released candidate baseline is MCP semantic surface `0.3` with protocol `2026-07-28`, including the host-visible optional `skill.list.compatibility` filter. Reconcile any implementation of this plan against that baseline; do not revive the earlier `0.2` assumption, add provider invocation, or create `skill.run`.
+> **Completion reconciliation (2026-08-14):** this plan is historical and was implemented, host-accepted, verified, and merged through PR #6. The post-merge baseline remains MCP semantic surface `0.3` with protocol `2026-07-28`, including the host-visible optional `skill.list.compatibility` filter and advisory `skill.inspect.capabilityPlan`. Do not replay this plan as current work, revive the earlier `0.2` assumption, add provider invocation, or create `skill.run`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

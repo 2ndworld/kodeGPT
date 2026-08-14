@@ -1,8 +1,8 @@
 # Native Skill Execution Orchestration — Evidence-Based Design
 
-Status date: 2026-08-13 baseline reconciliation of the 2026-08-12 future design.
+Status date: 2026-08-14 post-PR #6 reconciliation of the 2026-08-12 design.
 
-> **Current baseline:** this design remains future advisory/read-only work. KodeGPT is now at MCP semantic surface `0.3` with protocol `2026-07-28`, and fresh ChatGPT host inventory has directly exposed the optional `skill.list.compatibility` filter. Nothing in this design authorizes `skill.run`, provider invocation, provider processes, credential forwarding, or additional OS authority.
+> **Implementation status:** this advisory/read-only design is implemented and merged through PR #6. The post-merge baseline remains MCP semantic surface `0.3` with protocol `2026-07-28`, and fresh ChatGPT host acceptance directly observed both the optional `skill.list.compatibility` filter and `skill.inspect.capabilityPlan`. This document remains the historical design rationale; nothing in the completed implementation authorizes `skill.run`, provider invocation, provider processes, credential forwarding, or additional OS authority.
 
 ## Goal
 

@@ -125,8 +125,10 @@ Fresh ChatGPT-host acceptance on 2026-08-13 observed the repository candidate ra
 
 The final schema blocker from the previous ChatGPT snapshot is therefore superseded by actual refreshed-host observation rather than inferred from integration tests.
 
-## Remaining release/integration gates
+## Release/integration closure
 
-This evidence commit changes the Git head while leaving the host-tested runtime implementation unchanged. After this documentation closure, run the full candidate matrix on the exact final branch commit, push that exact head, require CI success for that SHA, perform the final `main...feature` review, and keep the working tree clean before PR integration. A minimal final-head host correlation may be repeated if repository integration policy requires exact-head confirmation, but the completed script/resource acceptance need not be replayed when the runtime tree is unchanged.
+The remaining gates recorded by the original readiness snapshot were subsequently completed: the final candidate passed exact-head verification and CI, the complete feature diff was reviewed, refreshed ChatGPT acceptance remained green, and PR #6 was merged. The exact post-merge `main` baseline audited on 2026-08-14 is `13f791eb4faa5ef9e50cafa1ac84fe4906ca7212`.
 
-Provider interoperability remains a separate future security/design phase.
+Post-merge operations also cut the live managed zrok exposure over from the feature worktree to canonical `main`, repeated the bounded host smoke, removed/pruned the old feature worktree, and audited/dropped the historical stash after proving it contained no unique user work. This file remains the readiness record for the completed advisory phase; it is not the current implementation tracker.
+
+Provider interoperability remains a separate future security/design phase. The next bounded phase is Stable Local Service & Managed Exposure Lifecycle.
