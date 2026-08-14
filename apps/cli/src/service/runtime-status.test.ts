@@ -28,7 +28,7 @@ function ready(overrides: Partial<ServiceRuntimeStatusV1> = {}): ServiceRuntimeS
     localPort: 43_121,
     runtimeVersion: "0.1",
     protocolVersion: "2026-07-28",
-    surfaceVersion: "0.3",
+    surfaceVersion: "0.4",
     reservedName: "public:kodegpt-dev",
     publicUrl: "https://kodegpt.example.invalid/mcp",
     ...overrides

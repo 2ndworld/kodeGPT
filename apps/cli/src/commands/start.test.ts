@@ -98,6 +98,18 @@ function dependencies(
     gitStatus: async () => gitInspection,
     gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
     gitCheckpointPatch: async () => gitInspection,
+    gitLog: async () => ({ schemaVersion: 1 as const, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
+    gitShow: async () => ({
+      schemaVersion: 1 as const,
+      commit: { oid: "1".repeat(40), shortOid: "1".repeat(12), parents: [], authorName: "A", authorTime: 1, committerTime: 1, subject: "s", body: "", messageTruncated: false, encodingLossy: false },
+      changedPaths: [],
+      summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 },
+      patch: null,
+      truncated: false,
+      truncationReasons: []
+    }),
+    gitRange: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
+    gitDiffHistory: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: "", truncated: false, truncationReasons: [] }),
     gitDiff: async () => gitInspection,
     runProcess: async () => completedProcess,
     inspectExecutable: async () => ({
