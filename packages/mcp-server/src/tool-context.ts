@@ -8,6 +8,14 @@ import type {
   FilePatchResult,
   GitChangesInput,
   GitChangesResult,
+  GitLogInput,
+  GitLogResult,
+  GitShowInput,
+  GitShowResult,
+  GitRangeInput,
+  GitRangeResult,
+  GitDiffHistoryInput,
+  GitDiffHistoryResult,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -86,6 +94,10 @@ export interface GitToolContext {
   status(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   diff(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   changes(input: GitChangesInput): Promise<GitChangesResult>;
+  log(input: GitLogInput): Promise<GitLogResult>;
+  show(input: GitShowInput): Promise<GitShowResult>;
+  range(input: GitRangeInput): Promise<GitRangeResult>;
+  diffHistory(input: GitDiffHistoryInput): Promise<GitDiffHistoryResult>;
 }
 
 export interface ProcessToolContext {
@@ -196,6 +208,10 @@ export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
   searchCode(input: CodeSearchInput): Promise<CodeSearchResult>;
   gitChanges(input: GitChangesInput): Promise<GitChangesResult>;
+  gitLog(input: GitLogInput): Promise<GitLogResult>;
+  gitShow(input: GitShowInput): Promise<GitShowResult>;
+  gitRange(input: GitRangeInput): Promise<GitRangeResult>;
+  gitDiffHistory(input: GitDiffHistoryInput): Promise<GitDiffHistoryResult>;
   listVerifications(input: VerifyListInput): Promise<VerifyListResult>;
   runVerification(input: VerifyRunInput): Promise<VerifyRunResult>;
   patchFile(input: FilePatchInput): Promise<FilePatchResult>;
@@ -255,7 +271,11 @@ export function createKodegptToolContext(options: {
     git: {
       status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),
       diff: ({ workspaceId }) => options.workspaceManager.gitDiff(workspaceId),
-      changes: (input) => native.gitChanges(input)
+      changes: (input) => native.gitChanges(input),
+      log: (input) => native.gitLog(input),
+      show: (input) => native.gitShow(input),
+      range: (input) => native.gitRange(input),
+      diffHistory: (input) => native.gitDiffHistory(input)
     },
     process: {
       run: (input) => options.executionManager.run(input),
@@ -325,6 +345,10 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
     inspectWorkspace: () => unavailable("workspace.inspect"),
     searchCode: () => unavailable("code.search"),
     gitChanges: () => unavailable("git.changes"),
+    gitLog: () => unavailable("git.log"),
+    gitShow: () => unavailable("git.show"),
+    gitRange: () => unavailable("git.range"),
+    gitDiffHistory: () => unavailable("git.diffHistory"),
     listVerifications: () => unavailable("verify.list"),
     runVerification: () => unavailable("verify.run"),
     patchFile: () => unavailable("file.patch"),

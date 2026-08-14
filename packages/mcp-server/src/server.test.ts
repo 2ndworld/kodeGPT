@@ -21,6 +21,10 @@ const LOCKED_SURFACE = [
   { name: "file.write", required: ["workspaceId", "path", "content"] },
   { name: "git.changes", required: ["workspaceId"] },
   { name: "git.diff", required: ["workspaceId"] },
+  { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.log", required: ["workspaceId"] },
+  { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.show", required: ["workspaceId"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -45,7 +49,7 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.3");
+    expect(MCP_SURFACE_VERSION).toBe("0.4");
     expect(listSurfaceTools()).toEqual(LOCKED_SURFACE);
   });
 

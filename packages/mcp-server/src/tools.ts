@@ -7,6 +7,14 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitLogInputSchema,
+  GitLogResultSchema,
+  GitShowInputSchema,
+  GitShowResultSchema,
+  GitRangeInputSchema,
+  GitRangeResultSchema,
+  GitDiffHistoryInputSchema,
+  GitDiffHistoryResultSchema,
   VerifyListInputSchema,
   VerifyListResultSchema,
   VerifyRunInputSchema,
@@ -54,6 +62,10 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "file.write", required: ["workspaceId", "path", "content"] },
   { name: "git.changes", required: ["workspaceId"] },
   { name: "git.diff", required: ["workspaceId"] },
+  { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.log", required: ["workspaceId"] },
+  { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.show", required: ["workspaceId"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -340,6 +352,56 @@ export function registerKodegptTools(
     async ({ workspaceId, includePatch }) =>
       nativeCapabilityResult(async () =>
         GitChangesResultSchema.parse(await context.git.changes({ workspaceId, includePatch }))
+      )
+  );
+
+  server.registerTool(
+    "git.log",
+    {
+      description: "List a bounded structured local Git commit history for a READY workspace.",
+      inputSchema: GitLogInputSchema,
+      outputSchema: GitLogResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLogResultSchema.parse(await context.git.log(input)))
+  );
+
+  server.registerTool(
+    "git.show",
+    {
+      description: "Inspect one bounded historical Git commit for a READY workspace.",
+      inputSchema: GitShowInputSchema,
+      outputSchema: GitShowResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitShowResultSchema.parse(await context.git.show(input)))
+  );
+
+  server.registerTool(
+    "git.range",
+    {
+      description: "Inspect bounded ancestry and commit ranges between two structured Git revisions.",
+      inputSchema: GitRangeInputSchema,
+      outputSchema: GitRangeResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRangeResultSchema.parse(await context.git.range(input)))
+  );
+
+  server.registerTool(
+    "git.diffHistory",
+    {
+      description: "Inspect a bounded historical diff between two structured Git revisions.",
+      inputSchema: GitDiffHistoryInputSchema,
+      outputSchema: GitDiffHistoryResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitDiffHistoryResultSchema.parse(await context.git.diffHistory(input))
       )
   );
 
