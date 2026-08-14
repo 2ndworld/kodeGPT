@@ -153,12 +153,12 @@ export async function startService(
   if (target === undefined) throw new Error("service release metadata is missing the start target");
   const stagedUpgrade = isStagedUpgrade(metadata);
 
-  if (stagedUpgrade) {
-    await switchServiceUnit(target, options.stateRoot, dependencies);
-  }
-  await dependencies.manager.resetFailed();
-  await dependencies.manager.start();
   try {
+    if (stagedUpgrade) {
+      await switchServiceUnit(target, options.stateRoot, dependencies);
+    }
+    await dependencies.manager.resetFailed();
+    await dependencies.manager.start();
     await dependencies.waitForReady(targetReleaseId);
   } catch (candidateError) {
     if (stagedUpgrade) {
@@ -192,13 +192,13 @@ export async function restartService(
   if (target === undefined) throw new Error("service release metadata is missing the restart target");
 
   const stagedUpgrade = isStagedUpgrade(metadata);
-  if (stagedUpgrade) {
-    await switchServiceUnit(target, options.stateRoot, dependencies);
-  }
-  await dependencies.manager.resetFailed();
-  if (metadata.activeReleaseId === undefined) await dependencies.manager.start();
-  else await dependencies.manager.restart();
   try {
+    if (stagedUpgrade) {
+      await switchServiceUnit(target, options.stateRoot, dependencies);
+    }
+    await dependencies.manager.resetFailed();
+    if (metadata.activeReleaseId === undefined) await dependencies.manager.start();
+    else await dependencies.manager.restart();
     await dependencies.waitForReady(targetReleaseId);
   } catch (candidateError) {
     if (stagedUpgrade) {

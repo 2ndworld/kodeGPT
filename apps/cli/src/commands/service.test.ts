@@ -304,6 +304,54 @@ describe("service start, stop, restart, and status", () => {
     expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
   });
 
+  it("rolls back exactly once when the staged systemd start job itself fails", async () => {
+    const fixture = await serviceFixture();
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    await fixture.metadataStore.promoteStagedRelease();
+    const releaseB = secondRelease(fixture.release);
+    fixture.dependencies.prepareRelease = async () => releaseB;
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    fixture.dependencies.manager.start = async () => {
+      fixture.managerCalls.push("start");
+      throw new Error("candidate start job failed");
+    };
+    fixture.managerCalls.splice(0);
+
+    await expect(
+      startService({ command: "start", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/candidate start job failed/);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "start",
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
+  });
+
   it("stops through systemd without deleting general KodeGPT state", async () => {
     const fixture = await serviceFixture();
     const sentinel = join(fixture.stateRoot, "audit.jsonl");
@@ -372,6 +420,68 @@ describe("service start, stop, restart, and status", () => {
       "reset-failed",
       "restart",
       `wait:${releaseB.releaseId}`,
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+  });
+
+  it("rolls back exactly once when the staged systemd restart job itself fails", async () => {
+    const fixture = await serviceFixture();
+    const releaseB = secondRelease(fixture.release);
+    await fixture.metadataStore.stageRelease(fixture.release);
+    await fixture.metadataStore.promoteStagedRelease();
+    await fixture.metadataStore.stageRelease(releaseB);
+    let restartCount = 0;
+    fixture.dependencies.manager.restart = async () => {
+      fixture.managerCalls.push("restart");
+      restartCount += 1;
+      if (restartCount === 1) throw new Error("candidate restart job failed");
+    };
+
+    await expect(
+      restartService({ command: "restart", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/candidate restart job failed/);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+  });
+
+  it("restores the active unit when the staged unit daemon-reload fails", async () => {
+    const fixture = await serviceFixture();
+    const releaseB = secondRelease(fixture.release);
+    await fixture.metadataStore.stageRelease(fixture.release);
+    await fixture.metadataStore.promoteStagedRelease();
+    await fixture.metadataStore.stageRelease(releaseB);
+    let reloadCount = 0;
+    fixture.dependencies.manager.daemonReload = async () => {
+      fixture.managerCalls.push("daemon-reload");
+      reloadCount += 1;
+      if (reloadCount === 1) throw new Error("candidate daemon-reload failed");
+    };
+
+    await expect(
+      restartService({ command: "restart", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/candidate daemon-reload failed/);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
       "daemon-reload",
       "reset-failed",
       "restart",
