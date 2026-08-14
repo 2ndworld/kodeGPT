@@ -20,13 +20,18 @@ try {
   await mkdir(home, { recursive: true });
   await mkdir(prefix, { recursive: true });
 
-  run("cargo", ["build", "--release", "-p", "kodegpt-runtime"]);
-  run(process.execPath, [join(root, "scripts/stage-runtime.mjs")]);
   run("pnpm", ["--filter", "kodegpt", "build"]);
   run("pnpm", ["exec", "vitest", "run", "tests/integration/packaged-runtime.test.ts"]);
 
+  const cliSource = join(root, "apps/cli/bin/kodegpt.mjs");
   const runtimeSource = join(root, "packages/runtime-linux-x64/bin/kodegpt-runtime");
+  const cliSha = await sha256(cliSource);
   const runtimeSha = await sha256(runtimeSource);
+  const sourceCliProvenance = JSON.parse(await readFile(join(root, "apps/cli/bin/kodegpt.provenance.json"), "utf8"));
+  const sourceRuntimeProvenance = JSON.parse(
+    await readFile(join(root, "packages/runtime-linux-x64/provenance.json"), "utf8")
+  );
+  assertProvenancePair("source", sourceCliProvenance, sourceRuntimeProvenance, cliSha, runtimeSha);
 
   run("pnpm", ["--filter", "@kodegpt/runtime-linux-x64", "pack", "--pack-destination", releaseDir]);
   run("pnpm", ["--filter", "kodegpt", "pack", "--pack-destination", releaseDir]);
@@ -43,12 +48,34 @@ try {
     throw new Error("packed CLI contains unresolved workspace:* dependency");
   }
 
-  const extracted = join(temporary, "runtime-extracted");
-  await mkdir(extracted, { recursive: true });
-  run("tar", ["-xzf", join(releaseDir, runtimeTarball), "-C", extracted]);
-  const packedRuntimeSha = await sha256(join(extracted, "package/bin/kodegpt-runtime"));
+  const runtimeExtracted = join(temporary, "runtime-extracted");
+  const cliExtracted = join(temporary, "cli-extracted");
+  await mkdir(runtimeExtracted, { recursive: true });
+  await mkdir(cliExtracted, { recursive: true });
+  run("tar", ["-xzf", join(releaseDir, runtimeTarball), "-C", runtimeExtracted]);
+  run("tar", ["-xzf", join(releaseDir, cliTarball), "-C", cliExtracted]);
+  const packedRuntimePath = join(runtimeExtracted, "package/bin/kodegpt-runtime");
+  const packedCliPath = join(cliExtracted, "package/bin/kodegpt.mjs");
+  const packedRuntimeSha = await sha256(packedRuntimePath);
+  const packedCliSha = await sha256(packedCliPath);
   if (runtimeSha !== packedRuntimeSha) {
     throw new Error("platform package runtime checksum does not match staged release binary");
+  }
+  if (cliSha !== packedCliSha) {
+    throw new Error("CLI package checksum does not match built CLI bundle");
+  }
+  const packedCliProvenance = JSON.parse(
+    await readFile(join(cliExtracted, "package/bin/kodegpt.provenance.json"), "utf8")
+  );
+  const packedRuntimeProvenance = JSON.parse(
+    await readFile(join(runtimeExtracted, "package/provenance.json"), "utf8")
+  );
+  assertProvenancePair("packed", packedCliProvenance, packedRuntimeProvenance, packedCliSha, packedRuntimeSha);
+  if (
+    JSON.stringify(sourceCliProvenance) !== JSON.stringify(packedCliProvenance) ||
+    JSON.stringify(sourceRuntimeProvenance) !== JSON.stringify(packedRuntimeProvenance)
+  ) {
+    throw new Error("packed artifact provenance differs from source build provenance");
   }
 
   const checksums = [];
@@ -126,7 +153,8 @@ try {
   if (!/staged=rel_[a-f0-9]{32}/.test(serviceInstall)) {
     throw new Error(`packaged service install did not report a staged release: ${serviceInstall}`);
   }
-  const serviceMetadata = JSON.parse(await readFile(join(stateRoot, "service.json"), "utf8"));
+  const serviceMetadataPath = join(stateRoot, "service.json");
+  const serviceMetadata = JSON.parse(await readFile(serviceMetadataPath, "utf8"));
   const stagedRelease = serviceMetadata.releases?.[serviceMetadata.stagedReleaseId];
   if (!stagedRelease) throw new Error("packaged service install did not persist staged release metadata");
   const serviceDataRoot = join(home, ".local/share/kodegpt/service");
@@ -136,7 +164,8 @@ try {
   if ((await sha256(stagedRelease.runtimePath)) !== runtimeSha) {
     throw new Error("installed service runtime checksum does not match packaged runtime");
   }
-  const serviceUnit = await readFile(join(home, ".config/systemd/user/kodegpt.service"), "utf8");
+  const serviceUnitPath = join(home, ".config/systemd/user/kodegpt.service");
+  const serviceUnit = await readFile(serviceUnitPath, "utf8");
   if (serviceUnit.includes(root) || serviceUnit.includes(prefix)) {
     throw new Error("service unit references a transient source or package-install path");
   }
@@ -154,12 +183,34 @@ try {
     throw new Error(`packaged service status mismatch: ${JSON.stringify(serviceStatus)}`);
   }
   capture(cli, ["service", "uninstall", "--state-root", stateRoot], serviceEnv);
-  await stat(serviceDataRoot).then(
-    () => { throw new Error("packaged service uninstall left the service data root behind"); },
-    (error) => {
-      if (error?.code !== "ENOENT") throw error;
+  await assertMissing(serviceDataRoot, "packaged service uninstall left the service data root behind");
+  await assertMissing(serviceMetadataPath, "packaged service uninstall left service metadata behind");
+  await assertMissing(serviceUnitPath, "packaged service uninstall left the user unit behind");
+
+  const cleanRuntimeBytes = await readFile(installedRuntime);
+  await writeFile(installedRuntime, Buffer.concat([cleanRuntimeBytes, Buffer.from("\n# provenance tamper\n")]));
+  const rejectedInstall = spawnSync(
+    cli,
+    ["service", "install", "--name", "public:kodegpt-dev", "--state-root", stateRoot],
+    {
+      cwd: root,
+      env: serviceEnv,
+      encoding: "utf8",
+      stdio: "pipe",
+      maxBuffer: 16 * 1024 * 1024
     }
   );
+  if (rejectedInstall.error) throw rejectedInstall.error;
+  if (rejectedInstall.status === 0) {
+    throw new Error("tampered packaged runtime was accepted by service install");
+  }
+  const rejectionOutput = `${rejectedInstall.stdout}\n${rejectedInstall.stderr}`;
+  if (!/service artifact provenance/i.test(rejectionOutput)) {
+    throw new Error(`tampered service install did not fail on provenance: ${rejectionOutput}`);
+  }
+  await assertMissing(serviceDataRoot, "rejected service install created service release data");
+  await assertMissing(serviceMetadataPath, "rejected service install staged service metadata");
+  await assertMissing(serviceUnitPath, "rejected service install created a user unit");
 
   process.stdout.write(`package smoke ok\nrelease=${releaseDir}\n${checksums.join("\n")}\n`);
 } finally {
@@ -170,6 +221,45 @@ try {
 async function writeExecutable(path, contents) {
   await writeFile(path, contents, "utf8");
   await chmod(path, 0o755);
+}
+
+async function assertMissing(path, message) {
+  await stat(path).then(
+    () => { throw new Error(message); },
+    (error) => {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  );
+}
+
+function assertProvenancePair(label, cliProvenance, runtimeProvenance, cliSha256, runtimeSha256) {
+  if (JSON.stringify(cliProvenance) !== JSON.stringify(runtimeProvenance)) {
+    throw new Error(`${label} CLI/runtime provenance manifests differ`);
+  }
+  if (
+    cliProvenance.schemaVersion !== 1 ||
+    cliProvenance.runtimePackage !== "@kodegpt/runtime-linux-x64" ||
+    typeof cliProvenance.sourceDirty !== "boolean" ||
+    typeof cliProvenance.sourceRevision !== "string" ||
+    !/^[a-f0-9]{40}$/.test(cliProvenance.sourceRevision)
+  ) {
+    throw new Error(`${label} artifact provenance metadata is invalid`);
+  }
+  if (cliProvenance.cliSha256 !== cliSha256 || cliProvenance.runtimeSha256 !== runtimeSha256) {
+    throw new Error(`${label} artifact provenance digest does not match artifact bytes`);
+  }
+  if (cliProvenance.pairId !== derivePairId(cliSha256, runtimeSha256)) {
+    throw new Error(`${label} artifact provenance pair identity mismatch`);
+  }
+}
+
+function derivePairId(cliSha256, runtimeSha256) {
+  return `pair_${createHash("sha256")
+    .update(cliSha256)
+    .update("\0")
+    .update(runtimeSha256)
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 function cleanInstallPath(value) {

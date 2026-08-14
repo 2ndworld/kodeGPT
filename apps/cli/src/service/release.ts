@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, chmod, copyFile, cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { RUNTIME_PACKAGE_LINUX_X64 } from "../runtime-resolver.js";
+import { verifyArtifactPair } from "./artifact-provenance.js";
 import type { ServiceMetadataV1, ServiceReleaseRecord } from "./metadata.js";
 
 export interface MaterializeServiceReleaseInput {
@@ -20,9 +21,12 @@ export interface MaterializeServiceReleaseInput {
 export async function materializeServiceRelease(
   input: MaterializeServiceReleaseInput
 ): Promise<ServiceReleaseRecord> {
-  const cliSha256 = await sha256(input.cliPath);
-  const sourceRuntimePath = join(input.runtimePackageRoot, "bin", "kodegpt-runtime");
-  const runtimeSha256 = await sha256(sourceRuntimePath);
+  const provenance = await verifyArtifactPair({
+    cliPath: input.cliPath,
+    runtimePackageRoot: input.runtimePackageRoot
+  });
+  const cliSha256 = provenance.cliSha256;
+  const runtimeSha256 = provenance.runtimeSha256;
   const releaseId = releaseIdentity(input.packageVersion, cliSha256, runtimeSha256);
   const releasesRoot = join(input.serviceDataRoot, "releases");
   const releaseRoot = join(releasesRoot, releaseId);
@@ -41,6 +45,7 @@ export async function materializeServiceRelease(
   const temporaryRoot = join(releasesRoot, `.${releaseId}.${randomUUID()}.tmp`);
   try {
     const cliDestination = join(temporaryRoot, "bin", "kodegpt.mjs");
+    const cliProvenanceDestination = join(temporaryRoot, "bin", "kodegpt.provenance.json");
     const runtimeDestinationRoot = join(
       temporaryRoot,
       "node_modules",
@@ -51,6 +56,7 @@ export async function materializeServiceRelease(
     await mkdir(join(temporaryRoot, "bin"), { recursive: true, mode: 0o700 });
     await mkdir(join(temporaryRoot, "node_modules", "@kodegpt"), { recursive: true, mode: 0o700 });
     await copyFile(input.cliPath, cliDestination);
+    await copyFile(join(dirname(input.cliPath), "kodegpt.provenance.json"), cliProvenanceDestination);
     await cp(input.runtimePackageRoot, runtimeDestinationRoot, { recursive: true, force: false });
     await cp(input.yamlPackageRoot, yamlDestinationRoot, { recursive: true, force: false });
     await chmod(cliDestination, 0o755);
@@ -113,18 +119,19 @@ export async function verifyServiceRelease(record: ServiceReleaseRecord): Promis
   const runtimeSha256 = await sha256(record.runtimePath);
   if (runtimeSha256 !== record.runtimeSha256) throw new Error("service release runtime digest mismatch");
 
-  const manifestPath = join(
+  const runtimePackageRoot = join(
     record.releaseRoot,
     "node_modules",
     "@kodegpt",
-    "runtime-linux-x64",
-    "package.json"
+    "runtime-linux-x64"
   );
+  const manifestPath = join(runtimePackageRoot, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { name?: unknown };
   if (manifest.name !== RUNTIME_PACKAGE_LINUX_X64) {
     throw new Error("service release runtime package identity mismatch");
   }
   await access(join(record.releaseRoot, "node_modules", "yaml", "package.json"));
+  await verifyArtifactPair({ cliPath: record.cliPath, runtimePackageRoot });
 }
 
 function serviceReleaseRecord(

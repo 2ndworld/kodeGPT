@@ -4,6 +4,7 @@ coverage/
 target/
 apps/cli/bin/
 packages/runtime-linux-x64/bin/
+packages/runtime-linux-x64/provenance.json
 .env
 .env.*
 tests/isolation/guard-manifest.local.json
