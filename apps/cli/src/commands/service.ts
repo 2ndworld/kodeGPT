@@ -1,5 +1,13 @@
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { ServiceMetadataStore, type ServiceReleaseRecord } from "../service/metadata.js";
+import {
+  removeUserUnit,
+  renderKodegptUserUnit,
+  writeUserUnitAtomic,
+  type SystemdUserManager
+} from "../service/systemd.js";
 import { DEFAULT_MCP_PORT } from "./start.js";
 import { validateZrokReservedNameSelection } from "./expose-zrok.js";
 
@@ -27,6 +35,43 @@ export type ParsedServiceArguments =
   | ServiceInstallOptions
   | ServiceSimpleOptions
   | ServiceStatusOptions;
+
+export interface ServiceOperatorDependencies {
+  metadataStore: ServiceMetadataStore;
+  manager: SystemdUserManager;
+  serviceDataRoot: string;
+  unitPath: string;
+  prepareRelease(options: ServiceInstallOptions): Promise<ServiceReleaseRecord>;
+}
+
+export async function installService(
+  options: ServiceInstallOptions,
+  dependencies: ServiceOperatorDependencies
+): Promise<string> {
+  const release = await dependencies.prepareRelease(options);
+  if (release.reservedName !== options.name || release.port !== options.port) {
+    throw new Error("prepared service release does not match requested exposure identity");
+  }
+  const unit = renderKodegptUserUnit(release, options.stateRoot);
+  await writeUserUnitAtomic(dependencies.unitPath, unit);
+  await dependencies.metadataStore.stageRelease(release);
+  await dependencies.manager.daemonReload();
+  await dependencies.manager.enable();
+  return `KodeGPT service installed staged=${release.releaseId}`;
+}
+
+export async function uninstallService(
+  _options: ServiceSimpleOptions & { command: "uninstall" },
+  dependencies: ServiceOperatorDependencies
+): Promise<string> {
+  await dependencies.manager.stop();
+  await dependencies.manager.disable();
+  await removeUserUnit(dependencies.unitPath);
+  await dependencies.manager.daemonReload();
+  await rm(dependencies.serviceDataRoot, { recursive: true, force: true });
+  await dependencies.metadataStore.delete();
+  return "KodeGPT service uninstalled";
+}
 
 export function parseServiceArguments(args: string[], homeDir: string): ParsedServiceArguments {
   const [command, ...rest] = args;
