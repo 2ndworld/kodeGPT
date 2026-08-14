@@ -153,16 +153,39 @@ desktop/computer use
 
 Provider interoperability is **NOT STARTED**.
 
+## Corrected-head CI, installed cutover, and live host evidence
+
+Corrected documentation head `266093c` was pushed without force. GitHub Actions run `31797305564` completed SUCCESS on that exact head; the single `Deterministic v0.1 gates` job passed trusted Bubblewrap build, frozen install, rustfmt, typecheck, full TypeScript tests, sandbox probes, Rust workspace tests, protocol, integration, security, isolation, acceptance, forbidden-pattern scan, and clean-install package smoke.
+
+A fresh exact-head package was then built, packed, and clean-installed outside the repository. Before staging, the corrected candidate CLI successfully read the still-running surface `0.3` active release status, directly confirming the `c41aabd` backward-compatible status-reader fix. Candidate `service install` staged `rel_d31389af6de91e2f2d4b8dc5ae051799` while active release `rel_fa7cf9e07de98ae6941da6c4e3f9a918` remained running/listener-ready at surface `0.3`. Explicit `service restart` then promoted `rel_d31389af6de91e2f2d4b8dc5ae051799` and retained `rel_fa7cf9e07de98ae6941da6c4e3f9a918` as rollback.
+
+Post-cutover service status is:
+
+```text
+state = running
+listenerReady = true
+managedExposure = true
+localPort = 43121
+reservedName = public:kodegpt-dev
+runtime = 0.1
+protocol = 2026-07-28
+surface = 0.4
+activeRelease = rel_d31389af6de91e2f2d4b8dc5ae051799
+rollbackRelease = rel_fa7cf9e07de98ae6941da6c4e3f9a918
+```
+
+Process provenance was verified directly from `/proc`: Node CLI argv and CWD resolve under `~/.local/share/kodegpt/service/releases/rel_d31389af6de91e2f2d4b8dc5ae051799`; the Rust runtime executable is under the same immutable release root; zrok2 is a direct child of the Node supervisor in the same process group/session, executable `/usr/bin/zrok2`, with `share public http://127.0.0.1:43121 --headless --force-local --backend-mode proxy -n public:kodegpt-dev`. No feature-worktree runtime path is present.
+
+Actual ChatGPT connector calls after cutover proved `system.health.ok=true`, `auditHealthy=true`, `filesystemBoundaryAvailable=true`, `testMethods=false`, and `system.capabilities` = runtime `0.1`, protocol `2026-07-28`, surface `0.4`. Existing compatibility calls `workspace.open`, `git.status`, `git.diff`, and `git.changes` also PASS on the canonical trusted repo.
+
+The current chat's action registry is stale: its loaded 31-tool snapshot still omits `git.log`, `git.show`, `git.range`, and `git.diffHistory` even though the live backend reports surface `0.4`. Therefore phase-specific host acceptance for those four new tools is **not yet counted as PASS**. A fresh ChatGPT action-schema refresh/new host snapshot is required before merge. The stale snapshot is a host-cache blocker, not evidence of a backend downgrade.
+
 ## Remaining gates
 
-The implementation/source candidate is locally verified, but the phase is not merged or deployed yet. The remaining sequence is intentionally unchanged:
-
-1. commit this readiness/tracker evidence;
-2. rerun the documentation-head gate subset so evidence and final local PR head are exact;
-3. push the feature branch without force and require deterministic GitHub CI success on that exact head;
-4. stage the exact candidate using the established package/service release flow without disrupting the currently active installed release;
-5. perform explicit managed-service cutover only after CI is green and verify immutable installed-release Node/Rust/zrok provenance with runtime `0.1`, protocol `2026-07-28`, surface `0.4`;
-6. run only the bounded phase-specific real ChatGPT host acceptance for the four history tools plus existing Git compatibility and forbidden inventory;
-7. perform final branch diff/security review, normal PR merge, canonical-main reconciliation, installed-service verification, feature-worktree cleanup, and final baseline freeze.
+1. commit this CI/cutover/host-cache evidence and rerun the docs-head gate subset;
+2. push the resulting exact evidence head and require CI success again;
+3. refresh the ChatGPT action inventory/schema and complete bounded real-host acceptance for `git.log`, `git.show`, `git.range`, `git.diffHistory`, one truncation case, one invalid abbreviated-OID case, existing Git compatibility, and forbidden inventory;
+4. reconcile final host evidence, perform final branch diff/security review, and merge through the normal PR flow only if the fresh host gate passes;
+5. post-merge reconcile canonical `main`, verify the installed service remains healthy on the merged release/provenance, clean the feature worktree/branch, and freeze the final phase baseline.
 
 Historical `v0.1` must remain untouched throughout this sequence.
