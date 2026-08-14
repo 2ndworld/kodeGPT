@@ -74,7 +74,7 @@ export function renderKodegptUserUnit(record: ServiceReleaseRecord, stateRoot: s
     "Restart=on-failure",
     "RestartSec=5s",
     "KillSignal=SIGTERM",
-    "KillMode=control-group",
+    "KillMode=mixed",
     "TimeoutStopSec=10s",
     "",
     "[Install]",

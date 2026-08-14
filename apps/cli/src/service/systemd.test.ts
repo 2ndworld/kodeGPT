@@ -38,6 +38,8 @@ describe("systemd user service contract", () => {
     expect(unit).toContain("StartLimitIntervalSec=60");
     expect(unit).toContain("StartLimitBurst=5");
     expect(unit).toContain("KillSignal=SIGTERM");
+    expect(unit).toContain("KillMode=mixed");
+    expect(unit).not.toContain("KillMode=control-group");
     expect(unit).toContain("WorkingDirectory=/home/test\\x20user/.local/share/kodegpt/service/releases/release%%25");
     expect(unit).not.toContain('WorkingDirectory="');
     expect(unit).toContain("kodegpt.mjs\" \"service\" \"run\"");
