@@ -86,6 +86,7 @@ function makeDependencies(options: {
   spawnFailure?: Error;
   rotateFailure?: Error;
   readinessResponses?: Array<string | Error>;
+  runtimeTermination?: Promise<never>;
   delay?: () => Promise<void>;
 } = {}) {
   const calls = {
@@ -133,6 +134,7 @@ function makeDependencies(options: {
           auditHealthy: true,
           filesystemBoundaryAvailable: true
         },
+        ...(options.runtimeTermination === undefined ? {} : { termination: options.runtimeTermination }),
         close: async () => {
           calls.close += 1;
         }
@@ -292,6 +294,28 @@ describe("kodegpt expose zrok", () => {
     expect(output).toContain("shown only when newly issued");
   });
 
+  it("refuses service-mode exposure when connector credential is not already configured", async () => {
+    const { calls, dependencies } = makeDependencies({ configured: false });
+
+    await expect(
+      exposeZrok(
+        {
+          runtimePath: "/runtime",
+          stateRoot: "/state",
+          name: "public:kodegpt-dev",
+          port: 43121,
+          requireExistingConnectorCredential: true
+        },
+        dependencies
+      )
+    ).rejects.toThrow(/requires an existing connector credential/);
+
+    expect(calls.order).toEqual(["list-names", "status"]);
+    expect(calls.start).toHaveLength(0);
+    expect(calls.spawn).toHaveLength(0);
+    expect(calls.rotate).toBe(0);
+  });
+
   it("reuses an existing connector verifier without revealing a token", async () => {
     const { calls, dependencies } = makeDependencies({ configured: true });
     const exposed = await exposeZrok(
@@ -397,6 +421,24 @@ describe("kodegpt expose zrok", () => {
     await expect(exposeZrok(
       { runtimePath: "/runtime", name: "public:kodegpt-dev", port: 43121 }, dependencies
     )).rejects.toThrow("credential failed");
+    expect(child.killedWith).toEqual(["SIGTERM"]);
+    expect(calls.close).toBe(1);
+  });
+
+  it("surfaces unexpected Rust runtime termination and closes the managed zrok child", async () => {
+    let rejectRuntime!: (error: Error) => void;
+    const runtimeTermination = new Promise<never>((_resolve, reject) => {
+      rejectRuntime = reject;
+    });
+    void runtimeTermination.catch(() => undefined);
+    const { calls, child, dependencies } = makeDependencies({ runtimeTermination });
+    const exposed = await exposeZrok(
+      { runtimePath: "/runtime", name: "public:kodegpt-dev", port: 43121 }, dependencies
+    );
+    const failure = new Error("runtime unavailable");
+    rejectRuntime(failure);
+
+    await expect(exposed.termination).rejects.toBe(failure);
     expect(child.killedWith).toEqual(["SIGTERM"]);
     expect(calls.close).toBe(1);
   });

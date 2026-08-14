@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { RuntimeUnavailableError } from "@kodegpt/core";
 import { MCP_SURFACE_VERSION } from "@kodegpt/mcp-server";
 import { describe, expect, it } from "vitest";
 
@@ -218,6 +219,31 @@ describe("kodegpt start orchestration", () => {
     expect(JSON.stringify(started.status)).not.toMatch(/token|secret|verifier|kc_/i);
 
     await started.close();
+    expect(events.slice(-4)).toEqual(["bind.close", "mcp.close", "skill.close", "kernel.stop"]);
+  });
+
+  it("terminates the foreground stack when the Rust runtime dies unexpectedly", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalStartKernel = deps.startKernel;
+    let rejectRuntime!: (error: RuntimeUnavailableError) => void;
+    deps.startKernel = async (options) => {
+      const kernel = await originalStartKernel(options);
+      const unexpectedTermination = new Promise<never>((_resolve, reject) => {
+        rejectRuntime = reject;
+      });
+      void unexpectedTermination.catch(() => undefined);
+      return { ...kernel, unexpectedTermination };
+    };
+
+    const started = await startKodegpt(
+      { runtimePath: "/runtime", stateRoot: "/state", port: 43121 },
+      deps
+    );
+    const failure = new RuntimeUnavailableError("runtime died in test");
+    rejectRuntime(failure);
+
+    await expect(started.termination!).rejects.toBe(failure);
     expect(events.slice(-4)).toEqual(["bind.close", "mcp.close", "skill.close", "kernel.stop"]);
   });
 

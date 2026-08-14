@@ -43,6 +43,8 @@ export class KernelClient {
   readonly #decoder = new FrameDecoder();
   readonly #pending = new Map<string, PendingRequest>();
   readonly #exitPromise: Promise<void>;
+  readonly unexpectedTermination: Promise<never>;
+  readonly #rejectUnexpectedTermination: (error: RuntimeUnavailableError) => void;
   #state: ClientState = "running";
   #stderrBytes = 0;
 
@@ -51,6 +53,12 @@ export class KernelClient {
     this.#exitPromise = new Promise((resolve) => {
       child.once("exit", () => resolve());
     });
+    let rejectUnexpected!: (error: RuntimeUnavailableError) => void;
+    this.unexpectedTermination = new Promise<never>((_resolve, reject) => {
+      rejectUnexpected = reject;
+    });
+    this.#rejectUnexpectedTermination = rejectUnexpected;
+    void this.unexpectedTermination.catch(() => undefined);
 
     child.stdout.on("data", (chunk: Buffer) => {
       if (this.#state === "closed") {
@@ -264,7 +272,9 @@ export class KernelClient {
     if (this.#state === "closed") {
       return;
     }
+    const unexpected = this.#state === "running";
     this.#state = "unavailable";
+    if (unexpected) this.#rejectUnexpectedTermination(error);
     for (const pending of this.#pending.values()) {
       pending.reject(error);
     }

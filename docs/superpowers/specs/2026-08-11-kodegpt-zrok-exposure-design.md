@@ -1,7 +1,7 @@
 # KodeGPT v0.1 — Managed zrok Exposure Design
 
 Date: 2026-08-11
-Status: Approved; implementation in progress on `feat/kodegpt-v0.1-execution-wt`
+Status: Implemented; managed zrok is the current supported exposure path. Reconciled on 2026-08-14 after the post-PR #6 live cutover to canonical `main`.
 
 ## 1. Goal
 

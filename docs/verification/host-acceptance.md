@@ -1,6 +1,6 @@
 # KodeGPT Host Acceptance Runbook
 
-Status date: 2026-08-13.
+Status date: 2026-08-14.
 
 This is the canonical manual acceptance runbook for proving an actual ChatGPT Web → KodeGPT path. It complements deterministic protocol/integration/security suites; it does not replace them.
 
@@ -70,19 +70,32 @@ Use the complete release matrix in `docs/release/v0.1-checklist.md` before a rel
 
 ## 3. Start the exact candidate
 
-For the managed zrok path, start the repository-built/installed candidate corresponding to the recorded commit:
+For a foreground managed-zrok candidate, start the repository-built/installed candidate corresponding to the recorded commit:
 
 ```bash
 kodegpt expose zrok --name <namespace:name>
 ```
+
+For a Stable Local Service candidate, stage and activate the installed release instead:
+
+```bash
+kodegpt service install --name <namespace:name>
+kodegpt service start
+kodegpt service status --json
+```
+
+Do not start the user service until the deterministic candidate gate is green. During first migration from an older foreground operational bridge, keep the old foreground process running while `service install` stages the candidate, then stop that exact verified supervisor gracefully before `service start`. Future managed-service upgrades use `service install` followed by `service restart`, which provides bounded readiness and one-step rollback to the previous active installed release.
 
 Expected properties:
 
 - KodeGPT listens only on loopback;
 - public endpoint ends in `/mcp`;
 - exposure target is the loopback listener;
-- existing connector credential is reused, or a newly issued query-bearing ChatGPT Server URL is shown only for onboarding;
-- the query-bearing URL is treated as a secret and is not copied into Git or the acceptance report.
+- foreground onboarding may issue a query-bearing URL only when no connector credential exists;
+- service-mode start/restart requires and reuses an existing connector credential and never re-emits it;
+- `service status` reports sanitized installed/running/release/exposure facts without connector token/verifier, zrok account credentials, or raw zrok JSON;
+- the running CLI and Rust runtime resolve under the installed service release root, not a Git checkout/worktree;
+- the query-bearing onboarding URL is treated as a secret and is not copied into Git or the acceptance report.
 
 Record the connection path as:
 
@@ -254,15 +267,32 @@ Classification is advisory only. Confirm no provider process is launched, no Cod
 
 ## 14. Shutdown/restart lifecycle
 
-Terminate the managed exposure normally (for example with `SIGTERM` to the supervising KodeGPT CLI process or interactive shutdown).
+For a foreground exposure, terminate the supervising KodeGPT CLI normally. For an installed local service, use only the local operator command:
+
+```bash
+kodegpt service stop
+kodegpt service start
+# or, for an already-managed upgrade:
+kodegpt service restart
+```
 
 Verify:
 
-- the KodeGPT loopback listener disappears;
-- the supervised zrok share process exits;
-- authenticated ChatGPT calls fail while the service is down.
+- the KodeGPT loopback listener disappears while stopped;
+- the supervised Rust runtime and zrok child exit with the outer service;
+- authenticated ChatGPT calls fail while the service is down;
+- after start/restart, `service status` correlates readiness to the current systemd MainPID and installed release identity;
+- no running process path references the feature worktree after installed-service activation.
 
-Restart the exact same candidate and verify `system.health` again. Shut it down after the run unless the operator explicitly intends to keep the connector online.
+When a phase changes only local service/deployment lifecycle and does **not** change MCP tool names/input schemas or semantic surface, do not refresh/rescan ChatGPT actions or replay the entire historical host matrix merely as ritual. After the exact candidate is cut over, the required bounded smoke is:
+
+```text
+system.health
+system.capabilities
+skill.list compatibility=NATIVE
+```
+
+Require runtime `0.1`, protocol `2026-07-28`, semantic surface `0.3`, green health/audit/filesystem boundary, and successful native skill filtering. Re-run broader host scenarios only when an MCP contract change or concrete defect signal justifies them.
 
 ## 15. Cleanup
 

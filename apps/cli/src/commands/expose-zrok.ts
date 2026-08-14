@@ -27,6 +27,7 @@ export interface ExposeZrokOptions {
   name: string;
   stateRoot?: string;
   port?: number;
+  requireExistingConnectorCredential?: boolean;
 }
 
 export interface ZrokReservedName {
@@ -168,6 +169,10 @@ export function parseExposeZrokArguments(args: string[]): ExposeZrokOptions {
   };
 }
 
+export function validateZrokReservedNameSelection(value: string): void {
+  parseZrokNameSelection(value);
+}
+
 function parseZrokNameSelection(value: string): { namespaceToken: string; name: string } {
   if (/[\s/@?#]/.test(value)) throw new Error("invalid zrok reserved name selection");
   const parts = value.split(":");
@@ -279,6 +284,12 @@ export async function runExposeZrokCommand(
   return exposeZrok(parseExposeZrokArguments(args), dependencies);
 }
 
+export async function exposeZrokWithDefaults(
+  options: ExposeZrokOptions
+): Promise<ExposedZrokKodegpt> {
+  return exposeZrok(options, defaultExposeZrokDependencies);
+}
+
 export async function exposeZrok(
   options: ExposeZrokOptions,
   dependencies: ExposeZrokDependencies
@@ -301,6 +312,9 @@ export async function exposeZrok(
 
   const store = dependencies.createCredentialStore(stateRoot);
   const credentialStatus = await store.status();
+  if (options.requireExistingConnectorCredential === true && !credentialStatus.configured) {
+    throw new Error("managed service exposure requires an existing connector credential");
+  }
   const started = await dependencies.startKodegpt({
     runtimePath: options.runtimePath,
     stateRoot,
@@ -356,6 +370,11 @@ export async function exposeZrok(
       (closeError) => rejectTermination(closeError)
     );
   };
+  if (started.termination !== undefined) {
+    void started.termination.catch((error) => {
+      failExposure(error instanceof Error ? error : new Error("KodeGPT runtime terminated unexpectedly"));
+    });
+  }
   child.once("error", () => failExposure(new Error("zrok process failed")));
   child.once("exit", (code, signal) => {
     failExposure(new Error(

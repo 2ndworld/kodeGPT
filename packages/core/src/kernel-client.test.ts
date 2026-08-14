@@ -147,6 +147,7 @@ describe("KernelClient persistent runtime", () => {
 
     const pendingA = client.request("test.sleep", { delayMs: 5_000 }, "req_die_a");
     const pendingB = client.request("test.sleep", { delayMs: 5_000 }, "req_die_b");
+    const unexpectedTermination = client.unexpectedTermination;
     const pid = await waitForPid(pidPath);
     process.kill(pid, "SIGKILL");
 
@@ -154,6 +155,9 @@ describe("KernelClient persistent runtime", () => {
       await expect(pending).rejects.toBeInstanceOf(RuntimeUnavailableError);
       await expect(pending).rejects.toMatchObject({ code: "RUNTIME_UNAVAILABLE" });
     }
+    await expect(unexpectedTermination).rejects.toMatchObject({
+      code: "RUNTIME_UNAVAILABLE"
+    });
 
     await client.stop();
   }, 10_000);
