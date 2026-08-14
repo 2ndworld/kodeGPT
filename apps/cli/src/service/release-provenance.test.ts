@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -78,10 +78,44 @@ afterEach(async () => {
 });
 
 describe("service artifact provenance", () => {
-  it("rejects runtime bytes that do not match the CLI/runtime provenance pair", async () => {
+  it("rejects runtime bytes that do not match the CLI/runtime provenance pair before creating release data", async () => {
     const input = await fixture();
     await writeFile(join(input.runtimePackageRoot, "bin", "kodegpt-runtime"), "runtime-b", { mode: 0o755 });
 
     await expect(materializeServiceRelease(input)).rejects.toThrow(/service artifact provenance/i);
+    await expect(access(input.serviceDataRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects missing provenance before creating release data", async () => {
+    const input = await fixture();
+    await rm(join(dirname(input.cliPath), "kodegpt.provenance.json"));
+
+    await expect(materializeServiceRelease(input)).rejects.toThrow(/service artifact provenance.*missing or invalid/i);
+    await expect(access(input.serviceDataRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects valid manifests that disagree about the artifact pair", async () => {
+    const input = await fixture();
+    const runtimeProvenancePath = join(input.runtimePackageRoot, "provenance.json");
+    const runtimeProvenance = JSON.parse(await readFile(runtimeProvenancePath, "utf8")) as Record<string, unknown>;
+    runtimeProvenance.sourceDirty = true;
+    await writeFile(runtimeProvenancePath, `${JSON.stringify(runtimeProvenance, null, 2)}\n`, "utf8");
+
+    await expect(materializeServiceRelease(input)).rejects.toThrow(/service artifact provenance.*do not match/i);
+    await expect(access(input.serviceDataRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects provenance with fields outside the closed schema", async () => {
+    const input = await fixture();
+    const cliProvenancePath = join(dirname(input.cliPath), "kodegpt.provenance.json");
+    const runtimeProvenancePath = join(input.runtimePackageRoot, "provenance.json");
+    const provenance = JSON.parse(await readFile(cliProvenancePath, "utf8")) as Record<string, unknown>;
+    provenance.unexpected = "field";
+    const text = `${JSON.stringify(provenance, null, 2)}\n`;
+    await writeFile(cliProvenancePath, text, "utf8");
+    await writeFile(runtimeProvenancePath, text, "utf8");
+
+    await expect(materializeServiceRelease(input)).rejects.toThrow(/service artifact provenance.*missing or invalid/i);
+    await expect(access(input.serviceDataRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
