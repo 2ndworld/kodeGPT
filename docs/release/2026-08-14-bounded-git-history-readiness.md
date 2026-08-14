@@ -2,10 +2,10 @@
 
 Status date: 2026-08-14
 Branch: `feat/bounded-git-history-intelligence`
-Pre-documentation exact source candidate: `f51ac97f07f94e51749dc45c56cf171e3efe2b3f`
+Pre-documentation exact source candidate: `c41aabd5b4fa3078d9d3ba51e66704057f6b31d5`
 Baseline: `3e3e257500d8d35d887ab8a68d55439dbdae0c1a`
 Historical tag: `v0.1^{}` = `b8eae12cea3be002a9a61d06cecfd34f86283eb4` (unchanged)
-Status: implementation and complete local deterministic source-head verification PASS. Documentation-head verification, push/CI, staged installed-release cutover, bounded real ChatGPT host acceptance, final PR review/merge, and post-merge reconciliation remain pending.
+Status: implementation and complete local deterministic source-head verification PASS after a real staged-upgrade compatibility defect was discovered and fixed before cutover. Documentation-head verification, push/CI of the corrected head, corrected installed-release staging/cutover, bounded real ChatGPT host acceptance, final PR review/merge, and post-merge reconciliation remain pending.
 
 ## Scope
 
@@ -90,14 +90,14 @@ Unknown internal failures are reduced to `CAPABILITY_INTERNAL`. Runtime/core/cap
 
 ## Exact source-head deterministic verification
 
-The complete Task 11 source-head gate sequence was rerun from the beginning on exact commit `f51ac97f07f94e51749dc45c56cf171e3efe2b3f` after the last integration-fixture reconciliation.
+The complete Task 11 source-head gate sequence was rerun on exact corrected source commit `c41aabd5b4fa3078d9d3ba51e66704057f6b31d5`. This supersedes the earlier locally/CI-green `26c64ada3bc271641e85b92c5234daa26783081d` candidate because real pre-cutover staging exposed an upgrade-compatibility defect in its local service status reader.
 
 Observed results:
 
 - `pnpm install --frozen-lockfile`: PASS;
 - `cargo fmt --all -- --check`: PASS;
 - `pnpm run typecheck`: PASS across all TypeScript workspace projects;
-- `pnpm test`: PASS — 85 files / 454 tests;
+- `pnpm test`: PASS — 85 files / 455 tests, including the new surface `0.3` -> `0.4` staged-upgrade compatibility regression;
 - `cargo test -p kodegpt-sandbox`: PASS — 7/7;
 - `pnpm test:rust` / `cargo test --workspace`: PASS — policy 3, protocol contract 11, runtime 65, sandbox 7, workspace-I/O 47 plus semantic/source suites and doc-tests;
 - `pnpm test:protocol`: PASS — 12/12;
@@ -112,12 +112,13 @@ A targeted MCP surface verification also passed 22/22 and locks semantic surface
 
 ## TDD / defect-reconciliation evidence
 
-Implementation was not replayed from the historical baseline. Work resumed from the existing bounded-history branch and used RED/GREEN cycles for the remaining tasks. During final exact-head verification, two integration defects were found rather than ignored:
+Implementation was not replayed from the historical baseline. Work resumed from the existing bounded-history branch and used RED/GREEN cycles for the remaining tasks. During exact-head verification and real pre-cutover staging, three integration defects were found rather than ignored:
 
 1. the capability-to-core adapter boundary still typed public optional history inputs instead of normalized/defaulted inputs, while local service status fixtures/contracts still pinned semantic surface `0.3`;
-2. one packaged service integration fixture and one service security fixture also remained pinned to `0.3`.
+2. one packaged service integration fixture and one service security fixture also remained pinned to `0.3`;
+3. after `26c64ad` passed local docs-head verification and GitHub CI run `31795974860`, the candidate CLI successfully staged `rel_4379e487d5b6bb6d90cd1ba4f64472c4` while active release `rel_fa7cf9e07de98ae6941da6c4e3f9a918` remained running at surface `0.3`, but candidate `service status --json` then failed because the `0.4` parser rejected the still-running `0.3` readiness file. Cutover was stopped before restart. A RED regression reproduced this upgrade boundary; `c41aabd` makes the reader/status snapshot accept `0.3 | 0.4` while preserving the observed value rather than rewriting it, so a new candidate can inspect the old active release safely while still writing `0.4` when the new runtime becomes active.
 
-Those defects were fixed in `36d9cf6` and `f51ac97`, targeted tests were made green, and the complete deterministic gate sequence was then restarted on the new exact source head rather than reusing stale earlier results.
+The first two defects were fixed in `36d9cf6` and `f51ac97`; the staging-discovered upgrade defect was fixed in `c41aabd`. Targeted tests were made green and the deterministic gate sequence was rerun on the corrected source head rather than reusing the earlier `26c64ad` CI result. The old staged release has not been activated; the live service remains on the previous active surface `0.3` baseline until corrected-head CI and explicit cutover both pass.
 
 ## Required public inventory
 
