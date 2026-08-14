@@ -45,6 +45,18 @@ function baseDependencies(events: string[]) {
     gitCheckpointPatch: async () => {
       throw new Error("not used");
     },
+    gitLog: async () => {
+      throw new Error("not used");
+    },
+    gitShow: async () => {
+      throw new Error("not used");
+    },
+    gitRange: async () => {
+      throw new Error("not used");
+    },
+    gitDiffHistory: async () => {
+      throw new Error("not used");
+    },
     pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
     commitPatchFile: async () => {
       throw new Error("not used");

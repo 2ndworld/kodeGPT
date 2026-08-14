@@ -70,6 +70,10 @@ export interface ManagerBundle {
       | "searchBounded"
       | "gitCheckpoint"
       | "gitCheckpointPatch"
+      | "gitLog"
+      | "gitShow"
+      | "gitRange"
+      | "gitDiffHistory"
       | "pathIdentity"
       | "commitPatchFile"
       | "inspectExecutable"
@@ -248,6 +252,12 @@ export async function createProductionServiceStack(
           };
         },
         checkpointPatch: (workspaceId) => managers.workspaceManager.gitCheckpointPatch(workspaceId)
+      },
+      gitHistory: {
+        log: (input) => managers.workspaceManager.gitLog(input),
+        show: (input) => managers.workspaceManager.gitShow(input),
+        range: (input) => managers.workspaceManager.gitRange(input),
+        diffHistory: (input) => managers.workspaceManager.gitDiffHistory(input)
       },
       patch: {
         workspace: {

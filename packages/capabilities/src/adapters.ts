@@ -2,7 +2,12 @@ import type {
   CapabilityArtifactMetadata,
   CodeSearchTruncationReason,
   PatchFileAction,
-  VerificationOperationResult
+  VerificationOperationResult,
+  GitRevision,
+  GitLogResult,
+  GitShowResult,
+  GitRangeResult,
+  GitDiffHistoryResult
 } from "./contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -91,6 +96,44 @@ export interface CodeSearchAdapter {
 export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface GitHistoryLogAdapterInput {
+  workspaceId: string;
+  revision: GitRevision;
+  path?: string;
+  limit: number;
+}
+
+export interface GitHistoryShowAdapterInput {
+  workspaceId: string;
+  revision: GitRevision;
+  path?: string;
+  includePatch: boolean;
+  maxPatchBytes: number;
+}
+
+export interface GitHistoryRangeAdapterInput {
+  workspaceId: string;
+  baseRevision: GitRevision;
+  headRevision: GitRevision;
+  mode: "direct" | "symmetric";
+  limit: number;
+}
+
+export interface GitHistoryDiffAdapterInput {
+  workspaceId: string;
+  baseRevision: GitRevision;
+  headRevision: GitRevision;
+  path?: string;
+  maxPatchBytes: number;
+}
+
+export interface GitHistoryAdapter {
+  log(input: GitHistoryLogAdapterInput): Promise<GitLogResult>;
+  show(input: GitHistoryShowAdapterInput): Promise<GitShowResult>;
+  range(input: GitHistoryRangeAdapterInput): Promise<GitRangeResult>;
+  diffHistory(input: GitHistoryDiffAdapterInput): Promise<GitDiffHistoryResult>;
 }
 
 export interface CapabilityGitCheckpointRecord {

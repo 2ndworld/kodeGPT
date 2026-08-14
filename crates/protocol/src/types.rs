@@ -210,6 +210,61 @@ pub struct GitDiffParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum GitRevisionSpec {
+    Head,
+    Oid { oid: String },
+    Branch { name: String },
+    Tag { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitLogParams {
+    pub capability_id: String,
+    pub revision: GitRevisionSpec,
+    pub path: Option<String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitShowParams {
+    pub capability_id: String,
+    pub revision: GitRevisionSpec,
+    pub path: Option<String>,
+    pub include_patch: bool,
+    pub max_patch_bytes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitRangeMode {
+    Direct,
+    Symmetric,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitRangeParams {
+    pub capability_id: String,
+    pub base_revision: GitRevisionSpec,
+    pub head_revision: GitRevisionSpec,
+    pub mode: GitRangeMode,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitDiffHistoryParams {
+    pub capability_id: String,
+    pub base_revision: GitRevisionSpec,
+    pub head_revision: GitRevisionSpec,
+    pub path: Option<String>,
+    pub max_patch_bytes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProcessRunParams {
     pub capability_id: String,
@@ -419,6 +474,30 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitDiffParams,
+    },
+    #[serde(rename = "git.log")]
+    GitLog {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitLogParams,
+    },
+    #[serde(rename = "git.show")]
+    GitShow {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitShowParams,
+    },
+    #[serde(rename = "git.range")]
+    GitRange {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitRangeParams,
+    },
+    #[serde(rename = "git.diff_history")]
+    GitDiffHistory {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitDiffHistoryParams,
     },
     #[serde(rename = "process.inspect_executable")]
     ProcessInspectExecutable {

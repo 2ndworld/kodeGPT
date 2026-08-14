@@ -5,6 +5,10 @@ import {
   MAX_INSPECT_MAX_ENTRIES,
   MAX_PATCH_BYTES,
   MAX_SEARCH_MAX_RESULTS,
+  MAX_GIT_LOG_LIMIT,
+  MAX_GIT_RANGE_LIMIT,
+  MAX_GIT_PATCH_BYTES,
+  MAX_GIT_HISTORY_PATHS,
   type CodeSearchInput,
   type CodeSearchResult,
   type ContextBuildInput,
@@ -13,6 +17,14 @@ import {
   type FilePatchResult,
   type GitChangesInput,
   type GitChangesResult,
+  type GitLogInput,
+  type GitLogResult,
+  type GitShowInput,
+  type GitShowResult,
+  type GitRangeInput,
+  type GitRangeResult,
+  type GitDiffHistoryInput,
+  type GitDiffHistoryResult,
   type VerificationRecipe,
   type VerifyListInput,
   type VerifyListResult,
@@ -152,6 +164,86 @@ export const FilePatchResultSchema: z.ZodType<FilePatchResult> = z
     committedPaths: z.array(z.string().min(1))
   })
   .strict();
+
+const gitOidSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+const gitSafeRefNameSchema = z.string().min(1).max(128).refine((value) =>
+  !value.includes("..") && !value.includes("@{") &&
+  value.split("/").every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) && !part.endsWith(".lock") && !part.endsWith("."))
+);
+export const GitRevisionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("head") }).strict(),
+  z.object({ kind: z.literal("oid"), oid: gitOidSchema }).strict(),
+  z.object({ kind: z.literal("branch"), name: gitSafeRefNameSchema }).strict(),
+  z.object({ kind: z.literal("tag"), name: gitSafeRefNameSchema }).strict()
+]);
+const gitPathSchema = z.string().min(1).refine((value) =>
+  Buffer.byteLength(value, "utf8") <= 4096 &&
+  !value.startsWith("/") && !value.startsWith(":") && !/[\u0000-\u001f\u007f]/.test(value) &&
+  value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..")
+);
+const gitTruncationReasonSchema = z.enum(["COMMIT_LIMIT", "MESSAGE_LIMIT", "PATCH_LIMIT", "PATH_LIMIT", "RESPONSE_LIMIT"]);
+const gitCommitSchema = z.object({
+  oid: gitOidSchema,
+  shortOid: z.string().length(12).regex(/^[0-9a-f]+$/),
+  parents: z.array(gitOidSchema),
+  authorName: z.string(),
+  authorTime: z.number().int().safe(),
+  committerTime: z.number().int().safe(),
+  subject: z.string(),
+  encodingLossy: z.boolean()
+}).strict().refine((value) => value.shortOid === value.oid.slice(0, 12));
+const gitChangedPathSchema = z.object({
+  path: gitPathSchema,
+  status: z.enum(["added", "modified", "deleted", "typeChanged"]),
+  insertions: z.number().int().nonnegative().safe().nullable(),
+  deletions: z.number().int().nonnegative().safe().nullable(),
+  binary: z.boolean()
+}).strict();
+const gitStatSummarySchema = z.object({
+  filesChanged: z.number().int().nonnegative().safe(),
+  insertions: z.number().int().nonnegative().safe(),
+  deletions: z.number().int().nonnegative().safe(),
+  binaryFiles: z.number().int().nonnegative().safe()
+}).strict();
+
+export const GitLogInputSchema: z.ZodType<GitLogInput> = z.object({
+  workspaceId: z.string().min(1), revision: GitRevisionSchema.optional(), path: gitPathSchema.optional(),
+  limit: z.number().int().positive().max(MAX_GIT_LOG_LIMIT).safe().optional()
+}).strict();
+export const GitShowInputSchema: z.ZodType<GitShowInput> = z.object({
+  workspaceId: z.string().min(1), revision: GitRevisionSchema.optional(), path: gitPathSchema.optional(),
+  includePatch: z.boolean().optional(), maxPatchBytes: z.number().int().positive().max(MAX_GIT_PATCH_BYTES).safe().optional()
+}).strict();
+export const GitRangeInputSchema: z.ZodType<GitRangeInput> = z.object({
+  workspaceId: z.string().min(1), baseRevision: GitRevisionSchema, headRevision: GitRevisionSchema,
+  mode: z.enum(["direct", "symmetric"]).optional(), limit: z.number().int().positive().max(MAX_GIT_RANGE_LIMIT).safe().optional()
+}).strict();
+export const GitDiffHistoryInputSchema: z.ZodType<GitDiffHistoryInput> = z.object({
+  workspaceId: z.string().min(1), baseRevision: GitRevisionSchema, headRevision: GitRevisionSchema,
+  path: gitPathSchema.optional(), maxPatchBytes: z.number().int().positive().max(MAX_GIT_PATCH_BYTES).safe().optional()
+}).strict();
+
+export const GitLogResultSchema: z.ZodType<GitLogResult> = z.object({
+  schemaVersion: z.literal(1), resolvedOid: gitOidSchema, commits: z.array(gitCommitSchema).max(MAX_GIT_LOG_LIMIT),
+  returnedCount: z.number().int().nonnegative().max(MAX_GIT_LOG_LIMIT).safe(), truncated: z.boolean(), truncationReasons: z.array(gitTruncationReasonSchema)
+}).strict().refine((v) => v.returnedCount === v.commits.length && v.truncated === (v.truncationReasons.length > 0));
+const gitCommitDetailSchema = gitCommitSchema.safeExtend({ body: z.string(), messageTruncated: z.boolean() });
+export const GitShowResultSchema: z.ZodType<GitShowResult> = z.object({
+  schemaVersion: z.literal(1), commit: gitCommitDetailSchema, changedPaths: z.array(gitChangedPathSchema).max(MAX_GIT_HISTORY_PATHS),
+  summary: gitStatSummarySchema, patch: z.string().nullable(), truncated: z.boolean(), truncationReasons: z.array(gitTruncationReasonSchema)
+}).strict().refine((v) => v.truncated === (v.truncationReasons.length > 0));
+const gitRangeCommitSchema = gitCommitSchema.safeExtend({ side: z.enum(["base", "head"]).optional() });
+export const GitRangeResultSchema: z.ZodType<GitRangeResult> = z.object({
+  schemaVersion: z.literal(1), baseOid: gitOidSchema, headOid: gitOidSchema, isAncestor: z.boolean(), mergeBaseOid: gitOidSchema.nullable(),
+  ahead: z.object({ value: z.number().int().nonnegative().max(10000).safe(), exact: z.boolean() }).strict(),
+  behind: z.object({ value: z.number().int().nonnegative().max(10000).safe(), exact: z.boolean() }).strict(),
+  commits: z.array(gitRangeCommitSchema).max(MAX_GIT_RANGE_LIMIT), returnedCount: z.number().int().nonnegative().max(MAX_GIT_RANGE_LIMIT).safe(),
+  truncated: z.boolean(), truncationReasons: z.array(gitTruncationReasonSchema)
+}).strict().refine((v) => v.returnedCount === v.commits.length && v.truncated === (v.truncationReasons.length > 0));
+export const GitDiffHistoryResultSchema: z.ZodType<GitDiffHistoryResult> = z.object({
+  schemaVersion: z.literal(1), baseOid: gitOidSchema, headOid: gitOidSchema, changedPaths: z.array(gitChangedPathSchema).max(MAX_GIT_HISTORY_PATHS),
+  summary: gitStatSummarySchema, patch: z.string(), truncated: z.boolean(), truncationReasons: z.array(gitTruncationReasonSchema)
+}).strict().refine((v) => v.truncated === (v.truncationReasons.length > 0));
 
 export const GitChangesInputSchema: z.ZodType<GitChangesInput> = z
   .object({

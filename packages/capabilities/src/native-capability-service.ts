@@ -1,6 +1,7 @@
 import type {
   CodeSearchAdapter,
   GitCheckpointAdapter,
+  GitHistoryAdapter,
   PatchCommitAdapter,
   PatchWorkspaceAdapter,
   VerificationAvailabilityAdapter,
@@ -18,6 +19,14 @@ import type {
   FilePatchResult,
   GitChangesInput,
   GitChangesResult,
+  GitLogInput,
+  GitLogResult,
+  GitShowInput,
+  GitShowResult,
+  GitRangeInput,
+  GitRangeResult,
+  GitDiffHistoryInput,
+  GitDiffHistoryResult,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -28,6 +37,7 @@ import type {
 import { CapabilityError } from "./errors.js";
 import { buildContext as composeContext } from "./context-build.js";
 import { gitChanges } from "./git-changes.js";
+import { gitDiffHistory, gitLog, gitRange, gitShow } from "./git-history.js";
 import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
@@ -36,6 +46,10 @@ export type NativeCapabilityName =
   | "workspace.inspect"
   | "code.search"
   | "git.changes"
+  | "git.log"
+  | "git.show"
+  | "git.range"
+  | "git.diffHistory"
   | "verify.list"
   | "verify.run"
   | "file.patch"
@@ -47,6 +61,7 @@ export interface NativeCapabilityDependencies {
     search: CodeSearchAdapter;
   };
   git: GitCheckpointAdapter;
+  gitHistory: GitHistoryAdapter;
   patch: {
     workspace: PatchWorkspaceAdapter;
     commit: PatchCommitAdapter;
@@ -89,6 +104,22 @@ export class NativeCapabilityService {
 
   async gitChanges(input: GitChangesInput): Promise<GitChangesResult> {
     return gitChanges(this.#dependencies.git, input);
+  }
+
+  async gitLog(input: GitLogInput): Promise<GitLogResult> {
+    return gitLog(this.#dependencies.gitHistory, input);
+  }
+
+  async gitShow(input: GitShowInput): Promise<GitShowResult> {
+    return gitShow(this.#dependencies.gitHistory, input);
+  }
+
+  async gitRange(input: GitRangeInput): Promise<GitRangeResult> {
+    return gitRange(this.#dependencies.gitHistory, input);
+  }
+
+  async gitDiffHistory(input: GitDiffHistoryInput): Promise<GitDiffHistoryResult> {
+    return gitDiffHistory(this.#dependencies.gitHistory, input);
   }
 
   async listVerifications(input: VerifyListInput): Promise<VerifyListResult> {

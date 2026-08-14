@@ -82,7 +82,7 @@ describe("stable local service security boundaries", () => {
       activeReleaseId: item.releaseId,
       runtimeVersion: "0.1",
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.3",
+      surfaceVersion: "0.4",
       localPort: 43_121,
       listenerReady: true,
       managedExposure: true,

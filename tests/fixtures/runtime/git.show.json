@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_show",
+  "method": "git.show",
+  "params": {
+    "capabilityId": "cap_workspace",
+    "revision": {
+      "kind": "oid",
+      "oid": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "includePatch": true,
+    "maxPatchBytes": 65536
+  }
+}

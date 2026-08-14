@@ -5,10 +5,11 @@ use std::io::Read;
 use std::os::fd::OwnedFd;
 use std::sync::{Mutex, mpsc};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use kodegpt_sandbox::{
-    BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
-    resolve_trusted_executable,
+    BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable,
+    WorkspaceAccess, resolve_trusted_executable,
 };
 use kodegpt_workspace_io::{PathIdentityKind, PathIdentityResult, path_identity_beneath};
 use serde::Serialize;
@@ -28,6 +29,32 @@ const WORKTREE_PATCH_HEADER: &[u8] = b"\n=== KODEGPT WORKTREE DIFF ===\n";
 pub enum GitOperation {
     Status,
     Diff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GitOverflowPolicy {
+    LegacySpool,
+    Fail,
+    Truncate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct GitCommandBudget {
+    pub wall_timeout: Option<Duration>,
+    pub stdout_source_bytes: usize,
+    pub stderr_source_bytes: usize,
+    pub preview_bytes: usize,
+    pub overflow_policy: GitOverflowPolicy,
+}
+
+#[derive(Debug)]
+pub(crate) struct GitCommandOutput {
+    pub exit_code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr_preview: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub source_truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,6 +129,8 @@ pub enum GitInspectionError {
     InvalidCheckpointStatus,
     CommandFailed,
     CheckpointIdentityUnavailable,
+    Timeout,
+    OutputLimitExceeded,
     WaitFailed(std::io::Error),
 }
 
@@ -122,6 +151,8 @@ impl fmt::Display for GitInspectionError {
             Self::CheckpointIdentityUnavailable => {
                 formatter.write_str("Git checkpoint path identity is unavailable")
             }
+            Self::Timeout => formatter.write_str("Git command timed out"),
+            Self::OutputLimitExceeded => formatter.write_str("Git command output limit exceeded"),
             Self::WaitFailed(error) => write!(formatter, "Git wait failed: {error}"),
         }
     }
@@ -658,7 +689,7 @@ fn run_git_command(
     request_id: &str,
     operation_id: &str,
     provider: &BubblewrapProvider,
-    program: &kodegpt_sandbox::TrustedExecutable,
+    program: &TrustedExecutable,
     args: Vec<OsString>,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
@@ -683,13 +714,92 @@ fn run_git_command_with_stdout_limit(
     request_id: &str,
     operation_id: &str,
     provider: &BubblewrapProvider,
-    program: &kodegpt_sandbox::TrustedExecutable,
+    program: &TrustedExecutable,
     args: Vec<OsString>,
     stdout_limit: usize,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
 ) -> Result<GitCommandResult, GitInspectionError> {
-    let spec = hardened_git_spec(program.clone(), args);
+    let budgeted = run_git_command_with_budget(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        args,
+        GitCommandBudget {
+            wall_timeout: None,
+            stdout_source_bytes: usize::MAX,
+            stderr_source_bytes: usize::MAX,
+            preview_bytes: stdout_limit,
+            overflow_policy: GitOverflowPolicy::LegacySpool,
+        },
+        spool,
+        executions,
+        false,
+    )?;
+
+    Ok(GitCommandResult {
+        exit_code: budgeted.output.exit_code,
+        stdout_preview: budgeted.output.stdout,
+        stderr_preview: budgeted.output.stderr_preview,
+        stdout_truncated: budgeted.output.stdout_truncated,
+        stderr_truncated: budgeted.output.stderr_truncated,
+        artifact: budgeted.artifact,
+    })
+}
+
+pub(crate) fn run_hardened_git_command(
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    args: Vec<OsString>,
+    budget: GitCommandBudget,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+    history_no_lazy_fetch: bool,
+) -> Result<GitCommandOutput, GitInspectionError> {
+    Ok(run_git_command_with_budget(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        args,
+        budget,
+        spool,
+        executions,
+        history_no_lazy_fetch,
+    )?
+    .output)
+}
+
+#[derive(Debug)]
+struct BudgetedGitCommandResult {
+    output: GitCommandOutput,
+    artifact: RawSpoolMetadata,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_git_command_with_budget(
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    args: Vec<OsString>,
+    budget: GitCommandBudget,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+    history_no_lazy_fetch: bool,
+) -> Result<BudgetedGitCommandResult, GitInspectionError> {
+    let spec = hardened_git_spec_with_options(program.clone(), args, history_no_lazy_fetch);
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
     let execution_id = match executions.lock() {
@@ -722,11 +832,16 @@ fn run_git_command_with_stdout_limit(
         }
     };
 
-    let capture = capture_child(&mut child, &mut writer, stdout_limit);
+    let capture = capture_child_with_budget(&mut child, &mut writer, budget);
     let status = match capture {
         Ok(status) => status,
         Err(error) => {
-            terminate_untracked_child(&mut child);
+            if !matches!(
+                error,
+                GitInspectionError::Timeout | GitInspectionError::OutputLimitExceeded
+            ) {
+                terminate_untracked_child(&mut child);
+            }
             remove_execution(executions, &execution_id);
             return Err(error);
         }
@@ -734,19 +849,27 @@ fn run_git_command_with_stdout_limit(
     remove_execution(executions, &execution_id);
     let artifact = writer.finish()?;
 
-    Ok(GitCommandResult {
-        exit_code: status.exit_code,
-        stdout_preview: status.stdout_preview,
-        stderr_preview: status.stderr_preview,
-        stdout_truncated: status.stdout_truncated,
-        stderr_truncated: status.stderr_truncated,
+    Ok(BudgetedGitCommandResult {
+        output: GitCommandOutput {
+            exit_code: status.exit_code,
+            stdout: status.stdout_preview,
+            stderr_preview: status.stderr_preview,
+            stdout_truncated: status.stdout_truncated,
+            stderr_truncated: status.stderr_truncated,
+            source_truncated: status.source_truncated || artifact.source_truncated,
+        },
         artifact,
     })
 }
 
-fn hardened_git_spec(
-    program: kodegpt_sandbox::TrustedExecutable,
+fn hardened_git_spec(program: TrustedExecutable, args: Vec<OsString>) -> SandboxLaunchSpec {
+    hardened_git_spec_with_options(program, args, false)
+}
+
+fn hardened_git_spec_with_options(
+    program: TrustedExecutable,
     args: Vec<OsString>,
+    history_no_lazy_fetch: bool,
 ) -> SandboxLaunchSpec {
     let mut spec = SandboxLaunchSpec::new(program);
     spec.args = args;
@@ -759,12 +882,16 @@ fn hardened_git_spec(
         ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
         ("LC_ALL".to_owned(), "C".to_owned()),
     ]);
+    if history_no_lazy_fetch {
+        spec.env
+            .insert("GIT_NO_LAZY_FETCH".to_owned(), "1".to_owned());
+    }
     spec.network = SandboxNetworkMode::Deny;
     spec.workspace_access = WorkspaceAccess::ReadOnly;
     spec
 }
 
-fn base_git_args() -> Vec<OsString> {
+pub(crate) fn base_git_args() -> Vec<OsString> {
     [
         "-c",
         "core.fsmonitor=false",
@@ -816,7 +943,7 @@ fn hardened_git_args(operation: GitOperation, filter_overrides: &[OsString]) -> 
     args
 }
 
-fn filter_probe_args() -> Vec<OsString> {
+pub(crate) fn filter_probe_args() -> Vec<OsString> {
     let mut args = base_git_args();
     args.extend(
         [
@@ -868,7 +995,7 @@ fn discover_filter_overrides(
     filter_overrides(&probe.stdout_preview)
 }
 
-fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionError> {
+pub(crate) fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionError> {
     let mut drivers = BTreeSet::new();
     for raw_key in config_keys
         .split(|byte| *byte == 0)
@@ -930,6 +1057,7 @@ struct CaptureResult {
     stderr_preview: Vec<u8>,
     stdout_truncated: bool,
     stderr_truncated: bool,
+    source_truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -948,6 +1076,24 @@ fn capture_child(
     writer: &mut crate::spool::RawSpoolWriter,
     stdout_limit: usize,
 ) -> Result<CaptureResult, GitInspectionError> {
+    capture_child_with_budget(
+        child,
+        writer,
+        GitCommandBudget {
+            wall_timeout: None,
+            stdout_source_bytes: usize::MAX,
+            stderr_source_bytes: usize::MAX,
+            preview_bytes: stdout_limit,
+            overflow_policy: GitOverflowPolicy::LegacySpool,
+        },
+    )
+}
+
+fn capture_child_with_budget(
+    child: &mut kodegpt_sandbox::SandboxChild,
+    writer: &mut crate::spool::RawSpoolWriter,
+    budget: GitCommandBudget,
+) -> Result<CaptureResult, GitInspectionError> {
     let stdout = child
         .child_mut()
         .stdout
@@ -962,41 +1108,109 @@ fn capture_child(
     let stdout_reader = spawn_reader(stdout, StreamKind::Stdout, sender.clone());
     let stderr_reader = spawn_reader(stderr, StreamKind::Stderr, sender);
 
+    let deadline = budget
+        .wall_timeout
+        .map(|wall_timeout| Instant::now() + wall_timeout);
     let mut stdout_preview = Vec::new();
     let mut stderr_preview = Vec::new();
     let mut stdout_truncated = false;
     let mut stderr_truncated = false;
+    let mut source_truncated = false;
+    let mut stdout_source_bytes = 0usize;
+    let mut stderr_source_bytes = 0usize;
     let mut completed = 0;
     let mut read_failed = false;
 
     while completed < 2 {
-        match receiver.recv() {
-            Ok(StreamMessage::Data(kind, bytes)) => {
-                writer.write_source(&bytes)?;
-                match kind {
-                    StreamKind::Stdout => append_preview(
-                        &mut stdout_preview,
-                        &mut stdout_truncated,
-                        &bytes,
-                        stdout_limit,
-                    ),
-                    StreamKind::Stderr => append_preview(
-                        &mut stderr_preview,
-                        &mut stderr_truncated,
-                        &bytes,
-                        PREVIEW_MAX_BYTES,
-                    ),
+        let message = match deadline {
+            Some(deadline) => {
+                let now = Instant::now();
+                if now >= deadline {
+                    abort_capture(child, receiver, stdout_reader, stderr_reader);
+                    return Err(GitInspectionError::Timeout);
+                }
+                match receiver.recv_timeout(deadline.saturating_duration_since(now)) {
+                    Ok(message) => message,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        abort_capture(child, receiver, stdout_reader, stderr_reader);
+                        return Err(GitInspectionError::Timeout);
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        read_failed = true;
+                        break;
+                    }
                 }
             }
-            Ok(StreamMessage::Done(result)) => {
+            None => match receiver.recv() {
+                Ok(message) => message,
+                Err(_) => {
+                    read_failed = true;
+                    break;
+                }
+            },
+        };
+
+        match message {
+            StreamMessage::Data(kind, bytes) => {
+                let (seen, configured_limit) = match kind {
+                    StreamKind::Stdout => (&mut stdout_source_bytes, budget.stdout_source_bytes),
+                    StreamKind::Stderr => (&mut stderr_source_bytes, budget.stderr_source_bytes),
+                };
+                let source_limit = match budget.overflow_policy {
+                    GitOverflowPolicy::LegacySpool => usize::MAX,
+                    GitOverflowPolicy::Fail | GitOverflowPolicy::Truncate => configured_limit,
+                };
+                let remaining = source_limit.saturating_sub(*seen);
+                let accepted = remaining.min(bytes.len());
+                *seen = seen.saturating_add(accepted);
+
+                if accepted > 0 {
+                    let accepted_bytes = &bytes[..accepted];
+                    writer.write_source(accepted_bytes)?;
+                    match kind {
+                        StreamKind::Stdout => append_preview(
+                            &mut stdout_preview,
+                            &mut stdout_truncated,
+                            accepted_bytes,
+                            budget.preview_bytes,
+                        ),
+                        StreamKind::Stderr => append_preview(
+                            &mut stderr_preview,
+                            &mut stderr_truncated,
+                            accepted_bytes,
+                            budget.preview_bytes.min(PREVIEW_MAX_BYTES),
+                        ),
+                    }
+                }
+
+                if accepted < bytes.len() {
+                    source_truncated = true;
+                    match kind {
+                        StreamKind::Stdout => stdout_truncated = true,
+                        StreamKind::Stderr => stderr_truncated = true,
+                    }
+                    abort_capture(child, receiver, stdout_reader, stderr_reader);
+                    return match budget.overflow_policy {
+                        GitOverflowPolicy::Fail => Err(GitInspectionError::OutputLimitExceeded),
+                        GitOverflowPolicy::Truncate => Ok(CaptureResult {
+                            exit_code: 1,
+                            stdout_preview,
+                            stderr_preview,
+                            stdout_truncated,
+                            stderr_truncated,
+                            source_truncated,
+                        }),
+                        GitOverflowPolicy::LegacySpool => {
+                            unreachable!("legacy spool is unbounded here")
+                        }
+                    };
+                }
+            }
+            StreamMessage::Done(result) => {
                 completed += 1;
                 if result.is_err() {
                     read_failed = true;
                 }
-            }
-            Err(_) => {
-                read_failed = true;
-                break;
             }
         }
     }
@@ -1017,7 +1231,20 @@ fn capture_child(
         stderr_preview,
         stdout_truncated,
         stderr_truncated,
+        source_truncated,
     })
+}
+
+fn abort_capture(
+    child: &mut kodegpt_sandbox::SandboxChild,
+    receiver: mpsc::Receiver<StreamMessage>,
+    stdout_reader: thread::JoinHandle<()>,
+    stderr_reader: thread::JoinHandle<()>,
+) {
+    drop(receiver);
+    terminate_process_group_and_reap(child);
+    let _ = stdout_reader.join();
+    let _ = stderr_reader.join();
 }
 
 fn spawn_reader<R: Read + Send + 'static>(
@@ -1061,27 +1288,45 @@ fn remove_execution(executions: &Mutex<ExecutionRegistry>, execution_id: &str) {
 }
 
 fn terminate_untracked_child(child: &mut kodegpt_sandbox::SandboxChild) {
-    let _ = child.child_mut().kill();
+    terminate_process_group_and_reap(child);
+}
+
+fn terminate_process_group_and_reap(child: &mut kodegpt_sandbox::SandboxChild) {
+    let process_group = child.process_group();
+    if process_group > 0 {
+        unsafe {
+            libc::kill(-process_group, libc::SIGKILL);
+            libc::kill(process_group, libc::SIGKILL);
+        }
+    } else {
+        let _ = child.child_mut().kill();
+    }
     let _ = child.child_mut().wait();
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command as TestCommand;
     use std::sync::{Arc, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 
     use crate::audit::AuditSink;
     use crate::execution::ExecutionRegistry;
     use crate::spool::RawSpoolStore;
 
     use super::{
-        GitCheckpointRecordType, GitOperation, parse_checkpoint_status, run_git_checkpoint,
-        run_git_checkpoint_patch, run_git_inspection,
+        GitCheckpointRecordType, GitCommandBudget, GitInspectionError, GitOperation,
+        GitOverflowPolicy, hardened_git_args, hardened_git_spec, hardened_git_spec_with_options,
+        parse_checkpoint_status, run_git_checkpoint, run_git_checkpoint_patch, run_git_inspection,
+        run_hardened_git_command,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -1133,6 +1378,114 @@ mod tests {
         let mut records = Vec::new();
         visit(root, root, &mut records);
         records
+    }
+
+    #[test]
+    fn history_lazy_fetch_env_is_additive_and_current_git_spec_is_unchanged() {
+        let program = resolve_trusted_executable("git").expect("trusted git");
+        let args = hardened_git_args(GitOperation::Status, &[]);
+        let current = hardened_git_spec(program.clone(), args.clone());
+        let history = hardened_git_spec_with_options(program, args, true);
+
+        assert_eq!(
+            current.env,
+            BTreeMap::from([
+                ("GIT_OPTIONAL_LOCKS".to_owned(), "0".to_owned()),
+                ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+                ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
+                ("GIT_ATTR_NOSYSTEM".to_owned(), "1".to_owned()),
+                ("GIT_PAGER".to_owned(), "cat".to_owned()),
+                ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
+                ("LC_ALL".to_owned(), "C".to_owned()),
+            ])
+        );
+        assert!(!current.env.contains_key("GIT_NO_LAZY_FETCH"));
+        assert_eq!(history.args, current.args);
+
+        let mut expected_history_env = current.env.clone();
+        expected_history_env.insert("GIT_NO_LAZY_FETCH".to_owned(), "1".to_owned());
+        assert_eq!(history.env, expected_history_env);
+    }
+
+    #[test]
+    fn hardened_git_runner_times_out_and_reaps_process_group() {
+        let workspace = temporary_root("timeout");
+        let state = temporary_root("timeout-state");
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Arc::new(Mutex::new(ExecutionRegistry::default()));
+        let provider = BubblewrapProvider::discover().expect("bubblewrap available");
+        let program = resolve_trusted_executable("python3").expect("trusted python3");
+        let budget = GitCommandBudget {
+            wall_timeout: Some(Duration::from_millis(50)),
+            stdout_source_bytes: 64 * 1024,
+            stderr_source_bytes: 64 * 1024,
+            preview_bytes: 64 * 1024,
+            overflow_policy: GitOverflowPolicy::Fail,
+        };
+
+        thread::scope(|scope| {
+            let worker_executions = Arc::clone(&executions);
+            let handle = scope.spawn(move || {
+                run_hardened_git_command(
+                    &provider,
+                    &program,
+                    &root_fd,
+                    "kc_git_timeout",
+                    "req_git_timeout",
+                    "op_git_timeout",
+                    vec![
+                        "-c".into(),
+                        "import os,time; print(os.getpid(), flush=True); time.sleep(30)".into(),
+                    ],
+                    budget,
+                    &spool,
+                    &worker_executions,
+                    false,
+                )
+            });
+
+            let observation_deadline = Instant::now() + Duration::from_secs(1);
+            let process_group = loop {
+                let observed_process_group = {
+                    let registry = executions.lock().expect("registry");
+                    registry
+                        .ids_for_workspace("kc_git_timeout")
+                        .first()
+                        .and_then(|execution_id| registry.get(execution_id))
+                        .map(|record| record.process_group)
+                };
+                if let Some(process_group) = observed_process_group {
+                    break process_group;
+                }
+                assert!(
+                    Instant::now() < observation_deadline,
+                    "execution was never registered"
+                );
+                thread::sleep(Duration::from_millis(1));
+            };
+
+            let result = handle.join().expect("timeout worker joins");
+            assert!(matches!(result, Err(GitInspectionError::Timeout)));
+            assert!(
+                executions
+                    .lock()
+                    .expect("registry")
+                    .ids_for_workspace("kc_git_timeout")
+                    .is_empty()
+            );
+
+            let group_exists = unsafe { libc::kill(-process_group, 0) };
+            assert_eq!(group_exists, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+        });
+
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
     }
 
     #[test]

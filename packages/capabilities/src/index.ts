@@ -9,6 +9,14 @@ export {
   MAX_PATCH_FILES,
   MAX_PATCH_HUNKS,
   MAX_SEARCH_MAX_RESULTS,
+  DEFAULT_GIT_LOG_LIMIT,
+  MAX_GIT_LOG_LIMIT,
+  DEFAULT_GIT_RANGE_LIMIT,
+  MAX_GIT_RANGE_LIMIT,
+  DEFAULT_GIT_PATCH_BYTES,
+  MAX_GIT_PATCH_BYTES,
+  MAX_GIT_HISTORY_RESPONSE_BYTES,
+  MAX_GIT_HISTORY_PATHS,
   NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
 export type {
@@ -30,6 +38,15 @@ export type {
   GitChangedPath,
   GitChangesInput,
   GitChangesResult,
+  GitRevision,
+  GitLogInput,
+  GitLogResult,
+  GitShowInput,
+  GitShowResult,
+  GitRangeInput,
+  GitRangeResult,
+  GitDiffHistoryInput,
+  GitDiffHistoryResult,
   GitChangesSummary,
   GitPatchArtifact,
   GitPatchCoverage,
@@ -63,6 +80,7 @@ export type {
   CapabilityTreeResult,
   CodeSearchAdapter,
   GitCheckpointAdapter,
+  GitHistoryAdapter,
   GitInspectionAdapter,
   GitInspectionAdapterResult,
   PatchCommitAdapter,
@@ -75,6 +93,7 @@ export type {
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
+export { gitLog, gitShow, gitRange, gitDiffHistory } from "./git-history.js";
 export type { CapabilityErrorCode } from "./errors.js";
 export {
   NATIVE_CAPABILITY_SEMANTICS,
@@ -92,6 +111,15 @@ export {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitRevisionSchema,
+  GitLogInputSchema,
+  GitLogResultSchema,
+  GitShowInputSchema,
+  GitShowResultSchema,
+  GitRangeInputSchema,
+  GitRangeResultSchema,
+  GitDiffHistoryInputSchema,
+  GitDiffHistoryResultSchema,
   VerifyListInputSchema,
   VerifyListResultSchema,
   VerifyRunInputSchema,

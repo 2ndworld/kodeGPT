@@ -28,7 +28,7 @@ function ready(overrides: Partial<ServiceRuntimeStatusV1> = {}): ServiceRuntimeS
     localPort: 43_121,
     runtimeVersion: "0.1",
     protocolVersion: "2026-07-28",
-    surfaceVersion: "0.3",
+    surfaceVersion: "0.4",
     reservedName: "public:kodegpt-dev",
     publicUrl: "https://kodegpt.example.invalid/mcp",
     ...overrides
@@ -48,6 +48,14 @@ describe("service runtime readiness state", () => {
 
     expect((await stat(store.path)).mode & 0o777).toBe(0o600);
     await expect(store.read()).resolves.toEqual(value);
+  });
+
+  it("reads an active surface 0.3 readiness file during a staged upgrade without rewriting its identity", async () => {
+    const { store } = await storeFixture();
+    const legacy = { ...ready(), surfaceVersion: "0.3" as const };
+    await writeFile(store.path, JSON.stringify(legacy), "utf8");
+
+    await expect(store.read()).resolves.toEqual(legacy);
   });
 
   it("rejects unknown fields and stale/malformed identities", async () => {

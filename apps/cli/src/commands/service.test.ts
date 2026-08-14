@@ -536,7 +536,7 @@ describe("service start, stop, restart, and status", () => {
       activeReleaseId: fixture.release.releaseId,
       runtimeVersion: "0.1",
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.3",
+      surfaceVersion: "0.4",
       localPort: 43_121,
       managedExposure: true,
       reservedName: "public:kodegpt-dev",
@@ -546,7 +546,7 @@ describe("service start, stop, restart, and status", () => {
     const human = formatServiceStatus(status, false);
     const json = formatServiceStatus(status, true);
     expect(human).toContain("state=running");
-    expect(json).toContain('"surfaceVersion":"0.3"');
+    expect(json).toContain('"surfaceVersion":"0.4"');
     for (const output of [human, json]) {
       expect(output).not.toContain("credential");
       expect(output).not.toContain("verifier");
@@ -583,7 +583,7 @@ describe("installed service run entrypoint", () => {
                 host: "127.0.0.1",
                 port: 43_121,
                 protocolVersion: "2026-07-28",
-                surfaceVersion: "0.3",
+                surfaceVersion: "0.4",
                 runtimeVersion: "0.1",
                 auditHealthy: true,
                 filesystemBoundaryAvailable: true
@@ -615,7 +615,7 @@ describe("installed service run entrypoint", () => {
       localPort: 43_121,
       runtimeVersion: "0.1",
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.3",
+      surfaceVersion: "0.4",
       reservedName: fixture.release.reservedName,
       publicUrl: "https://kodegpt.example.invalid/mcp"
     });
@@ -739,7 +739,7 @@ function readyFor(releaseId: string): ServiceRuntimeStatusV1 {
     localPort: 43_121,
     runtimeVersion: "0.1",
     protocolVersion: "2026-07-28",
-    surfaceVersion: "0.3",
+    surfaceVersion: "0.4",
     reservedName: "public:kodegpt-dev",
     publicUrl: "https://kodegpt.example.invalid/mcp"
   };

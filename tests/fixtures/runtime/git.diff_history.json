@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_diff_history",
+  "method": "git.diff_history",
+  "params": {
+    "capabilityId": "cap_workspace",
+    "baseRevision": {
+      "kind": "oid",
+      "oid": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "headRevision": { "kind": "head" },
+    "path": "src/main.rs",
+    "maxPatchBytes": 65536
+  }
+}

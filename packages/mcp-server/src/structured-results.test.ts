@@ -8,6 +8,14 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitLogInputSchema,
+  GitLogResultSchema,
+  GitShowInputSchema,
+  GitShowResultSchema,
+  GitRangeInputSchema,
+  GitRangeResultSchema,
+  GitDiffHistoryInputSchema,
+  GitDiffHistoryResultSchema,
   VerifyListInputSchema,
   VerifyListResultSchema,
   VerifyRunInputSchema,
@@ -200,7 +208,11 @@ function makeContext(): KodegptToolContext {
     git: {
       status: async () => ({} as never),
       diff: async () => ({} as never),
-      changes: async () => typedGitChangesResult
+      changes: async () => typedGitChangesResult,
+      log: async () => ({ schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
+      show: async () => ({ schemaVersion: 1, commit: { oid: "1".repeat(40), shortOid: "1".repeat(12), parents: [], authorName: "A", authorTime: 1, committerTime: 1, subject: "s", body: "", messageTruncated: false, encodingLossy: false }, changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: null, truncated: false, truncationReasons: [] }),
+      range: async () => ({ schemaVersion: 1, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
+      diffHistory: async () => ({ schemaVersion: 1, baseOid: "1".repeat(40), headOid: "2".repeat(40), changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: "", truncated: false, truncationReasons: [] })
     },
     process: {
       run: async () => ({} as never),
@@ -243,6 +255,32 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("registers Git history with closed schemas and read-only annotations", () => {
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, _handler: CapturedHandler) {
+        definitions.set(name, definition);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const expected = [
+      ["git.log", GitLogInputSchema, GitLogResultSchema],
+      ["git.show", GitShowInputSchema, GitShowResultSchema],
+      ["git.range", GitRangeInputSchema, GitRangeResultSchema],
+      ["git.diffHistory", GitDiffHistoryInputSchema, GitDiffHistoryResultSchema]
+    ] as const;
+    for (const [name, inputSchema, outputSchema] of expected) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(outputSchema);
+      expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+      const schemaText = JSON.stringify(inputSchema);
+      for (const forbidden of ["argv", "command", "gitArgs", "revisionExpression", "network", "rootPath", "hostPath"]) {
+        expect(schemaText).not.toContain(forbidden);
+      }
+    }
+  });
   it("keeps workspace.list structured content identical to its text fallback", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const server = {
