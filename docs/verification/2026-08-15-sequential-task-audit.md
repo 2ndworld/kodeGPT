@@ -947,9 +947,21 @@ Current verdict: PASS
 Current verdict: PASS
 - no product runtime dependency on CodexPro introduced; CodexPro is operator tooling only. Provider interoperability remains NOT STARTED.
 
+# Post-PR #11 merge closure
+
+PR #11 was marked Ready only after the host-local gates above were proven, then merged with expected-head protection.
+
+- candidate head: `b10aa03e336a46004588fbb9a140ba806c28a0c0`
+- exact-head CI: run `31806106748` — SUCCESS
+- merge commit: `6b34d9b2259e194287dc625a9a2ca56e64e8dfd9`
+- canonical local `main` was fast-forwarded to the same merge commit.
+- merged-main authoritative build produced `sourceRevision=6b34d9b2259e194287dc625a9a2ca56e64e8dfd9`, `sourceDirty=false`, the same content pair `pair_e23d802764179e6f7698beb2f0734ab9`, CLI SHA `21194afc18716aaa84885268dd3ed8676c6dbcddec50590d49171c4147d19747`, runtime SHA `b3ca2e0fdf790d30178828df712232887cb2287e66c8958af75d1a783fabb790`.
+- merged-main `service install` + explicit restart revalidated/cut over the immutable `rel_f00862ed93f8e2919402fc60048ba2a7` content release under the merged-main provenance identity.
+- fresh merged-main host smoke remained healthy at runtime/protocol/surface `0.1 / 2026-07-28 / 0.4`; `git.log` and `git.show` resolve the live canonical HEAD as `6b34d9b...`.
+- merged-main GitHub CI push run `31847849086` was observed in progress during this reconciliation and must be SUCCESS before this docs PR is merged.
+
 # Open observations and final blockers
 
-1. **DOC DRIFT only:** canonical service/readiness docs do not yet contain this PR #11 host evidence or this sequential audit; update only after integration/post-merge freeze.
-2. **Operator-version observation:** the older globally installed `kodegpt` CLI rejected a `0.4` readiness file, while the exact candidate CLI succeeded. This does not block PR #11 because exact-candidate deployment intentionally uses the candidate CLI, but it should be mentioned in the final runbook/baseline so operators do not accidentally use a stale global CLI during staged upgrades.
-3. **No unresolved behavioral/security defect found by fresh deterministic gates, host smoke, or cross-task review.**
-4. **Remaining merge gates:** independent code review of exact PR #11 diff, exact-head CI reconfirmation, durable audit/stash-preservation commit/push, then PR readiness/merge flow and merged-main service/doc freeze.
+1. **Operator-version observation:** the older globally installed `kodegpt` CLI rejected a `0.4` readiness file, while the exact candidate/merged-main CLI succeeded. This is not an authority or runtime defect, but the deployment runbook should keep requiring the exact release/candidate CLI during staged upgrades.
+2. **No unresolved behavioral/security defect found by fresh deterministic gates, host smoke, exact diff review, or cross-task review.**
+3. **Final docs gate:** merge this audit/preservation PR only after merged-main CI run `31847849086` succeeds; then canonical `main` should be fast-forwarded once more and the preserved stash may be dropped only after confirming these two files exist on merged `main`.
