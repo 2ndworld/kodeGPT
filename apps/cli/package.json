@@ -7,7 +7,8 @@
     "kodegpt": "bin/kodegpt.mjs"
   },
   "files": [
-    "bin/kodegpt.mjs"
+    "bin/kodegpt.mjs",
+    "bin/kodegpt.provenance.json"
   ],
   "scripts": {
     "build:cli": "node scripts/build-cli.mjs",

@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -12,6 +13,7 @@ import {
 } from "./release.js";
 
 const roots: string[] = [];
+const TEST_SOURCE_REVISION = "7ea156e76abf46bc078d183f8748206c1ce15052";
 
 async function fixture(): Promise<MaterializeServiceReleaseInput> {
   const root = await mkdtemp(join(tmpdir(), "kodegpt-service-release-"));
@@ -32,7 +34,7 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
   await writeFile(join(runtimePackageRoot, "bin", "kodegpt-runtime"), "runtime-a", { mode: 0o755 });
   await writeFile(join(yamlPackageRoot, "package.json"), JSON.stringify({ name: "yaml", version: "2.9.0" }), "utf8");
   await writeFile(join(yamlPackageRoot, "index.js"), "export default {};\n", "utf8");
-  return {
+  const input: MaterializeServiceReleaseInput = {
     serviceDataRoot,
     cliPath,
     runtimePackageRoot,
@@ -43,6 +45,8 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
     port: 43_121,
     packageVersion: "0.1.0"
   };
+  await refreshProvenance(input);
+  return input;
 }
 
 afterEach(async () => {
@@ -65,6 +69,8 @@ describe("immutable KodeGPT service releases", () => {
     );
     expect((await stat(first.cliPath)).mode & 0o111).not.toBe(0);
     expect((await stat(first.runtimePath)).mode & 0o111).not.toBe(0);
+    await access(join(first.releaseRoot, "bin", "kodegpt.provenance.json"));
+    await access(join(first.releaseRoot, "node_modules", "@kodegpt", "runtime-linux-x64", "provenance.json"));
     await access(join(first.releaseRoot, "node_modules", "yaml", "package.json"));
   });
 
@@ -73,10 +79,12 @@ describe("immutable KodeGPT service releases", () => {
     const first = await materializeServiceRelease(input);
 
     await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-b');\n", { mode: 0o755 });
+    await refreshProvenance(input);
     const cliChanged = await materializeServiceRelease(input);
     expect(cliChanged.releaseId).not.toBe(first.releaseId);
 
     await writeFile(join(input.runtimePackageRoot, "bin", "kodegpt-runtime"), "runtime-b", { mode: 0o755 });
+    await refreshProvenance(input);
     const runtimeChanged = await materializeServiceRelease(input);
     expect(runtimeChanged.releaseId).not.toBe(cliChanged.releaseId);
   });
@@ -95,10 +103,13 @@ describe("immutable KodeGPT service releases", () => {
     const input = await fixture();
     const releaseA = await materializeServiceRelease(input);
     await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-b');\n", { mode: 0o755 });
+    await refreshProvenance(input);
     const releaseB = await materializeServiceRelease(input);
     await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-c');\n", { mode: 0o755 });
+    await refreshProvenance(input);
     const releaseC = await materializeServiceRelease(input);
     await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-d');\n", { mode: 0o755 });
+    await refreshProvenance(input);
     const releaseD = await materializeServiceRelease(input);
 
     await cleanupServiceReleases(input.serviceDataRoot, {
@@ -136,3 +147,35 @@ describe("immutable KodeGPT service releases", () => {
     ).rejects.toThrow(/release root escapes service-owned directory/);
   });
 });
+
+async function refreshProvenance(input: MaterializeServiceReleaseInput): Promise<void> {
+  const cliBytes = await readFile(input.cliPath);
+  const runtimeBytes = await readFile(join(input.runtimePackageRoot, "bin", "kodegpt-runtime"));
+  const cliSha256 = sha256(cliBytes);
+  const runtimeSha256 = sha256(runtimeBytes);
+  const provenance = {
+    schemaVersion: 1,
+    pairId: pairId(cliSha256, runtimeSha256),
+    sourceRevision: TEST_SOURCE_REVISION,
+    sourceDirty: false,
+    runtimePackage: "@kodegpt/runtime-linux-x64",
+    cliSha256,
+    runtimeSha256
+  };
+  const text = `${JSON.stringify(provenance, null, 2)}\n`;
+  await writeFile(join(dirname(input.cliPath), "kodegpt.provenance.json"), text, "utf8");
+  await writeFile(join(input.runtimePackageRoot, "provenance.json"), text, "utf8");
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function pairId(cliSha256: string, runtimeSha256: string): string {
+  return `pair_${createHash("sha256")
+    .update(cliSha256)
+    .update("\0")
+    .update(runtimeSha256)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
