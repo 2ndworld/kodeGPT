@@ -1431,11 +1431,49 @@ function validateGitHistoryResult(value: unknown, method: string): Record<string
     !Array.isArray(record.truncationReasons) ||
     record.truncated !== (record.truncationReasons.length > 0)
   ) reject();
+  const validPath = (candidate: unknown): boolean =>
+    typeof candidate === "string" &&
+    Buffer.byteLength(candidate, "utf8") <= 4096 &&
+    !candidate.startsWith("/") &&
+    !candidate.startsWith(":") &&
+    !/[\u0000-\u001f\u007f]/.test(candidate) &&
+    candidate.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+  const validChangedPath = (candidate: unknown): boolean =>
+    isRecord(candidate) &&
+    exactKeys(candidate, ["path", "status", "insertions", "deletions", "binary"]) &&
+    validPath(candidate.path) &&
+    (candidate.status === "added" || candidate.status === "modified" || candidate.status === "deleted" || candidate.status === "typeChanged") &&
+    (candidate.insertions === null || (Number.isSafeInteger(candidate.insertions) && (candidate.insertions as number) >= 0)) &&
+    (candidate.deletions === null || (Number.isSafeInteger(candidate.deletions) && (candidate.deletions as number) >= 0)) &&
+    typeof candidate.binary === "boolean";
+  const validSummary = (candidate: unknown): boolean =>
+    isRecord(candidate) &&
+    exactKeys(candidate, ["filesChanged", "insertions", "deletions", "binaryFiles"]) &&
+    [candidate.filesChanged, candidate.insertions, candidate.deletions, candidate.binaryFiles].every(
+      (number) => Number.isSafeInteger(number) && (number as number) >= 0
+    );
   if (method === "git.log") {
     const keys = ["schemaVersion", "resolvedOid", "commits", "returnedCount", "truncated", "truncationReasons"];
     if (!exactKeys(record, keys) || !Array.isArray(record.commits) || record.commits.length > 100 ||
         !record.commits.every((commit) => validCommit(commit, false)) ||
         !Number.isSafeInteger(record.returnedCount) || record.returnedCount !== record.commits.length) reject();
+  } else if (method === "git.show") {
+    const keys = ["schemaVersion", "commit", "changedPaths", "summary", "patch", "truncated", "truncationReasons"];
+    if (!exactKeys(record, keys) || !isRecord(record.commit) ||
+        !validCommit(Object.fromEntries(Object.entries(record.commit).filter(([key]) => key !== "body" && key !== "messageTruncated")), false) ||
+        typeof record.commit.body !== "string" || typeof record.commit.messageTruncated !== "boolean" ||
+        !Array.isArray(record.changedPaths) || record.changedPaths.length > 500 || !record.changedPaths.every(validChangedPath) ||
+        !validSummary(record.summary) || (record.patch !== null && typeof record.patch !== "string")) reject();
+  } else if (method === "git.range") {
+    const keys = ["schemaVersion", "baseOid", "headOid", "isAncestor", "mergeBaseOid", "ahead", "behind", "commits", "returnedCount", "truncated", "truncationReasons"];
+    const boundedCount = (candidate: unknown) => isRecord(candidate) && exactKeys(candidate, ["value", "exact"]) && Number.isSafeInteger(candidate.value) && (candidate.value as number) >= 0 && (candidate.value as number) <= 10000 && typeof candidate.exact === "boolean";
+    if (!exactKeys(record, keys) || typeof record.isAncestor !== "boolean" || !boundedCount(record.ahead) || !boundedCount(record.behind) ||
+        !Array.isArray(record.commits) || record.commits.length > 100 || !record.commits.every((commit) => validCommit(commit, true)) ||
+        !Number.isSafeInteger(record.returnedCount) || record.returnedCount !== record.commits.length) reject();
+  } else if (method === "git.diff_history") {
+    const keys = ["schemaVersion", "baseOid", "headOid", "changedPaths", "summary", "patch", "truncated", "truncationReasons"];
+    if (!exactKeys(record, keys) || !Array.isArray(record.changedPaths) || record.changedPaths.length > 500 ||
+        !record.changedPaths.every(validChangedPath) || !validSummary(record.summary) || typeof record.patch !== "string") reject();
   }
   return record;
 }

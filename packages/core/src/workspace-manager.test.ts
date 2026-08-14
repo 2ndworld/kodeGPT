@@ -299,6 +299,29 @@ describe("WorkspaceManager", () => {
         .rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
     }
 
+    kernel.gitHistoryResult = {
+      schemaVersion: 1,
+      commit: {
+        oid: "1".repeat(40),
+        shortOid: "1".repeat(12),
+        parents: [],
+        authorName: "A",
+        authorTime: 1,
+        committerTime: 1,
+        subject: "subject",
+        body: "",
+        messageTruncated: false,
+        encodingLossy: false
+      },
+      changedPaths: [{ path: "/etc/passwd", status: "modified", insertions: 1, deletions: 1, binary: false }],
+      summary: { filesChanged: 1, insertions: 1, deletions: 1, binaryFiles: 0 },
+      patch: null,
+      truncated: false,
+      truncationReasons: []
+    };
+    await expect(manager.gitShow({ workspaceId: "ws_history_invalid", revision: { kind: "head" }, includePatch: false, maxPatchBytes: 65536 }))
+      .rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+
     kernel.gitHistoryError = new KernelRpcError(-32000, "REVISION_NOT_FOUND", { stderr: "secret" });
     await expect(manager.gitLog({ workspaceId: "ws_history_invalid", revision: { kind: "head" }, limit: 20 }))
       .rejects.toEqual(expect.objectContaining<Partial<WorkspaceManagerError>>({ code: "REVISION_NOT_FOUND" }));
