@@ -155,7 +155,7 @@ Provider interoperability is **NOT STARTED**.
 
 ## Corrected-head CI, installed cutover, and live host evidence
 
-Corrected documentation head `266093c` was pushed without force. GitHub Actions run `31797305564` completed SUCCESS on that exact head; the single `Deterministic v0.1 gates` job passed trusted Bubblewrap build, frozen install, rustfmt, typecheck, full TypeScript tests, sandbox probes, Rust workspace tests, protocol, integration, security, isolation, acceptance, forbidden-pattern scan, and clean-install package smoke.
+The later exact cutover-evidence head `0383f2769f000e42b410a6362b26949f18de84d5` was pushed without force. GitHub Actions run `31798373407` completed SUCCESS on that exact head; the single `Deterministic v0.1 gates` job passed trusted Bubblewrap build, frozen install, rustfmt, typecheck, full TypeScript tests, sandbox probes, Rust workspace tests, protocol, integration, security, isolation, acceptance, forbidden-pattern scan, and clean-install package smoke.
 
 A fresh exact-head package was then built, packed, and clean-installed outside the repository. Before staging, the corrected candidate CLI successfully read the still-running surface `0.3` active release status, directly confirming the `c41aabd` backward-compatible status-reader fix. Candidate `service install` staged `rel_d31389af6de91e2f2d4b8dc5ae051799` while active release `rel_fa7cf9e07de98ae6941da6c4e3f9a918` remained running/listener-ready at surface `0.3`. Explicit `service restart` then promoted `rel_d31389af6de91e2f2d4b8dc5ae051799` and retained `rel_fa7cf9e07de98ae6941da6c4e3f9a918` as rollback.
 
@@ -178,14 +178,15 @@ Process provenance was verified directly from `/proc`: Node CLI argv and CWD res
 
 Actual ChatGPT connector calls after cutover proved `system.health.ok=true`, `auditHealthy=true`, `filesystemBoundaryAvailable=true`, `testMethods=false`, and `system.capabilities` = runtime `0.1`, protocol `2026-07-28`, surface `0.4`. Existing compatibility calls `workspace.open`, `git.status`, `git.diff`, and `git.changes` also PASS on the canonical trusted repo.
 
-The current chat's action registry is stale: its loaded 31-tool snapshot still omits `git.log`, `git.show`, `git.range`, and `git.diffHistory` even though the live backend reports surface `0.4`. Therefore phase-specific host acceptance for those four new tools is **not yet counted as PASS**. A fresh ChatGPT action-schema refresh/new host snapshot is required before merge. The stale snapshot is a host-cache blocker, not evidence of a backend downgrade.
+A fresh ChatGPT host snapshot on 2026-08-14 now exposes all four additive history actions and their structured schemas: `git.log`, `git.show`, `git.range`, and `git.diffHistory`. Live `system.health` remains healthy (`ok=true`, `auditHealthy=true`, `filesystemBoundaryAvailable=true`, `testMethods=false`) and `system.capabilities` remains runtime `0.1`, protocol `2026-07-28`, surface `0.4`.
+
+Real-host bounded acceptance PASS on the canonical trusted repository. The already-open canonical workspace was reused after an expected `WORKSPACE_ROOT_OVERLAP` on a duplicate open attempt. `git.log` on `head` with `limit=3` resolved `3e3e257500d8d35d887ab8a68d55439dbdae0c1a`, returned three structured commits, and reported `truncated=true` with `COMMIT_LIMIT`. `git.show` on the full 40-hex `3e3e257500d8d35d887ab8a68d55439dbdae0c1a` with a 16 KiB patch bound returned bounded commit metadata/body/path/patch fields without truncation. `git.range` from tag `v0.1` to `head` with `limit=5` resolved base `b8eae12cea3be002a9a61d06cecfd34f86283eb4`, reported `isAncestor=true`, exact ahead/behind `108/0`, returned five commits, and reported `COMMIT_LIMIT`. `git.diffHistory` from `v0.1` to `head` with a 32 KiB patch bound returned a structured 167-file summary and reported `truncated=true` with `PATCH_LIMIT`. An abbreviated OID (`3e3e257`) was rejected at the host action-schema boundary because OID input accepts only full lowercase 40/64-hex values. Existing `git.status`, `git.diff`, and `git.changes` remained successful and clean. The fresh action inventory still contains no `skill.run`, provider actions, generic shell, raw arbitrary Git command, Git mutation, network Git, MCP service-lifecycle mutation, MCP workspace-trust mutation, provider-agent execution, or desktop/computer-use authority. The workspace was then closed normally.
 
 ## Remaining gates
 
-1. commit this CI/cutover/host-cache evidence and rerun the docs-head gate subset;
-2. push the resulting exact evidence head and require CI success again;
-3. refresh the ChatGPT action inventory/schema and complete bounded real-host acceptance for `git.log`, `git.show`, `git.range`, `git.diffHistory`, one truncation case, one invalid abbreviated-OID case, existing Git compatibility, and forbidden inventory;
-4. reconcile final host evidence, perform final branch diff/security review, and merge through the normal PR flow only if the fresh host gate passes;
-5. post-merge reconcile canonical `main`, verify the installed service remains healthy on the merged release/provenance, clean the feature worktree/branch, and freeze the final phase baseline.
+1. commit this fresh-host evidence and rerun the required docs-head verification subset;
+2. push the resulting exact evidence head without force and require GitHub CI success on that exact head;
+3. perform final branch diff/security review and merge through the normal PR flow only if those final gates pass;
+4. post-merge reconcile canonical `main`, close installed-service provenance against the merged baseline according to the established lifecycle policy, run bounded live smoke, clean the feature worktree/branch safely, audit stash state, and freeze the final phase baseline.
 
 Historical `v0.1` must remain untouched throughout this sequence.
