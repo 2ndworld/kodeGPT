@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, statSync } from "node:fs";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 
@@ -68,7 +68,7 @@ export function renderKodegptUserUnit(record: ServiceReleaseRecord, stateRoot: s
     "[Service]",
     "Type=simple",
     `ExecStart=${execArgs.map(systemdQuote).join(" ")}`,
-    `WorkingDirectory=${systemdQuote(record.releaseRoot)}`,
+    `WorkingDirectory=${systemdPathValue(record.releaseRoot)}`,
     `Environment=${systemdQuote("NODE_ENV=production")}`,
     `Environment=${systemdQuote(`PATH=${pathValue}`)}`,
     "Restart=on-failure",
@@ -205,7 +205,7 @@ export async function runServiceManagerCommand(
     const child = spawn(executable, argv, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: serviceManagerEnvironment(process.env)
+      env: buildServiceManagerEnvironment(process.env, currentUserBusContext())
     });
     let stdout = "";
     let stderr = "";
@@ -257,6 +257,19 @@ function systemdQuote(value: string): string {
   return `"${escaped}"`;
 }
 
+function systemdPathValue(value: string): string {
+  if (!value.startsWith("/") || /[\0\r\n]/.test(value)) {
+    throw new Error("unsafe systemd WorkingDirectory path");
+  }
+  return value
+    .replaceAll("%", "%%")
+    .replaceAll("\\", "\\x5c")
+    .replaceAll(" ", "\\x20")
+    .replaceAll("\t", "\\x09")
+    .replaceAll('"', "\\x22")
+    .replaceAll("'", "\\x27");
+}
+
 function commandFailure(command: string, result: ServiceCommandResult): Error {
   const detail = result.stderr.trim().slice(0, 500);
   return new Error(
@@ -266,11 +279,29 @@ function commandFailure(command: string, result: ServiceCommandResult): Error {
   );
 }
 
-function serviceManagerEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildServiceManagerEnvironment(
+  environment: NodeJS.ProcessEnv,
+  context: { uid?: number; userBusAvailable: boolean }
+): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   for (const name of ["HOME", "PATH", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "USER", "LOGNAME"] as const) {
     const value = environment[name];
     if (value !== undefined) result[name] = value;
   }
+  if (context.userBusAvailable && context.uid !== undefined) {
+    const runtimeDir = `/run/user/${context.uid}`;
+    result.XDG_RUNTIME_DIR ??= runtimeDir;
+    result.DBUS_SESSION_BUS_ADDRESS ??= `unix:path=${runtimeDir}/bus`;
+  }
   return result;
+}
+
+function currentUserBusContext(): { uid?: number; userBusAvailable: boolean } {
+  const uid = process.getuid?.();
+  if (uid === undefined) return { userBusAvailable: false };
+  try {
+    return { uid, userBusAvailable: statSync(`/run/user/${uid}/bus`).isSocket() };
+  } catch {
+    return { uid, userBusAvailable: false };
+  }
 }

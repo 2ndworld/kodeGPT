@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ServiceReleaseRecord } from "./metadata.js";
 import {
+  buildServiceManagerEnvironment,
   createSystemdUserManager,
   renderKodegptUserUnit,
   type ServiceCommandRunner
@@ -37,6 +38,8 @@ describe("systemd user service contract", () => {
     expect(unit).toContain("StartLimitIntervalSec=60");
     expect(unit).toContain("StartLimitBurst=5");
     expect(unit).toContain("KillSignal=SIGTERM");
+    expect(unit).toContain("WorkingDirectory=/home/test\\x20user/.local/share/kodegpt/service/releases/release%%25");
+    expect(unit).not.toContain('WorkingDirectory="');
     expect(unit).toContain("kodegpt.mjs\" \"service\" \"run\"");
     expect(unit).toContain("public:kodegpt-dev");
     expect(unit).toContain("43121");
@@ -56,6 +59,36 @@ describe("systemd user service contract", () => {
     expect(() =>
       renderKodegptUserUnit(release({ reservedName: "public:kodegpt-dev\nEnvironment=LEAK=1" }), "/home/test/.kodegpt")
     ).toThrow(/unsafe systemd unit argument/);
+  });
+
+  it("recovers a missing user-session bus environment from the current Linux uid", () => {
+    expect(
+      buildServiceManagerEnvironment(
+        { HOME: "/home/test", PATH: "/usr/bin:/bin", USER: "test" },
+        { uid: 1000, userBusAvailable: true }
+      )
+    ).toEqual({
+      HOME: "/home/test",
+      PATH: "/usr/bin:/bin",
+      USER: "test",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus"
+    });
+
+    expect(
+      buildServiceManagerEnvironment(
+        {
+          HOME: "/home/test",
+          PATH: "/usr/bin:/bin",
+          XDG_RUNTIME_DIR: "/custom/runtime",
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/custom/bus"
+        },
+        { uid: 1000, userBusAvailable: true }
+      )
+    ).toMatchObject({
+      XDG_RUNTIME_DIR: "/custom/runtime",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/custom/bus"
+    });
   });
 
   it("uses direct argv for systemctl and normalizes show state", async () => {
