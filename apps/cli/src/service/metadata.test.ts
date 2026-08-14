@@ -75,6 +75,21 @@ describe("service metadata store", () => {
     expect(promoted.releases).toEqual({ [a.releaseId]: a, [b.releaseId]: b });
   });
 
+  it("refuses to overwrite immutable metadata for an existing release identity", async () => {
+    const { store } = await fixture();
+    const a = release(`rel_${"4".repeat(32)}`);
+    await store.stageRelease(a);
+    await store.promoteStagedRelease();
+
+    const conflicting = { ...a, port: 43_122 };
+    await expect(store.stageRelease(conflicting)).rejects.toThrow(/release identity already exists with different metadata/);
+
+    const unchanged = await store.read();
+    expect(unchanged.activeReleaseId).toBe(a.releaseId);
+    expect(unchanged.stagedReleaseId).toBeUndefined();
+    expect(unchanged.releases[a.releaseId]).toEqual(a);
+  });
+
   it("rejects unknown schemas and references to missing releases", async () => {
     const { root, store } = await fixture();
     await mkdir(root, { recursive: true });
