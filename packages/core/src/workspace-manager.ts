@@ -75,6 +75,126 @@ export interface WorkspacePathIdentityResult {
   hashTruncated: boolean;
 }
 
+export type WorkspaceGitRevision =
+  | { kind: "head" }
+  | { kind: "oid"; oid: string }
+  | { kind: "branch"; name: string }
+  | { kind: "tag"; name: string };
+
+export interface WorkspaceGitLogInput {
+  workspaceId: string;
+  revision: WorkspaceGitRevision;
+  path?: string;
+  limit: number;
+}
+
+export interface WorkspaceGitShowInput {
+  workspaceId: string;
+  revision: WorkspaceGitRevision;
+  path?: string;
+  includePatch: boolean;
+  maxPatchBytes: number;
+}
+
+export interface WorkspaceGitRangeInput {
+  workspaceId: string;
+  baseRevision: WorkspaceGitRevision;
+  headRevision: WorkspaceGitRevision;
+  mode: "direct" | "symmetric";
+  limit: number;
+}
+
+export interface WorkspaceGitDiffHistoryInput {
+  workspaceId: string;
+  baseRevision: WorkspaceGitRevision;
+  headRevision: WorkspaceGitRevision;
+  path?: string;
+  maxPatchBytes: number;
+}
+
+export interface WorkspaceGitCommitSummary {
+  oid: string;
+  shortOid: string;
+  parents: string[];
+  authorName: string;
+  authorTime: number;
+  committerTime: number;
+  subject: string;
+  encodingLossy: boolean;
+}
+
+export interface WorkspaceGitCommitDetail extends WorkspaceGitCommitSummary {
+  body: string;
+  messageTruncated: boolean;
+}
+
+export type WorkspaceGitChangedPathStatus = "added" | "modified" | "deleted" | "typeChanged";
+
+export interface WorkspaceGitChangedPath {
+  path: string;
+  status: WorkspaceGitChangedPathStatus;
+  insertions: number | null;
+  deletions: number | null;
+  binary: boolean;
+}
+
+export interface WorkspaceGitStatSummary {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  binaryFiles: number;
+}
+
+export type WorkspaceGitHistoryTruncationReason =
+  | "COMMIT_LIMIT"
+  | "MESSAGE_LIMIT"
+  | "PATCH_LIMIT"
+  | "PATH_LIMIT";
+
+export interface WorkspaceGitLogResult {
+  schemaVersion: 1;
+  resolvedOid: string;
+  commits: WorkspaceGitCommitSummary[];
+  returnedCount: number;
+  truncated: boolean;
+  truncationReasons: WorkspaceGitHistoryTruncationReason[];
+}
+
+export interface WorkspaceGitShowResult {
+  schemaVersion: 1;
+  commit: WorkspaceGitCommitDetail;
+  changedPaths: WorkspaceGitChangedPath[];
+  summary: WorkspaceGitStatSummary;
+  patch: string | null;
+  truncated: boolean;
+  truncationReasons: WorkspaceGitHistoryTruncationReason[];
+}
+
+export interface WorkspaceGitRangeResult {
+  schemaVersion: 1;
+  baseOid: string;
+  headOid: string;
+  isAncestor: boolean;
+  mergeBaseOid: string | null;
+  ahead: { value: number; exact: boolean };
+  behind: { value: number; exact: boolean };
+  commits: Array<WorkspaceGitCommitSummary & { side?: "base" | "head" }>;
+  returnedCount: number;
+  truncated: boolean;
+  truncationReasons: WorkspaceGitHistoryTruncationReason[];
+}
+
+export interface WorkspaceGitHistoryDiffResult {
+  schemaVersion: 1;
+  baseOid: string;
+  headOid: string;
+  changedPaths: WorkspaceGitChangedPath[];
+  summary: WorkspaceGitStatSummary;
+  patch: string;
+  truncated: boolean;
+  truncationReasons: WorkspaceGitHistoryTruncationReason[];
+}
+
 export interface WorkspaceGitInspectionResult {
   schemaVersion: 1;
   exitCode: number;
@@ -562,6 +682,61 @@ export class WorkspaceManager {
       bytesWritten: result.bytesWritten as number,
       sha256: result.sha256 as string | null
     };
+  }
+
+  async gitLog(input: WorkspaceGitLogInput): Promise<WorkspaceGitLogResult> {
+    return (await this.#gitHistory("git.log", input.workspaceId, {
+      revision: input.revision,
+      ...(input.path === undefined ? {} : { path: input.path }),
+      limit: input.limit
+    })) as unknown as WorkspaceGitLogResult;
+  }
+
+  async gitShow(input: WorkspaceGitShowInput): Promise<WorkspaceGitShowResult> {
+    return (await this.#gitHistory("git.show", input.workspaceId, {
+      revision: input.revision,
+      ...(input.path === undefined ? {} : { path: input.path }),
+      includePatch: input.includePatch,
+      maxPatchBytes: input.maxPatchBytes
+    })) as unknown as WorkspaceGitShowResult;
+  }
+
+  async gitRange(input: WorkspaceGitRangeInput): Promise<WorkspaceGitRangeResult> {
+    return (await this.#gitHistory("git.range", input.workspaceId, {
+      baseRevision: input.baseRevision,
+      headRevision: input.headRevision,
+      mode: input.mode,
+      limit: input.limit
+    })) as unknown as WorkspaceGitRangeResult;
+  }
+
+  async gitDiffHistory(input: WorkspaceGitDiffHistoryInput): Promise<WorkspaceGitHistoryDiffResult> {
+    return (await this.#gitHistory("git.diff_history", input.workspaceId, {
+      baseRevision: input.baseRevision,
+      headRevision: input.headRevision,
+      ...(input.path === undefined ? {} : { path: input.path }),
+      maxPatchBytes: input.maxPatchBytes
+    })) as unknown as WorkspaceGitHistoryDiffResult;
+  }
+
+  async #gitHistory(
+    method: "git.log" | "git.show" | "git.range" | "git.diff_history",
+    workspaceId: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const state = this.#requireReadyState(workspaceId);
+    try {
+      const result = await this.#kernel.request<unknown>(method, {
+        capabilityId: state.capabilityId,
+        ...params
+      });
+      return validateGitHistoryResult(result, method);
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_HISTORY_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, `${method} failed`);
+      }
+      throw error;
+    }
   }
 
   async gitStatus(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
@@ -1195,6 +1370,74 @@ function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
       }
     );
   });
+}
+
+const GIT_HISTORY_ERROR_CODES = new Set([
+  "NOT_A_GIT_REPOSITORY",
+  "REVISION_INVALID",
+  "REVISION_NOT_FOUND",
+  "OBJECT_TYPE_UNSUPPORTED",
+  "PATH_INVALID",
+  "OUTPUT_LIMIT_EXCEEDED",
+  "PROCESS_TIMEOUT",
+  "GIT_UNAVAILABLE",
+  "GIT_READ_FAILED"
+]);
+
+function validateGitHistoryResult(value: unknown, method: string): Record<string, unknown> {
+  const reject = (): never => {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      `${method} returned an invalid payload`
+    );
+  };
+  if (!isRecord(value) || value.schemaVersion !== 1) reject();
+  const record = value as Record<string, unknown>;
+  const forbidden = ["capabilityId", "artifactId", "pid", "processGroup"];
+  const inspect = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(inspect);
+      return;
+    }
+    if (!isRecord(candidate)) return;
+    if (Object.keys(candidate).some((key) => forbidden.includes(key))) reject();
+    for (const nested of Object.values(candidate)) inspect(nested);
+  };
+  inspect(record);
+  const oid = (candidate: unknown) =>
+    typeof candidate === "string" && (/^[0-9a-f]{40}$/.test(candidate) || /^[0-9a-f]{64}$/.test(candidate));
+  const exactKeys = (candidate: Record<string, unknown>, keys: readonly string[]) =>
+    Object.keys(candidate).length === keys.length && Object.keys(candidate).every((key) => keys.includes(key));
+  const validCommit = (candidate: unknown, allowSide: boolean): boolean => {
+    if (!isRecord(candidate)) return false;
+    const keys = ["oid", "shortOid", "parents", "authorName", "authorTime", "committerTime", "subject", "encodingLossy", ...(allowSide && candidate.side !== undefined ? ["side"] : [])];
+    return exactKeys(candidate, keys) &&
+      oid(candidate.oid) &&
+      typeof candidate.shortOid === "string" &&
+      candidate.shortOid === (candidate.oid as string).slice(0, 12) &&
+      Array.isArray(candidate.parents) && candidate.parents.every(oid) &&
+      typeof candidate.authorName === "string" && Buffer.byteLength(candidate.authorName, "utf8") <= 256 &&
+      Number.isSafeInteger(candidate.authorTime) && Number.isSafeInteger(candidate.committerTime) &&
+      typeof candidate.subject === "string" && Buffer.byteLength(candidate.subject, "utf8") <= 512 &&
+      typeof candidate.encodingLossy === "boolean" &&
+      (!allowSide || candidate.side === undefined || candidate.side === "base" || candidate.side === "head");
+  };
+  for (const key of ["resolvedOid", "baseOid", "headOid", "mergeBaseOid"]) {
+    const candidate = record[key];
+    if (candidate !== undefined && candidate !== null && !oid(candidate)) reject();
+  }
+  if (
+    typeof record.truncated !== "boolean" ||
+    !Array.isArray(record.truncationReasons) ||
+    record.truncated !== (record.truncationReasons.length > 0)
+  ) reject();
+  if (method === "git.log") {
+    const keys = ["schemaVersion", "resolvedOid", "commits", "returnedCount", "truncated", "truncationReasons"];
+    if (!exactKeys(record, keys) || !Array.isArray(record.commits) || record.commits.length > 100 ||
+        !record.commits.every((commit) => validCommit(commit, false)) ||
+        !Number.isSafeInteger(record.returnedCount) || record.returnedCount !== record.commits.length) reject();
+  }
+  return record;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

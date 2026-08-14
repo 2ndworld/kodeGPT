@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { ProfileEscalationError, getProfilePreset } from "@kodegpt/profiles";
 import type { PersistentFilesystemIdentity, TrustedWorkspaceEntry } from "@kodegpt/trust";
 
+import { KernelRpcError } from "./kernel-client.js";
 import {
   WorkspaceCloseIncompleteError,
   WorkspaceManager,
+  WorkspaceManagerError,
   WorkspaceNotFoundError,
   WorkspaceNotReadyError,
   type KernelTransport,
@@ -65,6 +67,15 @@ class FakeKernel implements KernelTransport {
     bytesWritten: 6,
     sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
   };
+  gitHistoryResult: unknown = {
+    schemaVersion: 1,
+    resolvedOid: "1".repeat(40),
+    commits: [],
+    returnedCount: 0,
+    truncated: false,
+    truncationReasons: []
+  };
+  gitHistoryError: unknown;
 
   async request<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
@@ -178,6 +189,12 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "git.log":
+      case "git.show":
+      case "git.range":
+      case "git.diff_history":
+        if (this.gitHistoryError !== undefined) throw this.gitHistoryError;
+        return this.gitHistoryResult as T;
       case "process.inspect_executable":
         return { schemaVersion: 1, executableAvailable: true, sandboxAvailable: true } as T;
       case "verify.run":
@@ -221,6 +238,71 @@ class FakeKernel implements KernelTransport {
 }
 
 describe("WorkspaceManager", () => {
+  it("routes structured Git history requests through the private READY capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_history"
+    });
+
+    await manager.openWorkspace("/workspace");
+    await manager.gitLog({
+      workspaceId: "ws_history",
+      revision: { kind: "branch", name: "feat/history" },
+      path: "src/index.ts",
+      limit: 20
+    });
+
+    expect(kernel.calls.at(-1)).toEqual({
+      method: "git.log",
+      params: {
+        capabilityId: "kc_fixture",
+        revision: { kind: "branch", name: "feat/history" },
+        path: "src/index.ts",
+        limit: 20
+      }
+    });
+    expect(kernel.calls.at(-1)?.params).not.toHaveProperty("workspaceId");
+    expect(kernel.calls.at(-1)?.params).not.toHaveProperty("argv");
+  });
+
+  it("rejects malformed Git history runtime payloads and preserves stable safe error codes", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_history_invalid"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const validCommit = {
+      oid: "2".repeat(40),
+      shortOid: "2".repeat(12),
+      parents: ["3".repeat(40)],
+      authorName: "A",
+      authorTime: 1,
+      committerTime: 2,
+      subject: "subject",
+      encodingLossy: false
+    };
+    for (const payload of [
+      { schemaVersion: 1, resolvedOid: "A".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] },
+      { schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [{ ...validCommit, shortOid: "deadbeefdead" }], returnedCount: 1, truncated: false, truncationReasons: [] },
+      { schemaVersion: 1, resolvedOid: "1".repeat(40), commits: new Array(101).fill(validCommit), returnedCount: 101, truncated: true, truncationReasons: ["COMMIT_LIMIT"] },
+      { schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: ["COMMIT_LIMIT"] },
+      { schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [], capabilityId: "kc_leak" },
+      { schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [], unexpected: true }
+    ]) {
+      kernel.gitHistoryResult = payload;
+      await expect(manager.gitLog({ workspaceId: "ws_history_invalid", revision: { kind: "head" }, limit: 20 }))
+        .rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+    }
+
+    kernel.gitHistoryError = new KernelRpcError(-32000, "REVISION_NOT_FOUND", { stderr: "secret" });
+    await expect(manager.gitLog({ workspaceId: "ws_history_invalid", revision: { kind: "head" }, limit: 20 }))
+      .rejects.toEqual(expect.objectContaining<Partial<WorkspaceManagerError>>({ code: "REVISION_NOT_FOUND" }));
+  });
   it("opens through OPENING, applies project narrowing, then publishes a READY workspace", async () => {
     const kernel = new FakeKernel();
     kernel.profileRead = Promise.resolve({
