@@ -2,7 +2,7 @@
 
 Status date: 2026-08-14
 Branch: `feat/stable-local-service-lifecycle`
-Status: local implementation, exact source-head candidate verification, real systemd migration/upgrade/stop-start acceptance, installed-path provenance proof, and bounded ChatGPT smoke PASS. Final documentation-head verification, push/CI, final diff review, and PR preparation remain gated below.
+Status: local implementation, exact source-head candidate verification through `9a3b27c5e8a79b95aa17df9769d2464a8a9347d4`, real systemd migration/upgrade/stop-start acceptance, installed-path provenance proof, and bounded ChatGPT smoke PASS. Final documentation-head verification, push/CI, final diff review, and PR preparation remain gated below.
 
 ## Scope
 
@@ -101,17 +101,20 @@ Fresh green evidence observed during implementation and exact source-head verifi
 - `pnpm bench:baseline`: PASS under the record-only policy and recorded exact source/runtime head `e66337f0b59ffa11577b13922481dca8d787d095`;
 - passive Pranikah before/after guard: `guard unchanged`.
 
+After the final staged-activation regression fix, exact source head `9a3b27c5e8a79b95aa17df9769d2464a8a9347d4` repeated the complete candidate command gate successfully: frozen install, Rust format, typecheck, build, full TypeScript suite at 82 files / 433 tests, sandbox functional tests, complete Rust workspace, protocol 11/11, integration 33/33, security 39/39, isolation 3/3, acceptance 5/5, forbidden scan, clean-prefix package smoke, and record-only benchmark. The benchmark recorded that exact Git head, and the passive Pranikah before/after comparison again returned `guard unchanged`.
+
 The exact final documentation head created after recording real acceptance must repeat the candidate gate before push so CI and local final evidence refer to the same Git SHA.
 
 ## Real local service and ChatGPT acceptance
 
 Real acceptance was performed against the same source/runtime tree as `e66337f0b59ffa11577b13922481dca8d787d095` while the historical canonical-main foreground exposure was initially still live.
 
-Acceptance found three concrete lifecycle defects and fixed each through RED -> GREEN before continuing:
+Acceptance/final-gate verification found four concrete lifecycle defects and fixed each with regression coverage before continuing:
 
 1. A detached operator shell had neither `XDG_RUNTIME_DIR` nor `DBUS_SESSION_BUS_ADDRESS` even though the user manager and `/run/user/<uid>/bus` existed. `systemctl --user` therefore failed with `No medium found`. The service-manager runner now recovers the canonical current-user bus environment only when the variables are missing and the current-user bus socket is actually present; explicit operator/session values remain authoritative.
 2. `WorkingDirectory="..."` was rejected by the real systemd parser as a non-absolute path because the quotes were treated as literal directive content. The unit now uses directive-safe absolute-path escaping, including `\\x20` for spaces and `%%` for systemd percent escaping. `systemd-analyze --user verify` and real `LoadState=loaded` then passed.
 3. `KillMode=control-group` caused a normal service stop to signal the Rust/zrok children concurrently with the Node supervisor, allowing the runtime death to look unexpected and yielding systemd `Result=exit-code`. The unit now uses `KillMode=mixed`: SIGTERM reaches the Node supervisor first so KodeGPT performs its established graceful child shutdown, while systemd retains bounded cgroup SIGKILL cleanup after timeout. Real `service stop` subsequently reported `state=stopped`, `MainPID=0`, `Result=success`, and no failure summary.
+4. A staged upgrade previously rewrote and daemon-reloaded the user unit during `service install` even while release A remained active. That meant a later systemd restart/crash before the explicit operator cutover boundary could start staged release B prematurely. The final regression fix keeps the loaded/unit-file release on A while B is only staged, then switches the unit only at explicit `service start`/`service restart`; staged `start` also uses the same one-step rollback behavior as staged `restart`. Unit and packaged integration tests lock this boundary.
 
 After those fixes and exact source-head verification:
 
@@ -126,6 +129,8 @@ After those fixes and exact source-head verification:
 - obsolete release cleanup left only the active and immediate rollback release directories;
 - a real managed `service stop` followed by `service start` passed cleanly and left the service running;
 - final process inspection found no `.worktrees` or canonical repository path in the running CLI/child command lines or service CWD.
+
+After defect 4 was committed as `9a3b27c`, a second real staged cutover proved the corrected boundary against the live service: release `rel_58d7fd8c090c97616852f4d4888d671a` remained active with the same running Node/Rust/zrok process tree while `rel_b5c0aa12cf67ec805540a440a050f16a` was only staged; explicit `service restart` then promoted `rel_b5c0aa12cf67ec805540a440a050f16a` and retained the former release as rollback. The new MainPID, Rust executable, and service CWD all resolve under the immutable installed release root, while zrok remains a direct child targeting loopback port 43121 with reserved name `public:kodegpt-dev`. No repository or feature-worktree path is required by the running service.
 
 Bounded actual ChatGPT smoke after the final managed service start PASS:
 
@@ -168,7 +173,7 @@ Rust remains final OS/security authority. Provider interoperability is **NOT STA
 
 ## Remaining gates
 
-Local runtime acceptance is complete. Before PR preparation, the remaining gates are limited to final exact-documentation identity and remote integration readiness:
+Local runtime acceptance is complete on source head `9a3b27c`. Before PR preparation, the remaining gates are limited to final exact-documentation identity and remote integration readiness:
 
 1. commit this acceptance evidence and require a clean final feature head;
 2. repeat the complete candidate command gate from `docs/release/v0.1-checklist.md` on that exact final documentation SHA;
