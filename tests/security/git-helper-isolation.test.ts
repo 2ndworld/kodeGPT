@@ -52,6 +52,10 @@ describe("hardened read-only Git inspection source regressions", () => {
 
     expect(tools).toContain('"git.status"');
     expect(tools).toContain('"git.diff"');
+    expect(tools).toContain('"git.log"');
+    expect(tools).toContain('"git.show"');
+    expect(tools).toContain('"git.range"');
+    expect(tools).toContain('"git.diffHistory"');
     expect(tools).toContain("READ_ONLY_TOOL_ANNOTATIONS");
     expect(tools).not.toContain("process_group: z.");
     expect(tools).not.toContain("capabilityId: z.");
@@ -63,7 +67,15 @@ describe("hardened read-only Git inspection source regressions", () => {
 
     expect(audit).toContain("GitStatus");
     expect(audit).toContain("GitDiff");
+    expect(audit).toContain("GitHistoryList");
+    expect(audit).toContain("GitCommitInspect");
+    expect(audit).toContain("GitHistoryRange");
+    expect(audit).toContain("GitHistoryDiff");
     expect(dispatcher).toContain("AuditAction::GitStatus");
     expect(dispatcher).toContain("AuditAction::GitDiff");
+    expect(dispatcher).toContain("AuditAction::GitHistoryList");
+    expect(dispatcher).toContain("AuditAction::GitCommitInspect");
+    expect(dispatcher).toContain("AuditAction::GitHistoryRange");
+    expect(dispatcher).toContain("AuditAction::GitHistoryDiff");
   });
 });

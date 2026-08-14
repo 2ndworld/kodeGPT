@@ -162,7 +162,7 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships the native capability hub surface without trust, shell, Codex, or skill execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.3");
+    expect(MCP_SURFACE_VERSION).toBe("0.4");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
