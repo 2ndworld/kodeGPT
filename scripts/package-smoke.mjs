@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { request as httpRequest } from "node:http";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,10 +104,72 @@ try {
   child = undefined;
   if (exitCode !== 0) throw new Error(`packaged kodegpt did not shut down cleanly: ${exitCode}`);
 
+  const fakeBin = join(temporary, "service-bin");
+  const managerLog = join(temporary, "service-manager.log");
+  await mkdir(fakeBin, { recursive: true });
+  await writeExecutable(
+    join(fakeBin, "systemctl"),
+    `#!/usr/bin/env node\n` +
+      `const fs = require("node:fs");\n` +
+      `const args = process.argv.slice(2);\n` +
+      `fs.appendFileSync(${JSON.stringify(managerLog)}, args.join(" ") + "\\n");\n` +
+      `if (args[1] === "show") process.stdout.write("LoadState=loaded\\nActiveState=inactive\\nSubState=dead\\nUnitFileState=enabled\\nMainPID=0\\nResult=success\\n");\n`
+  );
+  await writeExecutable(join(fakeBin, "loginctl"), `#!/usr/bin/env node\nprocess.stdout.write("no\\n");\n`);
+  await writeExecutable(join(fakeBin, "zrok2"), `#!/usr/bin/env node\nprocess.exit(0);\n`);
+  const serviceEnv = { ...cleanEnv, PATH: `${fakeBin}:${cleanEnv.PATH}` };
+  const serviceInstall = capture(
+    cli,
+    ["service", "install", "--name", "public:kodegpt-dev", "--state-root", stateRoot],
+    serviceEnv
+  ).trim();
+  if (!/staged=rel_[a-f0-9]{32}/.test(serviceInstall)) {
+    throw new Error(`packaged service install did not report a staged release: ${serviceInstall}`);
+  }
+  const serviceMetadata = JSON.parse(await readFile(join(stateRoot, "service.json"), "utf8"));
+  const stagedRelease = serviceMetadata.releases?.[serviceMetadata.stagedReleaseId];
+  if (!stagedRelease) throw new Error("packaged service install did not persist staged release metadata");
+  const serviceDataRoot = join(home, ".local/share/kodegpt/service");
+  if (!stagedRelease.releaseRoot.startsWith(serviceDataRoot) || stagedRelease.releaseRoot.includes(root)) {
+    throw new Error("packaged service release still depends on the source checkout");
+  }
+  if ((await sha256(stagedRelease.runtimePath)) !== runtimeSha) {
+    throw new Error("installed service runtime checksum does not match packaged runtime");
+  }
+  const serviceUnit = await readFile(join(home, ".config/systemd/user/kodegpt.service"), "utf8");
+  if (serviceUnit.includes(root) || serviceUnit.includes(prefix)) {
+    throw new Error("service unit references a transient source or package-install path");
+  }
+  const serviceStatus = JSON.parse(capture(
+    cli,
+    ["service", "status", "--json", "--state-root", stateRoot],
+    serviceEnv
+  ));
+  if (
+    serviceStatus.installed !== true ||
+    serviceStatus.state !== "stopped" ||
+    serviceStatus.stagedReleaseId !== serviceMetadata.stagedReleaseId ||
+    serviceStatus.reservedName !== "public:kodegpt-dev"
+  ) {
+    throw new Error(`packaged service status mismatch: ${JSON.stringify(serviceStatus)}`);
+  }
+  capture(cli, ["service", "uninstall", "--state-root", stateRoot], serviceEnv);
+  await stat(serviceDataRoot).then(
+    () => { throw new Error("packaged service uninstall left the service data root behind"); },
+    (error) => {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  );
+
   process.stdout.write(`package smoke ok\nrelease=${releaseDir}\n${checksums.join("\n")}\n`);
 } finally {
   if (child && child.exitCode === null) child.kill("SIGKILL");
   await rm(temporary, { recursive: true, force: true });
+}
+
+async function writeExecutable(path, contents) {
+  await writeFile(path, contents, "utf8");
+  await chmod(path, 0o755);
 }
 
 function cleanInstallPath(value) {

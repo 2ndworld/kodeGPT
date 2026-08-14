@@ -32,8 +32,10 @@ export interface ServiceInstallOptions {
   port: number;
 }
 
-export interface ServiceSimpleOptions {
-  command: "start" | "stop" | "restart" | "uninstall";
+export type ServiceSimpleCommand = "start" | "stop" | "restart" | "uninstall";
+
+export interface ServiceSimpleOptions<C extends ServiceSimpleCommand = ServiceSimpleCommand> {
+  command: C;
   stateRoot: string;
 }
 
@@ -53,7 +55,10 @@ export interface ServiceRunOptions {
 
 export type ParsedServiceArguments =
   | ServiceInstallOptions
-  | ServiceSimpleOptions
+  | ServiceSimpleOptions<"start">
+  | ServiceSimpleOptions<"stop">
+  | ServiceSimpleOptions<"restart">
+  | ServiceSimpleOptions<"uninstall">
   | ServiceStatusOptions
   | ServiceRunOptions;
 
@@ -117,7 +122,7 @@ export async function installService(
 }
 
 export async function uninstallService(
-  _options: ServiceSimpleOptions & { command: "uninstall" },
+  _options: ServiceSimpleOptions<"uninstall">,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
   await dependencies.manager.stop();
@@ -131,7 +136,7 @@ export async function uninstallService(
 }
 
 export async function startService(
-  _options: ServiceSimpleOptions & { command: "start" },
+  _options: ServiceSimpleOptions<"start">,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
   const metadata = await dependencies.metadataStore.read();
@@ -151,7 +156,7 @@ export async function startService(
 }
 
 export async function stopService(
-  _options: ServiceSimpleOptions & { command: "stop" },
+  _options: ServiceSimpleOptions<"stop">,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
   await dependencies.manager.stop();
@@ -159,7 +164,7 @@ export async function stopService(
 }
 
 export async function restartService(
-  options: ServiceSimpleOptions & { command: "restart" },
+  options: ServiceSimpleOptions<"restart">,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
   const metadata = await dependencies.metadataStore.read();
@@ -468,11 +473,11 @@ function parseStatus(args: string[], homeDir: string): ServiceStatusOptions {
   return { command: "status", stateRoot, json };
 }
 
-function parseSimple(
-  command: ServiceSimpleOptions["command"],
+function parseSimple<C extends ServiceSimpleCommand>(
+  command: C,
   args: string[],
   homeDir: string
-): ServiceSimpleOptions {
+): ServiceSimpleOptions<C> {
   let stateRoot = join(homeDir, ".kodegpt");
   if (args.length === 0) return { command, stateRoot };
   if (args.length !== 2 || args[0] !== "--state-root") {

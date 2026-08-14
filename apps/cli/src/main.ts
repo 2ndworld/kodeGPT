@@ -1,5 +1,7 @@
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { ConnectorCredentialStore } from "@kodegpt/auth";
 import { KernelClient } from "@kodegpt/core";
@@ -14,12 +16,32 @@ import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
 import { runBridgeCommand } from "./commands/bridge.js";
-import { formatExposeZrokStatus, runExposeZrokCommand } from "./commands/expose-zrok.js";
-import { parseServiceArguments } from "./commands/service.js";
+import {
+  exposeZrokWithDefaults,
+  formatExposeZrokStatus,
+  runExposeZrokCommand
+} from "./commands/expose-zrok.js";
+import {
+  formatServiceStatus,
+  getServiceStatus,
+  installService,
+  parseServiceArguments,
+  restartService,
+  runInstalledService,
+  startService,
+  stopService,
+  uninstallService,
+  type ServiceOperatorDependencies
+} from "./commands/service.js";
 import { runSkillCommand, type SkillCommandDependencies } from "./commands/skill.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
 import { resolveRuntimePath, RUNTIME_PACKAGE_LINUX_X64 } from "./runtime-resolver.js";
+import { ServiceMetadataStore } from "./service/metadata.js";
+import { cleanupServiceReleases, materializeServiceRelease } from "./service/release.js";
+import { ServiceRuntimeStatusStore, waitForServiceReady } from "./service/runtime-status.js";
+import { createSystemdUserManager, resolveExecutableOnPath } from "./service/systemd.js";
+import { KODEGPT_PACKAGE_VERSION } from "./version.js";
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const [command, ...rest] = argv;
@@ -120,8 +142,99 @@ async function skill(args: string[]): Promise<void> {
 }
 
 async function service(args: string[]): Promise<void> {
-  const parsed = parseServiceArguments(args, homedir());
-  throw new Error(`service lifecycle command not implemented yet: ${parsed.command}`);
+  const home = homedir();
+  const parsed = parseServiceArguments(args, home);
+  if (parsed.command === "run") {
+    const metadataStore = new ServiceMetadataStore(parsed.stateRoot);
+    const runtimeStatusStore = new ServiceRuntimeStatusStore(parsed.stateRoot);
+    const running = await runInstalledService(parsed, {
+      metadataStore,
+      runtimeStatusStore,
+      exposeZrok: exposeZrokWithDefaults
+    });
+    await Promise.race([
+      waitForShutdown(running.close),
+      running.termination.finally(() => running.close())
+    ]);
+    return;
+  }
+
+  const dependencies = await createServiceOperatorDependencies(parsed.stateRoot, home);
+  let output: string;
+  switch (parsed.command) {
+    case "install":
+      output = await installService(parsed, dependencies);
+      break;
+    case "start":
+      output = await startService(parsed, dependencies);
+      break;
+    case "stop":
+      output = await stopService(parsed, dependencies);
+      break;
+    case "restart":
+      output = await restartService(parsed, dependencies);
+      break;
+    case "status":
+      output = formatServiceStatus(await getServiceStatus(dependencies), parsed.json);
+      break;
+    case "uninstall":
+      output = await uninstallService(parsed, dependencies);
+      break;
+  }
+  process.stdout.write(`${output}\n`);
+}
+
+async function createServiceOperatorDependencies(
+  stateRoot: string,
+  home: string
+): Promise<ServiceOperatorDependencies> {
+  if (process.platform !== "linux") {
+    throw new Error("KodeGPT local service lifecycle currently requires Linux user systemd");
+  }
+  const systemctlPath = await resolveExecutableOnPath("systemctl");
+  const loginctlPath = await resolveExecutableOnPath("loginctl");
+  const manager = createSystemdUserManager({
+    systemctlPath,
+    loginctlPath,
+    userName: String(process.getuid?.() ?? process.env.USER ?? process.env.LOGNAME ?? "")
+  });
+  const metadataStore = new ServiceMetadataStore(stateRoot);
+  const runtimeStatusStore = new ServiceRuntimeStatusStore(stateRoot);
+  const serviceDataRoot = join(home, ".local", "share", "kodegpt", "service");
+  const unitPath = join(home, ".config", "systemd", "user", "kodegpt.service");
+
+  return {
+    metadataStore,
+    runtimeStatusStore,
+    manager,
+    serviceDataRoot,
+    unitPath,
+    async prepareRelease(options) {
+      const runtimePath = await resolveRuntimePath();
+      const runtimePackageRoot = dirname(dirname(runtimePath));
+      const require = createRequire(import.meta.url);
+      const yamlPackageRoot = dirname(require.resolve("yaml/package.json"));
+      const zrokPath = await resolveExecutableOnPath("zrok2");
+      return materializeServiceRelease({
+        serviceDataRoot,
+        cliPath: fileURLToPath(import.meta.url),
+        runtimePackageRoot,
+        yamlPackageRoot,
+        nodePath: process.execPath,
+        zrokPath,
+        reservedName: options.name,
+        port: options.port,
+        packageVersion: KODEGPT_PACKAGE_VERSION
+      });
+    },
+    waitForReady: (releaseId) =>
+      waitForServiceReady({
+        manager,
+        statusStore: runtimeStatusStore,
+        expectedReleaseId: releaseId
+      }),
+    cleanupReleases: (metadata) => cleanupServiceReleases(serviceDataRoot, metadata)
+  };
 }
 
 async function withSkillRuntime<T>(

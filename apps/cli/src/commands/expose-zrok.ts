@@ -284,6 +284,12 @@ export async function runExposeZrokCommand(
   return exposeZrok(parseExposeZrokArguments(args), dependencies);
 }
 
+export async function exposeZrokWithDefaults(
+  options: ExposeZrokOptions
+): Promise<ExposedZrokKodegpt> {
+  return exposeZrok(options, defaultExposeZrokDependencies);
+}
+
 export async function exposeZrok(
   options: ExposeZrokOptions,
   dependencies: ExposeZrokDependencies
