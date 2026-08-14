@@ -50,6 +50,14 @@ describe("service runtime readiness state", () => {
     await expect(store.read()).resolves.toEqual(value);
   });
 
+  it("reads an active surface 0.3 readiness file during a staged upgrade without rewriting its identity", async () => {
+    const { store } = await storeFixture();
+    const legacy = { ...ready(), surfaceVersion: "0.3" as const };
+    await writeFile(store.path, JSON.stringify(legacy), "utf8");
+
+    await expect(store.read()).resolves.toEqual(legacy);
+  });
+
   it("rejects unknown fields and stale/malformed identities", async () => {
     const { store } = await storeFixture();
     await writeFile(
