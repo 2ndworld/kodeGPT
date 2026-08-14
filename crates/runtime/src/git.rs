@@ -891,7 +891,7 @@ fn hardened_git_spec_with_options(
     spec
 }
 
-fn base_git_args() -> Vec<OsString> {
+pub(crate) fn base_git_args() -> Vec<OsString> {
     [
         "-c",
         "core.fsmonitor=false",
@@ -943,7 +943,7 @@ fn hardened_git_args(operation: GitOperation, filter_overrides: &[OsString]) -> 
     args
 }
 
-fn filter_probe_args() -> Vec<OsString> {
+pub(crate) fn filter_probe_args() -> Vec<OsString> {
     let mut args = base_git_args();
     args.extend(
         [
@@ -995,7 +995,7 @@ fn discover_filter_overrides(
     filter_overrides(&probe.stdout_preview)
 }
 
-fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionError> {
+pub(crate) fn filter_overrides(config_keys: &[u8]) -> Result<Vec<OsString>, GitInspectionError> {
     let mut drivers = BTreeSet::new();
     for raw_key in config_keys
         .split(|byte| *byte == 0)
