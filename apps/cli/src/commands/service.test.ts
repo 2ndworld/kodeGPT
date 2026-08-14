@@ -191,6 +191,33 @@ describe("service install and uninstall orchestration", () => {
     await expect(readFile(sentinel, "utf8")).resolves.toBe("keep");
     expect(output).toBe("KodeGPT service uninstalled");
   });
+
+  it("preserves the unit and service-owned artifacts when stop fails during uninstall", async () => {
+    const fixture = await serviceFixture();
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    fixture.managerCalls.splice(0);
+    fixture.dependencies.manager.stop = async () => {
+      fixture.managerCalls.push("stop");
+      throw new Error("service stop failed");
+    };
+
+    await expect(
+      uninstallService({ command: "uninstall", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/service stop failed/);
+
+    expect(fixture.managerCalls).toEqual(["stop"]);
+    await expect(stat(fixture.unitPath)).resolves.toBeDefined();
+    await expect(stat(fixture.serviceDataRoot)).resolves.toBeDefined();
+    await expect(stat(fixture.metadataStore.path)).resolves.toBeDefined();
+  });
 });
 
 describe("service start, stop, restart, and status", () => {

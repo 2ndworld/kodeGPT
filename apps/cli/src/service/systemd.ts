@@ -121,13 +121,13 @@ export function createSystemdUserManager(options: {
       await systemctl(["enable", UNIT_NAME]);
     },
     async disable() {
-      await systemctl(["disable", UNIT_NAME], true);
+      await systemctl(["disable", UNIT_NAME]);
     },
     async start() {
       await systemctl(["start", UNIT_NAME]);
     },
     async stop() {
-      await systemctl(["stop", UNIT_NAME], true);
+      await systemctl(["stop", UNIT_NAME]);
     },
     async restart() {
       await systemctl(["restart", UNIT_NAME]);

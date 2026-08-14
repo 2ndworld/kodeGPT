@@ -145,4 +145,25 @@ describe("systemd user service contract", () => {
     expect(calls).toContainEqual({ executable: "/usr/bin/loginctl", argv: ["show-user", "test-user", "-p", "Linger", "--value"] });
     expect(calls.every(({ argv }) => !argv.includes("sh") && !argv.includes("-c"))).toBe(true);
   });
+
+  it("fails closed when stop or disable returns a service-manager error", async () => {
+    const runner: ServiceCommandRunner = async (_executable, argv) => {
+      if (argv[1] === "stop") {
+        return { exitCode: 1, stdout: "", stderr: "Failed to connect to bus" };
+      }
+      if (argv[1] === "disable") {
+        return { exitCode: 1, stdout: "", stderr: "Failed to disable unit" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const manager = createSystemdUserManager({
+      systemctlPath: "/usr/bin/systemctl",
+      loginctlPath: "/usr/bin/loginctl",
+      userName: "test-user",
+      runner
+    });
+
+    await expect(manager.stop()).rejects.toThrow(/Failed to connect to bus/);
+    await expect(manager.disable()).rejects.toThrow(/Failed to disable unit/);
+  });
 });
