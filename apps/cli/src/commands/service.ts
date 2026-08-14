@@ -109,14 +109,21 @@ export async function installService(
   options: ServiceInstallOptions,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
+  const current = await dependencies.metadataStore.read();
   const release = await dependencies.prepareRelease(options);
   if (release.reservedName !== options.name || release.port !== options.port) {
     throw new Error("prepared service release does not match requested exposure identity");
   }
-  const unit = renderKodegptUserUnit(release, options.stateRoot);
-  await writeUserUnitAtomic(dependencies.unitPath, unit);
+  if (current.activeReleaseId === undefined) {
+    await writeUserUnitAtomic(
+      dependencies.unitPath,
+      renderKodegptUserUnit(release, options.stateRoot)
+    );
+  }
   await dependencies.metadataStore.stageRelease(release);
-  await dependencies.manager.daemonReload();
+  if (current.activeReleaseId === undefined) {
+    await dependencies.manager.daemonReload();
+  }
   await dependencies.manager.enable();
   return `KodeGPT service installed staged=${release.releaseId}`;
 }
@@ -136,7 +143,7 @@ export async function uninstallService(
 }
 
 export async function startService(
-  _options: ServiceSimpleOptions<"start">,
+  options: ServiceSimpleOptions<"start">,
   dependencies: ServiceOperatorDependencies
 ): Promise<string> {
   const metadata = await dependencies.metadataStore.read();
@@ -144,10 +151,21 @@ export async function startService(
   if (targetReleaseId === undefined) throw new Error("KodeGPT service has no installed release to start");
   const target = metadata.releases[targetReleaseId];
   if (target === undefined) throw new Error("service release metadata is missing the start target");
+  const stagedUpgrade = isStagedUpgrade(metadata);
 
+  if (stagedUpgrade) {
+    await switchServiceUnit(target, options.stateRoot, dependencies);
+  }
   await dependencies.manager.resetFailed();
   await dependencies.manager.start();
-  await dependencies.waitForReady(targetReleaseId);
+  try {
+    await dependencies.waitForReady(targetReleaseId);
+  } catch (candidateError) {
+    if (stagedUpgrade) {
+      await rollbackStagedActivation(metadata, options.stateRoot, dependencies, candidateError);
+    }
+    throw candidateError;
+  }
   if (metadata.stagedReleaseId === targetReleaseId) {
     const promoted = await dependencies.metadataStore.promoteStagedRelease();
     await dependencies.cleanupReleases?.(promoted);
@@ -173,9 +191,9 @@ export async function restartService(
   const target = metadata.releases[targetReleaseId];
   if (target === undefined) throw new Error("service release metadata is missing the restart target");
 
-  if (metadata.stagedReleaseId !== undefined && metadata.stagedReleaseId !== metadata.activeReleaseId) {
-    await writeUserUnitAtomic(dependencies.unitPath, renderKodegptUserUnit(target, options.stateRoot));
-    await dependencies.manager.daemonReload();
+  const stagedUpgrade = isStagedUpgrade(metadata);
+  if (stagedUpgrade) {
+    await switchServiceUnit(target, options.stateRoot, dependencies);
   }
   await dependencies.manager.resetFailed();
   if (metadata.activeReleaseId === undefined) await dependencies.manager.start();
@@ -183,29 +201,8 @@ export async function restartService(
   try {
     await dependencies.waitForReady(targetReleaseId);
   } catch (candidateError) {
-    if (
-      metadata.activeReleaseId !== undefined &&
-      metadata.stagedReleaseId !== undefined &&
-      metadata.stagedReleaseId !== metadata.activeReleaseId
-    ) {
-      const rollbackRelease = metadata.releases[metadata.activeReleaseId];
-      if (rollbackRelease !== undefined) {
-        try {
-          await writeUserUnitAtomic(
-            dependencies.unitPath,
-            renderKodegptUserUnit(rollbackRelease, options.stateRoot)
-          );
-          await dependencies.manager.daemonReload();
-          await dependencies.manager.resetFailed();
-          await dependencies.manager.restart();
-          await dependencies.waitForReady(rollbackRelease.releaseId);
-        } catch (rollbackError) {
-          throw new AggregateError(
-            [candidateError, rollbackError],
-            "candidate service activation failed and rollback also failed"
-          );
-        }
-      }
+    if (stagedUpgrade) {
+      await rollbackStagedActivation(metadata, options.stateRoot, dependencies, candidateError);
     }
     throw candidateError;
   }
@@ -214,6 +211,50 @@ export async function restartService(
     await dependencies.cleanupReleases?.(promoted);
   }
   return `KodeGPT service running active=${targetReleaseId}`;
+}
+
+function isStagedUpgrade(metadata: ServiceMetadataV1): boolean {
+  return (
+    metadata.activeReleaseId !== undefined &&
+    metadata.stagedReleaseId !== undefined &&
+    metadata.stagedReleaseId !== metadata.activeReleaseId
+  );
+}
+
+async function switchServiceUnit(
+  release: ServiceReleaseRecord,
+  stateRoot: string,
+  dependencies: ServiceOperatorDependencies
+): Promise<void> {
+  await writeUserUnitAtomic(
+    dependencies.unitPath,
+    renderKodegptUserUnit(release, stateRoot)
+  );
+  await dependencies.manager.daemonReload();
+}
+
+async function rollbackStagedActivation(
+  metadata: ServiceMetadataV1,
+  stateRoot: string,
+  dependencies: ServiceOperatorDependencies,
+  candidateError: unknown
+): Promise<void> {
+  const activeReleaseId = metadata.activeReleaseId;
+  if (activeReleaseId === undefined) return;
+  const rollbackRelease = metadata.releases[activeReleaseId];
+  if (rollbackRelease === undefined) return;
+
+  try {
+    await switchServiceUnit(rollbackRelease, stateRoot, dependencies);
+    await dependencies.manager.resetFailed();
+    await dependencies.manager.restart();
+    await dependencies.waitForReady(rollbackRelease.releaseId);
+  } catch (rollbackError) {
+    throw new AggregateError(
+      [candidateError, rollbackError],
+      "candidate service activation failed and rollback also failed"
+    );
+  }
 }
 
 export async function getServiceStatus(

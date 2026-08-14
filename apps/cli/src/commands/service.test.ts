@@ -131,6 +131,42 @@ describe("service install and uninstall orchestration", () => {
     expect(output).toContain(`staged=${fixture.release.releaseId}`);
   });
 
+  it("stages an upgrade without switching the loaded unit away from the active release", async () => {
+    const fixture = await serviceFixture();
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    await fixture.metadataStore.promoteStagedRelease();
+    const activeUnit = await readFile(fixture.unitPath, "utf8");
+    const releaseB = secondRelease(fixture.release);
+    fixture.dependencies.prepareRelease = async () => releaseB;
+    fixture.managerCalls.splice(0);
+
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
+    expect(await readFile(fixture.unitPath, "utf8")).toBe(activeUnit);
+    expect(activeUnit).toContain(fixture.release.releaseId);
+    expect(activeUnit).not.toContain(releaseB.releaseId);
+    expect(fixture.managerCalls).toEqual(["enable"]);
+  });
+
   it("uninstalls only service-owned artifacts and preserves general state-root data", async () => {
     const fixture = await serviceFixture();
     const sentinel = join(fixture.stateRoot, "connector-credential.json");
@@ -176,6 +212,96 @@ describe("service start, stop, restart, and status", () => {
     expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
     expect(metadata.stagedReleaseId).toBeUndefined();
     expect(output).toContain(`active=${fixture.release.releaseId}`);
+  });
+
+  it("activates a staged upgrade through start only at the explicit start boundary", async () => {
+    const fixture = await serviceFixture();
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    await fixture.metadataStore.promoteStagedRelease();
+    const releaseB = secondRelease(fixture.release);
+    fixture.dependencies.prepareRelease = async () => releaseB;
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+    fixture.managerCalls.splice(0);
+
+    await startService({ command: "start", stateRoot: fixture.stateRoot }, fixture.dependencies);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "start",
+      `wait:${releaseB.releaseId}`
+    ]);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(releaseB.releaseId);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(releaseB.releaseId);
+    expect(metadata.rollbackReleaseId).toBe(fixture.release.releaseId);
+  });
+
+  it("rolls back a staged start exactly once when candidate readiness fails", async () => {
+    const fixture = await serviceFixture();
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    await fixture.metadataStore.promoteStagedRelease();
+    const releaseB = secondRelease(fixture.release);
+    fixture.dependencies.prepareRelease = async () => releaseB;
+    await installService(
+      {
+        command: "install",
+        stateRoot: fixture.stateRoot,
+        name: "public:kodegpt-dev",
+        port: 43_121
+      },
+      fixture.dependencies
+    );
+    fixture.dependencies.waitForReady = async (releaseId) => {
+      fixture.managerCalls.push(`wait:${releaseId}`);
+      if (releaseId === releaseB.releaseId) throw new Error("staged start readiness failed");
+      return readyFor(releaseId);
+    };
+    fixture.managerCalls.splice(0);
+
+    await expect(
+      startService({ command: "start", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).rejects.toThrow(/staged start readiness failed/);
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "start",
+      `wait:${releaseB.releaseId}`,
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(fixture.release.releaseId);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBe(releaseB.releaseId);
   });
 
   it("stops through systemd without deleting general KodeGPT state", async () => {

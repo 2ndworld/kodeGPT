@@ -222,7 +222,9 @@ describe("packaged CLI local service integration", () => {
       { command: "install", stateRoot, name: "public:kodegpt-dev", port: 43_121 },
       dependencies
     );
-    expect(calls).toEqual(["daemon-reload", "enable"]);
+    expect(calls).toEqual(["enable"]);
+    expect(await readFile(unitPath, "utf8")).toContain(releaseA.releaseId);
+    expect(await readFile(unitPath, "utf8")).not.toContain(releaseB.releaseId);
     calls.splice(0);
     await restartService({ command: "restart", stateRoot }, dependencies);
     expect((await metadataStore.read())).toMatchObject({
