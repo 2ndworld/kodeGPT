@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  cleanupServiceReleases,
   materializeServiceRelease,
   verifyServiceRelease,
   type MaterializeServiceReleaseInput
@@ -88,5 +89,50 @@ describe("immutable KodeGPT service releases", () => {
     await expect(verifyServiceRelease(release)).rejects.toThrow(/runtime digest mismatch/);
     await expect(materializeServiceRelease(input)).rejects.toThrow(/existing service release failed verification/);
     expect(await readFile(release.runtimePath, "utf8")).toBe("tampered-runtime");
+  });
+
+  it("removes only obsolete service releases while preserving active, staged, and rollback", async () => {
+    const input = await fixture();
+    const releaseA = await materializeServiceRelease(input);
+    await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-b');\n", { mode: 0o755 });
+    const releaseB = await materializeServiceRelease(input);
+    await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-c');\n", { mode: 0o755 });
+    const releaseC = await materializeServiceRelease(input);
+    await writeFile(input.cliPath, "#!/usr/bin/env node\nconsole.log('release-d');\n", { mode: 0o755 });
+    const releaseD = await materializeServiceRelease(input);
+
+    await cleanupServiceReleases(input.serviceDataRoot, {
+      schemaVersion: 1,
+      unitName: "kodegpt.service",
+      activeReleaseId: releaseA.releaseId,
+      stagedReleaseId: releaseB.releaseId,
+      rollbackReleaseId: releaseC.releaseId,
+      releases: {
+        [releaseA.releaseId]: releaseA,
+        [releaseB.releaseId]: releaseB,
+        [releaseC.releaseId]: releaseC,
+        [releaseD.releaseId]: releaseD
+      }
+    });
+
+    await expect(access(releaseA.releaseRoot)).resolves.toBeUndefined();
+    await expect(access(releaseB.releaseRoot)).resolves.toBeUndefined();
+    await expect(access(releaseC.releaseRoot)).resolves.toBeUndefined();
+    await expect(access(releaseD.releaseRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects cleanup when retained metadata points outside the owned releases root", async () => {
+    const input = await fixture();
+    const release = await materializeServiceRelease(input);
+    const escaped = { ...release, releaseRoot: join(input.serviceDataRoot, "..", "escaped") };
+
+    await expect(
+      cleanupServiceReleases(input.serviceDataRoot, {
+        schemaVersion: 1,
+        unitName: "kodegpt.service",
+        activeReleaseId: escaped.releaseId,
+        releases: { [escaped.releaseId]: escaped }
+      })
+    ).rejects.toThrow(/release root escapes service-owned directory/);
   });
 });

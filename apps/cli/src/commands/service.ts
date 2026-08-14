@@ -1,7 +1,11 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ServiceMetadataStore, type ServiceReleaseRecord } from "../service/metadata.js";
+import {
+  ServiceMetadataStore,
+  type ServiceMetadataV1,
+  type ServiceReleaseRecord
+} from "../service/metadata.js";
 import {
   ServiceRuntimeStatusStore,
   type ServiceRuntimeStatusV1
@@ -61,6 +65,7 @@ export interface ServiceOperatorDependencies {
   unitPath: string;
   prepareRelease(options: ServiceInstallOptions): Promise<ServiceReleaseRecord>;
   waitForReady(releaseId: string): Promise<ServiceRuntimeStatusV1>;
+  cleanupReleases?(metadata: ServiceMetadataV1): Promise<void>;
 }
 
 export interface InstalledServiceRunDependencies {
@@ -138,7 +143,10 @@ export async function startService(
   await dependencies.manager.resetFailed();
   await dependencies.manager.start();
   await dependencies.waitForReady(targetReleaseId);
-  if (metadata.stagedReleaseId === targetReleaseId) await dependencies.metadataStore.promoteStagedRelease();
+  if (metadata.stagedReleaseId === targetReleaseId) {
+    const promoted = await dependencies.metadataStore.promoteStagedRelease();
+    await dependencies.cleanupReleases?.(promoted);
+  }
   return `KodeGPT service running active=${targetReleaseId}`;
 }
 
@@ -196,7 +204,10 @@ export async function restartService(
     }
     throw candidateError;
   }
-  if (metadata.stagedReleaseId === targetReleaseId) await dependencies.metadataStore.promoteStagedRelease();
+  if (metadata.stagedReleaseId === targetReleaseId) {
+    const promoted = await dependencies.metadataStore.promoteStagedRelease();
+    await dependencies.cleanupReleases?.(promoted);
+  }
   return `KodeGPT service running active=${targetReleaseId}`;
 }
 

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, chmod, copyFile, cp, mkdir, readFile, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { access, chmod, copyFile, cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import { RUNTIME_PACKAGE_LINUX_X64 } from "../runtime-resolver.js";
-import type { ServiceReleaseRecord } from "./metadata.js";
+import type { ServiceMetadataV1, ServiceReleaseRecord } from "./metadata.js";
 
 export interface MaterializeServiceReleaseInput {
   serviceDataRoot: string;
@@ -71,6 +71,40 @@ export async function materializeServiceRelease(
 
   await verifyServiceRelease(record);
   return record;
+}
+
+export async function cleanupServiceReleases(
+  serviceDataRoot: string,
+  metadata: ServiceMetadataV1
+): Promise<void> {
+  const releasesRoot = resolve(serviceDataRoot, "releases");
+  const retained = new Set(
+    [metadata.activeReleaseId, metadata.stagedReleaseId, metadata.rollbackReleaseId].filter(
+      (value): value is string => value !== undefined
+    )
+  );
+
+  for (const releaseId of retained) {
+    const record = metadata.releases[releaseId];
+    if (record === undefined) throw new Error(`retained service release is missing metadata: ${releaseId}`);
+    const expectedRoot = resolve(releasesRoot, releaseId);
+    if (resolve(record.releaseRoot) !== expectedRoot) {
+      throw new Error("release root escapes service-owned directory");
+    }
+  }
+
+  let entries;
+  try {
+    entries = await readdir(releasesRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^rel_[a-f0-9]{32}$/.test(entry.name)) continue;
+    if (retained.has(entry.name)) continue;
+    await rm(join(releasesRoot, entry.name), { recursive: true, force: true });
+  }
 }
 
 export async function verifyServiceRelease(record: ServiceReleaseRecord): Promise<void> {

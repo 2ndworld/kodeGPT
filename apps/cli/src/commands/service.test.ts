@@ -201,6 +201,9 @@ describe("service start, stop, restart, and status", () => {
       fixture.managerCalls.push(`wait:${releaseId}`);
       return readyFor(releaseId);
     };
+    fixture.dependencies.cleanupReleases = async () => {
+      fixture.managerCalls.push("cleanup");
+    };
 
     const output = await restartService(
       { command: "restart", stateRoot: fixture.stateRoot },
@@ -211,7 +214,8 @@ describe("service start, stop, restart, and status", () => {
       "daemon-reload",
       "reset-failed",
       "restart",
-      `wait:${releaseB.releaseId}`
+      `wait:${releaseB.releaseId}`,
+      "cleanup"
     ]);
     const metadata = await fixture.metadataStore.read();
     expect(metadata.activeReleaseId).toBe(releaseB.releaseId);
