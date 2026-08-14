@@ -8,6 +8,14 @@ export const MAX_SEARCH_MAX_RESULTS = 500;
 export const MAX_PATCH_BYTES = 1024 * 1024;
 export const MAX_PATCH_FILES = 64;
 export const MAX_PATCH_HUNKS = 256;
+export const DEFAULT_GIT_LOG_LIMIT = 20;
+export const MAX_GIT_LOG_LIMIT = 100;
+export const DEFAULT_GIT_RANGE_LIMIT = 50;
+export const MAX_GIT_RANGE_LIMIT = 100;
+export const DEFAULT_GIT_PATCH_BYTES = 64 * 1024;
+export const MAX_GIT_PATCH_BYTES = 256 * 1024;
+export const MAX_GIT_HISTORY_RESPONSE_BYTES = 512 * 1024;
+export const MAX_GIT_HISTORY_PATHS = 500;
 export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "workspace.inspect",
   "code.search",
@@ -18,6 +26,10 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "git.status",
   "git.diff",
   "git.changes",
+  "git.log",
+  "git.show",
+  "git.range",
+  "git.diffHistory",
   "process.run",
   "verify.list",
   "verify.run",
@@ -124,6 +136,125 @@ export interface CodeSearchResult {
   matches: CodeSearchMatch[];
   truncated: boolean;
   truncationReasons: CodeSearchTruncationReason[];
+}
+
+export type GitRevision =
+  | { kind: "head" }
+  | { kind: "oid"; oid: string }
+  | { kind: "branch"; name: string }
+  | { kind: "tag"; name: string };
+
+export interface GitLogInput {
+  workspaceId: string;
+  revision?: GitRevision;
+  path?: string;
+  limit?: number;
+}
+
+export interface GitShowInput {
+  workspaceId: string;
+  revision?: GitRevision;
+  path?: string;
+  includePatch?: boolean;
+  maxPatchBytes?: number;
+}
+
+export interface GitRangeInput {
+  workspaceId: string;
+  baseRevision: GitRevision;
+  headRevision: GitRevision;
+  mode?: "direct" | "symmetric";
+  limit?: number;
+}
+
+export interface GitDiffHistoryInput {
+  workspaceId: string;
+  baseRevision: GitRevision;
+  headRevision: GitRevision;
+  path?: string;
+  maxPatchBytes?: number;
+}
+
+export interface GitCommitSummary {
+  oid: string;
+  shortOid: string;
+  parents: string[];
+  authorName: string;
+  authorTime: number;
+  committerTime: number;
+  subject: string;
+  encodingLossy: boolean;
+}
+
+export interface GitCommitDetail extends GitCommitSummary {
+  body: string;
+  messageTruncated: boolean;
+}
+
+export interface GitHistoricalChangedPath {
+  path: string;
+  status: "added" | "modified" | "deleted" | "typeChanged";
+  insertions: number | null;
+  deletions: number | null;
+  binary: boolean;
+}
+
+export interface GitHistoricalStatSummary {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  binaryFiles: number;
+}
+
+export type GitHistoryTruncationReason =
+  | "COMMIT_LIMIT"
+  | "MESSAGE_LIMIT"
+  | "PATCH_LIMIT"
+  | "PATH_LIMIT"
+  | "RESPONSE_LIMIT";
+
+export interface GitLogResult {
+  schemaVersion: 1;
+  resolvedOid: string;
+  commits: GitCommitSummary[];
+  returnedCount: number;
+  truncated: boolean;
+  truncationReasons: GitHistoryTruncationReason[];
+}
+
+export interface GitShowResult {
+  schemaVersion: 1;
+  commit: GitCommitDetail;
+  changedPaths: GitHistoricalChangedPath[];
+  summary: GitHistoricalStatSummary;
+  patch: string | null;
+  truncated: boolean;
+  truncationReasons: GitHistoryTruncationReason[];
+}
+
+export interface GitRangeResult {
+  schemaVersion: 1;
+  baseOid: string;
+  headOid: string;
+  isAncestor: boolean;
+  mergeBaseOid: string | null;
+  ahead: { value: number; exact: boolean };
+  behind: { value: number; exact: boolean };
+  commits: Array<GitCommitSummary & { side?: "base" | "head" }>;
+  returnedCount: number;
+  truncated: boolean;
+  truncationReasons: GitHistoryTruncationReason[];
+}
+
+export interface GitDiffHistoryResult {
+  schemaVersion: 1;
+  baseOid: string;
+  headOid: string;
+  changedPaths: GitHistoricalChangedPath[];
+  summary: GitHistoricalStatSummary;
+  patch: string;
+  truncated: boolean;
+  truncationReasons: GitHistoryTruncationReason[];
 }
 
 export interface GitChangesInput {

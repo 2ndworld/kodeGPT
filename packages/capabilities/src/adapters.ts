@@ -2,7 +2,15 @@ import type {
   CapabilityArtifactMetadata,
   CodeSearchTruncationReason,
   PatchFileAction,
-  VerificationOperationResult
+  VerificationOperationResult,
+  GitLogInput,
+  GitLogResult,
+  GitShowInput,
+  GitShowResult,
+  GitRangeInput,
+  GitRangeResult,
+  GitDiffHistoryInput,
+  GitDiffHistoryResult
 } from "./contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -91,6 +99,13 @@ export interface CodeSearchAdapter {
 export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface GitHistoryAdapter {
+  log(input: GitLogInput): Promise<GitLogResult>;
+  show(input: GitShowInput): Promise<GitShowResult>;
+  range(input: GitRangeInput): Promise<GitRangeResult>;
+  diffHistory(input: GitDiffHistoryInput): Promise<GitDiffHistoryResult>;
 }
 
 export interface CapabilityGitCheckpointRecord {

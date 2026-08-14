@@ -3,6 +3,7 @@ import type { NativeCapabilityDependencies } from "./native-capability-service.j
 export interface TestCapabilityDependencyOverrides {
   workspace?: Partial<NativeCapabilityDependencies["workspace"]>;
   git?: NativeCapabilityDependencies["git"];
+  gitHistory?: NativeCapabilityDependencies["gitHistory"];
   patch?: Partial<NativeCapabilityDependencies["patch"]>;
   verification?: Partial<NativeCapabilityDependencies["verification"]>;
 }
@@ -27,6 +28,12 @@ export function createTestCapabilityDependencies(
     git: {
       checkpoint: async () => unexpected("git.checkpoint"),
       checkpointPatch: async () => unexpected("git.checkpointPatch")
+    },
+    gitHistory: {
+      log: async () => unexpected("gitHistory.log"),
+      show: async () => unexpected("gitHistory.show"),
+      range: async () => unexpected("gitHistory.range"),
+      diffHistory: async () => unexpected("gitHistory.diffHistory")
     },
     patch: {
       workspace: {
@@ -59,6 +66,7 @@ export function createTestCapabilityDependencies(
       ...overrides.workspace
     },
     git: overrides.git ?? defaults.git,
+    gitHistory: overrides.gitHistory ?? defaults.gitHistory,
     patch: {
       ...defaults.patch,
       ...overrides.patch

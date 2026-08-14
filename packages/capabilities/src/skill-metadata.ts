@@ -71,6 +71,27 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "changed files",
     "summarize changes"
   ]),
+  "git.log": entry("git.log", "List bounded structured local Git commit history.", [
+    "git log",
+    "commit history",
+    "repository history"
+  ]),
+  "git.show": entry("git.show", "Inspect one bounded historical Git commit.", [
+    "git show",
+    "inspect commit",
+    "commit details"
+  ]),
+  "git.range": entry("git.range", "Inspect bounded ancestry and commit ranges.", [
+    "git range",
+    "commit range",
+    "merge base",
+    "ahead behind"
+  ]),
+  "git.diffHistory": entry("git.diffHistory", "Inspect a bounded diff between two historical Git revisions.", [
+    "historical diff",
+    "git history diff",
+    "compare commits"
+  ]),
   "process.run": entry("process.run", "Run a policy-approved process through native process controls.", [
     "run process",
     "native process",

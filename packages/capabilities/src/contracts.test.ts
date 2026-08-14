@@ -11,7 +11,15 @@ import {
   MAX_PATCH_FILES,
   MAX_PATCH_HUNKS,
   MAX_SEARCH_MAX_RESULTS,
-  NATIVE_CAPABILITY_IDS
+  NATIVE_CAPABILITY_IDS,
+  DEFAULT_GIT_LOG_LIMIT,
+  MAX_GIT_LOG_LIMIT,
+  DEFAULT_GIT_RANGE_LIMIT,
+  MAX_GIT_RANGE_LIMIT,
+  DEFAULT_GIT_PATCH_BYTES,
+  MAX_GIT_PATCH_BYTES,
+  MAX_GIT_HISTORY_RESPONSE_BYTES,
+  MAX_GIT_HISTORY_PATHS
 } from "./contracts.js";
 import { CapabilityError, toPublicCapabilityError } from "./errors.js";
 import { CapabilityNotImplementedError } from "./native-capability-service.js";
@@ -61,6 +69,14 @@ describe("capability contracts", () => {
     expect(MAX_PATCH_BYTES).toBe(1024 * 1024);
     expect(MAX_PATCH_FILES).toBe(64);
     expect(MAX_PATCH_HUNKS).toBe(256);
+    expect(DEFAULT_GIT_LOG_LIMIT).toBe(20);
+    expect(MAX_GIT_LOG_LIMIT).toBe(100);
+    expect(DEFAULT_GIT_RANGE_LIMIT).toBe(50);
+    expect(MAX_GIT_RANGE_LIMIT).toBe(100);
+    expect(DEFAULT_GIT_PATCH_BYTES).toBe(64 * 1024);
+    expect(MAX_GIT_PATCH_BYTES).toBe(256 * 1024);
+    expect(MAX_GIT_HISTORY_RESPONSE_BYTES).toBe(512 * 1024);
+    expect(MAX_GIT_HISTORY_PATHS).toBe(500);
     expect(NATIVE_CAPABILITY_IDS).toEqual([
       "workspace.inspect",
       "code.search",
@@ -71,6 +87,10 @@ describe("capability contracts", () => {
       "git.status",
       "git.diff",
       "git.changes",
+      "git.log",
+      "git.show",
+      "git.range",
+      "git.diffHistory",
       "process.run",
       "verify.list",
       "verify.run",
