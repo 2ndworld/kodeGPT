@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::os::fd::OwnedFd;
 use std::sync::Mutex;
@@ -20,6 +21,10 @@ const RESOLUTION_STDOUT_MAX_BYTES: usize = 8 * 1024;
 const HISTORY_STDERR_MAX_BYTES: usize = 16 * 1024;
 const COMMIT_OBJECT_MAX_BYTES: usize = 64 * 1024;
 const OID_WALK_MAX_BYTES: usize = 32 * 1024;
+const CHANGED_PATH_STREAM_MAX_BYTES: usize = 512 * 1024;
+const MESSAGE_BODY_MAX_BYTES: usize = 16 * 1024;
+const PATCH_CAPTURE_SLACK_BYTES: usize = 16 * 1024;
+pub(crate) const GIT_PATCH_HARD_MAX_BYTES: u32 = 256 * 1024;
 const AUTHOR_NAME_MAX_BYTES: usize = 256;
 const SUBJECT_MAX_BYTES: usize = 512;
 pub(crate) const GIT_HISTORY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -73,6 +78,9 @@ pub(crate) struct GitCommitSummary {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub(crate) enum GitHistoryTruncationReason {
     CommitLimit,
+    MessageLimit,
+    PatchLimit,
+    PathLimit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -86,11 +94,238 @@ pub(crate) struct GitLogResult {
     pub truncation_reasons: Vec<GitHistoryTruncationReason>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum GitChangedPathStatus {
+    Added,
+    Modified,
+    Deleted,
+    TypeChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitHistoricalChangedPath {
+    pub path: String,
+    pub status: GitChangedPathStatus,
+    pub insertions: Option<u64>,
+    pub deletions: Option<u64>,
+    pub binary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitHistoricalStatSummary {
+    pub files_changed: u64,
+    pub insertions: u64,
+    pub deletions: u64,
+    pub binary_files: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitCommitDetail {
+    pub oid: String,
+    pub short_oid: String,
+    pub parents: Vec<String>,
+    pub author_name: String,
+    pub author_time: i64,
+    pub committer_time: i64,
+    pub subject: String,
+    pub body: String,
+    pub message_truncated: bool,
+    pub encoding_lossy: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitCommitInspectResult {
+    pub schema_version: u32,
+    pub commit: GitCommitDetail,
+    pub changed_paths: Vec<GitHistoricalChangedPath>,
+    pub summary: GitHistoricalStatSummary,
+    pub patch: Option<String>,
+    pub truncated: bool,
+    pub truncation_reasons: Vec<GitHistoryTruncationReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChangedPathParseResult {
+    paths: Vec<GitHistoricalChangedPath>,
+    summary: GitHistoricalStatSummary,
+    path_limit_reached: bool,
+}
+
+fn parse_changed_paths(
+    name_status: &[u8],
+    numstat: &[u8],
+) -> Result<ChangedPathParseResult, GitHistoryError> {
+    let status_tokens = nul_tokens(name_status)?;
+    if status_tokens.len() % 2 != 0 {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+
+    let mut statuses = Vec::with_capacity(status_tokens.len() / 2);
+    for pair in status_tokens.chunks_exact(2) {
+        let status = match pair[0] {
+            b"A" => GitChangedPathStatus::Added,
+            b"M" => GitChangedPathStatus::Modified,
+            b"D" => GitChangedPathStatus::Deleted,
+            b"T" => GitChangedPathStatus::TypeChanged,
+            _ => return Err(GitHistoryError::GitReadFailed),
+        };
+        let path = parse_git_reported_path(pair[1])?;
+        statuses.push((path, status));
+    }
+
+    let mut stats = BTreeMap::new();
+    for record in nul_tokens(numstat)? {
+        let mut fields = record.splitn(3, |byte| *byte == b'\t');
+        let insertions = fields.next().ok_or(GitHistoryError::GitReadFailed)?;
+        let deletions = fields.next().ok_or(GitHistoryError::GitReadFailed)?;
+        let path_bytes = fields.next().ok_or(GitHistoryError::GitReadFailed)?;
+        if fields.next().is_some() {
+            return Err(GitHistoryError::GitReadFailed);
+        }
+        let path = parse_git_reported_path(path_bytes)?;
+        let (insertions, deletions, binary) = match (insertions, deletions) {
+            (b"-", b"-") => (None, None, true),
+            (b"-", _) | (_, b"-") => return Err(GitHistoryError::GitReadFailed),
+            (insertions, deletions) => (
+                Some(parse_decimal_u64(insertions)?),
+                Some(parse_decimal_u64(deletions)?),
+                false,
+            ),
+        };
+        if stats
+            .insert(path, (insertions, deletions, binary))
+            .is_some()
+        {
+            return Err(GitHistoryError::GitReadFailed);
+        }
+    }
+
+    if statuses.len() != stats.len() {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    let summary = GitHistoricalStatSummary {
+        files_changed: stats.len() as u64,
+        insertions: stats.values().filter_map(|(value, _, _)| *value).sum(),
+        deletions: stats.values().filter_map(|(_, value, _)| *value).sum(),
+        binary_files: stats.values().filter(|(_, _, binary)| *binary).count() as u64,
+    };
+    let path_limit_reached = statuses.len() > 500;
+    let mut paths = Vec::with_capacity(statuses.len().min(500));
+    for (path, status) in statuses.into_iter().take(500) {
+        let Some((insertions, deletions, binary)) = stats.remove(&path) else {
+            return Err(GitHistoryError::GitReadFailed);
+        };
+        paths.push(GitHistoricalChangedPath {
+            path,
+            status,
+            insertions,
+            deletions,
+            binary,
+        });
+    }
+    if !path_limit_reached && !stats.is_empty() {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+
+    Ok(ChangedPathParseResult {
+        paths,
+        summary,
+        path_limit_reached,
+    })
+}
+
+fn nul_tokens(input: &[u8]) -> Result<Vec<&[u8]>, GitHistoryError> {
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !input.ends_with(&[0]) {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    Ok(input[..input.len() - 1].split(|byte| *byte == 0).collect())
+}
+
+fn parse_git_reported_path(path: &[u8]) -> Result<String, GitHistoryError> {
+    let path = std::str::from_utf8(path).map_err(|_| GitHistoryError::GitReadFailed)?;
+    match validate_history_path(Some(path.to_owned())) {
+        Ok(Some(ValidatedHistoryPath(path))) => Ok(path),
+        Ok(None) | Err(_) => Err(GitHistoryError::GitReadFailed),
+    }
+}
+
+fn parse_decimal_u64(value: &[u8]) -> Result<u64, GitHistoryError> {
+    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+    std::str::from_utf8(value)
+        .map_err(|_| GitHistoryError::GitReadFailed)?
+        .parse::<u64>()
+        .map_err(|_| GitHistoryError::GitReadFailed)
+}
+
+fn append_history_path(args: &mut Vec<String>, path: Option<&ValidatedHistoryPath>) {
+    if let Some(path) = path {
+        args.push("--".to_owned());
+        args.push(path.0.clone());
+    }
+}
+
+fn name_status_args(oid: &str, path: Option<&ValidatedHistoryPath>) -> Vec<String> {
+    let mut args = vec![
+        "--literal-pathspecs".to_owned(),
+        "diff-tree".to_owned(),
+        "--root".to_owned(),
+        "--no-commit-id".to_owned(),
+        "-r".to_owned(),
+        "--name-status".to_owned(),
+        "-z".to_owned(),
+        "--no-renames".to_owned(),
+        oid.to_owned(),
+    ];
+    append_history_path(&mut args, path);
+    args
+}
+
+fn numstat_args(oid: &str, path: Option<&ValidatedHistoryPath>) -> Vec<String> {
+    let mut args = vec![
+        "--literal-pathspecs".to_owned(),
+        "diff-tree".to_owned(),
+        "--root".to_owned(),
+        "--no-commit-id".to_owned(),
+        "-r".to_owned(),
+        "--numstat".to_owned(),
+        "-z".to_owned(),
+        "--no-renames".to_owned(),
+        oid.to_owned(),
+    ];
+    append_history_path(&mut args, path);
+    args
+}
+
+fn patch_args(oid: &str, path: Option<&ValidatedHistoryPath>) -> Vec<String> {
+    let mut args = vec![
+        "--literal-pathspecs".to_owned(),
+        "show".to_owned(),
+        "--format=".to_owned(),
+        "--no-ext-diff".to_owned(),
+        "--no-textconv".to_owned(),
+        "--no-renames".to_owned(),
+        "--ignore-submodules=all".to_owned(),
+        oid.to_owned(),
+    ];
+    append_history_path(&mut args, path);
+    args
+}
+
 fn commit_object_args(oid: &str) -> Vec<String> {
     vec!["cat-file".to_owned(), "commit".to_owned(), oid.to_owned()]
 }
 
-fn read_commit_summary(
+fn read_commit_object(
     prepared: &PreparedHistoryGit,
     root_fd: &OwnedFd,
     capability_id: &str,
@@ -99,7 +334,7 @@ fn read_commit_summary(
     oid: &str,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
-) -> Result<GitCommitSummary, GitHistoryError> {
+) -> Result<Vec<u8>, GitHistoryError> {
     if !valid_full_oid(oid) {
         return Err(GitHistoryError::GitReadFailed);
     }
@@ -120,7 +355,88 @@ fn read_commit_summary(
     if output.stdout_truncated || output.source_truncated {
         return Err(GitHistoryError::OutputLimitExceeded);
     }
-    parse_commit_object(oid, &output.stdout)
+    Ok(output.stdout)
+}
+
+fn read_commit_summary(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    oid: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitCommitSummary, GitHistoryError> {
+    let raw = read_commit_object(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        oid,
+        spool,
+        executions,
+    )?;
+    parse_commit_object(oid, &raw)
+}
+
+fn read_commit_detail(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    oid: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitCommitDetail, GitHistoryError> {
+    let raw = read_commit_object(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        oid,
+        spool,
+        executions,
+    )?;
+    parse_commit_detail(oid, &raw)
+}
+
+fn parse_commit_detail(oid: &str, raw: &[u8]) -> Result<GitCommitDetail, GitHistoryError> {
+    let summary = parse_commit_object(oid, raw)?;
+    let header_end = raw
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .ok_or(GitHistoryError::GitReadFailed)?;
+    let message = &raw[header_end + 2..];
+    let body_start = message
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|index| index + 1)
+        .unwrap_or(message.len());
+    let mut body = &message[body_start..];
+    if body.starts_with(b"\n") {
+        body = &body[1..];
+    }
+    let body_lossy_len = String::from_utf8_lossy(body).len();
+    let message_truncated =
+        body.len() > MESSAGE_BODY_MAX_BYTES || body_lossy_len > MESSAGE_BODY_MAX_BYTES;
+    let (body, body_lossy) = bounded_lossy_utf8(body, MESSAGE_BODY_MAX_BYTES);
+
+    Ok(GitCommitDetail {
+        oid: summary.oid,
+        short_oid: summary.short_oid,
+        parents: summary.parents,
+        author_name: summary.author_name,
+        author_time: summary.author_time,
+        committer_time: summary.committer_time,
+        subject: summary.subject,
+        body,
+        message_truncated,
+        encoding_lossy: summary.encoding_lossy || body_lossy,
+    })
 }
 
 fn parse_commit_object(oid: &str, raw: &[u8]) -> Result<GitCommitSummary, GitHistoryError> {
@@ -414,6 +730,31 @@ fn run_history_command(
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
 ) -> Result<crate::git::GitCommandOutput, GitHistoryError> {
+    run_history_command_with_budget(
+        prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        suffix,
+        strict_history_budget(stdout_source_bytes),
+        spool,
+        executions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_history_command_with_budget(
+    prepared: &PreparedHistoryGit,
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    suffix: Vec<String>,
+    budget: GitCommandBudget,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<crate::git::GitCommandOutput, GitHistoryError> {
     run_hardened_git_command(
         &prepared.provider,
         &prepared.program,
@@ -422,7 +763,7 @@ fn run_history_command(
         request_id,
         operation_id,
         history_command_args(prepared, suffix),
-        strict_history_budget(stdout_source_bytes),
+        budget,
         spool,
         executions,
         true,
@@ -614,6 +955,150 @@ pub(crate) fn run_git_log(
     })
 }
 
+fn bounded_utf8_prefix(bytes: &[u8], max_bytes: usize) -> Result<String, GitHistoryError> {
+    let end = bytes.len().min(max_bytes);
+    match std::str::from_utf8(&bytes[..end]) {
+        Ok(text) => Ok(text.to_owned()),
+        Err(error) if error.error_len().is_none() => {
+            let valid_up_to = error.valid_up_to();
+            std::str::from_utf8(&bytes[..valid_up_to])
+                .map(str::to_owned)
+                .map_err(|_| GitHistoryError::GitReadFailed)
+        }
+        Err(_) => Err(GitHistoryError::GitReadFailed),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_git_show(
+    root_fd: &OwnedFd,
+    capability_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    revision: ValidatedRevision,
+    path: Option<ValidatedHistoryPath>,
+    include_patch: bool,
+    max_patch_bytes: u32,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitCommitInspectResult, GitHistoryError> {
+    if max_patch_bytes == 0 || max_patch_bytes > GIT_PATCH_HARD_MAX_BYTES {
+        return Err(GitHistoryError::GitReadFailed);
+    }
+
+    let prepared = prepare_history_git(
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        spool,
+        executions,
+    )?;
+    let resolved_oid = resolve_revision(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        revision,
+        spool,
+        executions,
+    )?;
+    let commit = read_commit_detail(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        &resolved_oid,
+        spool,
+        executions,
+    )?;
+
+    let name_status = run_history_command(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        name_status_args(&resolved_oid, path.as_ref()),
+        CHANGED_PATH_STREAM_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    let numstat = run_history_command(
+        &prepared,
+        root_fd,
+        capability_id,
+        request_id,
+        operation_id,
+        numstat_args(&resolved_oid, path.as_ref()),
+        CHANGED_PATH_STREAM_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    for output in [&name_status, &numstat] {
+        if output.exit_code != 0 {
+            return Err(GitHistoryError::GitReadFailed);
+        }
+        if output.stdout_truncated || output.source_truncated {
+            return Err(GitHistoryError::OutputLimitExceeded);
+        }
+    }
+    let changed = parse_changed_paths(&name_status.stdout, &numstat.stdout)?;
+
+    let mut truncation_reasons = Vec::new();
+    if commit.message_truncated {
+        truncation_reasons.push(GitHistoryTruncationReason::MessageLimit);
+    }
+    if changed.path_limit_reached {
+        truncation_reasons.push(GitHistoryTruncationReason::PathLimit);
+    }
+
+    let patch = if include_patch {
+        let requested = max_patch_bytes as usize;
+        let source_cap = requested.saturating_add(PATCH_CAPTURE_SLACK_BYTES);
+        let output = run_history_command_with_budget(
+            &prepared,
+            root_fd,
+            capability_id,
+            request_id,
+            operation_id,
+            patch_args(&resolved_oid, path.as_ref()),
+            GitCommandBudget {
+                wall_timeout: Some(GIT_HISTORY_TIMEOUT),
+                stdout_source_bytes: source_cap,
+                stderr_source_bytes: HISTORY_STDERR_MAX_BYTES,
+                preview_bytes: source_cap,
+                overflow_policy: GitOverflowPolicy::Truncate,
+            },
+            spool,
+            executions,
+        )?;
+        if output.exit_code != 0 && !output.source_truncated {
+            return Err(GitHistoryError::GitReadFailed);
+        }
+        let patch_limited =
+            output.source_truncated || output.stdout_truncated || output.stdout.len() > requested;
+        if patch_limited {
+            truncation_reasons.push(GitHistoryTruncationReason::PatchLimit);
+        }
+        Some(bounded_utf8_prefix(&output.stdout, requested)?)
+    } else {
+        None
+    };
+
+    Ok(GitCommitInspectResult {
+        schema_version: 1,
+        commit,
+        changed_paths: changed.paths,
+        summary: changed.summary,
+        patch,
+        truncated: !truncation_reasons.is_empty(),
+        truncation_reasons,
+    })
+}
+
 pub(crate) fn validate_revision(
     spec: GitRevisionSpec,
 ) -> Result<ValidatedRevision, GitHistoryError> {
@@ -699,9 +1184,10 @@ mod tests {
     use crate::spool::RawSpoolStore;
 
     use super::{
-        GitHistoryError, GitHistoryTruncationReason, ValidatedHistoryPath, ValidatedRevision,
-        commit_object_args, log_walk_args, parse_commit_object, prepare_history_git,
-        read_commit_summary, resolve_revision, revision_probe_suffixes, run_git_log,
+        GitChangedPathStatus, GitHistoryError, GitHistoryTruncationReason, ValidatedHistoryPath,
+        ValidatedRevision, commit_object_args, log_walk_args, name_status_args, numstat_args,
+        parse_changed_paths, parse_commit_object, patch_args, prepare_history_git,
+        read_commit_summary, resolve_revision, revision_probe_suffixes, run_git_log, run_git_show,
         validate_history_path, validate_revision,
     };
 
@@ -795,6 +1281,47 @@ mod tests {
             .status()
             .expect("deterministic commit");
         assert!(status.success(), "deterministic fixture commit failed");
+    }
+
+    fn deterministic_commit_with_message_file(
+        root: &Path,
+        relative_path: &str,
+        content: &str,
+        message: &str,
+        timestamp: i64,
+    ) -> String {
+        let path = root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("fixture parent");
+        }
+        fs::write(&path, content).expect("fixture content");
+        git(root, &["add", relative_path]);
+        let message_path = root.join(".git/kodegpt-test-message.txt");
+        fs::write(&message_path, message).expect("message fixture");
+        let raw_date = format!("{timestamp} +0000");
+        let status = TestCommand::new("git")
+            .arg("-C")
+            .arg(root)
+            .args([
+                "-c",
+                "user.name=KodeGPT Test",
+                "-c",
+                "user.email=kodegpt@example.invalid",
+                "commit",
+                "-q",
+                "-F",
+                ".git/kodegpt-test-message.txt",
+            ])
+            .env_clear()
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .env("HOME", "/tmp")
+            .env("GIT_AUTHOR_DATE", &raw_date)
+            .env("GIT_COMMITTER_DATE", &raw_date)
+            .status()
+            .expect("deterministic commit with message file");
+        assert!(status.success(), "deterministic fixture commit failed");
+        fs::remove_file(message_path).expect("message fixture removed");
+        git(root, &["rev-parse", "HEAD"])
     }
 
     #[test]
@@ -948,6 +1475,199 @@ mod tests {
         );
         raw.extend_from_slice(message);
         raw
+    }
+
+    #[test]
+    fn show_bounds_message_patch_and_uses_fixed_commands() {
+        let repo = temporary_root("show-bounds");
+        let state = temporary_root("show-bounds-state");
+        git(&repo, &["init", "-q"]);
+        deterministic_commit(&repo, "large.txt", "base\n", "base", 1_700_001_000);
+
+        let large_content = (0..4_000)
+            .map(|index| format!("line-{index:04}-{}\n", "x".repeat(90)))
+            .collect::<String>();
+        let large_body = "b".repeat(20 * 1024 + 777);
+        let message = format!("show subject\n\n{large_body}\n");
+        let oid = deterministic_commit_with_message_file(
+            &repo,
+            "large.txt",
+            &large_content,
+            &message,
+            1_700_001_001,
+        );
+
+        let root_fd = OwnedFd::from(File::open(&repo).expect("repo root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let result = run_git_show(
+            &root_fd,
+            "kc_show_bounds",
+            "req_show_bounds",
+            "op_show_bounds",
+            ValidatedRevision::Head,
+            None,
+            true,
+            65_536,
+            &spool,
+            &executions,
+        )
+        .expect("bounded show");
+        assert_eq!(result.commit.oid, oid);
+        assert_eq!(result.commit.subject, "show subject");
+        assert_eq!(result.commit.body.as_bytes().len(), 16 * 1024);
+        assert!(result.commit.message_truncated);
+        assert_eq!(result.changed_paths.len(), 1);
+        assert_eq!(result.changed_paths[0].path, "large.txt");
+        let patch = result.patch.as_deref().expect("patch included");
+        assert!(patch.as_bytes().len() <= 65_536);
+        assert!(result.truncated);
+        assert!(
+            result
+                .truncation_reasons
+                .contains(&GitHistoryTruncationReason::MessageLimit)
+        );
+        assert!(
+            result
+                .truncation_reasons
+                .contains(&GitHistoryTruncationReason::PatchLimit)
+        );
+
+        let no_patch = run_git_show(
+            &root_fd,
+            "kc_show_bounds",
+            "req_show_no_patch",
+            "op_show_no_patch",
+            ValidatedRevision::Head,
+            None,
+            false,
+            65_536,
+            &spool,
+            &executions,
+        )
+        .expect("show without patch");
+        assert_eq!(no_patch.patch, None);
+        assert!(
+            !no_patch
+                .truncation_reasons
+                .contains(&GitHistoryTruncationReason::PatchLimit)
+        );
+
+        assert_eq!(
+            name_status_args(&oid, None),
+            vec![
+                "--literal-pathspecs",
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-r",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                oid.as_str(),
+            ]
+        );
+        assert_eq!(
+            numstat_args(&oid, None),
+            vec![
+                "--literal-pathspecs",
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "-r",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                oid.as_str(),
+            ]
+        );
+        let patch_command = patch_args(&oid, None);
+        assert_eq!(
+            patch_command,
+            vec![
+                "--literal-pathspecs",
+                "show",
+                "--format=",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--ignore-submodules=all",
+                oid.as_str(),
+            ]
+        );
+        assert!(!patch_command.iter().any(|arg| arg == "--binary"));
+        assert!(
+            executions
+                .lock()
+                .expect("registry")
+                .ids_for_workspace("kc_show_bounds")
+                .is_empty()
+        );
+
+        fs::remove_dir_all(repo).expect("repo cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn show_changed_path_parser_is_bounded_binary_aware_and_path_safe() {
+        let name_status = b"A\0added.txt\0M\0modified.txt\0D\0deleted.txt\0T\0type.txt\0D\0old-name.txt\0A\0new-name.txt\0A\0binary.bin\0";
+        let numstat = [
+            b"2\t0\tadded.txt\0".as_slice(),
+            b"3\t1\tmodified.txt\0".as_slice(),
+            b"0\t4\tdeleted.txt\0".as_slice(),
+            b"0\t0\ttype.txt\0".as_slice(),
+            b"0\t1\told-name.txt\0".as_slice(),
+            b"1\t0\tnew-name.txt\0".as_slice(),
+            b"-\t-\tbinary.bin\0".as_slice(),
+        ]
+        .concat();
+        let parsed = parse_changed_paths(name_status, &numstat).expect("valid changed paths");
+        assert!(!parsed.path_limit_reached);
+        assert_eq!(parsed.paths.len(), 7);
+        assert_eq!(parsed.paths[0].status, GitChangedPathStatus::Added);
+        assert_eq!(parsed.paths[1].status, GitChangedPathStatus::Modified);
+        assert_eq!(parsed.paths[2].status, GitChangedPathStatus::Deleted);
+        assert_eq!(parsed.paths[3].status, GitChangedPathStatus::TypeChanged);
+        assert_eq!(parsed.paths[4].status, GitChangedPathStatus::Deleted);
+        assert_eq!(parsed.paths[5].status, GitChangedPathStatus::Added);
+        assert_eq!(parsed.paths[6].path, "binary.bin");
+        assert!(parsed.paths[6].binary);
+        assert_eq!(parsed.paths[6].insertions, None);
+        assert_eq!(parsed.paths[6].deletions, None);
+        assert_eq!(parsed.paths[1].insertions, Some(3));
+        assert_eq!(parsed.paths[1].deletions, Some(1));
+
+        let mut many_status = Vec::new();
+        let mut many_numstat = Vec::new();
+        for index in 0..501 {
+            let path = format!("src/{index:03}.txt");
+            many_status.extend_from_slice(b"A\0");
+            many_status.extend_from_slice(path.as_bytes());
+            many_status.push(0);
+            many_numstat.extend_from_slice(b"1\t0\t");
+            many_numstat.extend_from_slice(path.as_bytes());
+            many_numstat.push(0);
+        }
+        let many = parse_changed_paths(&many_status, &many_numstat).expect("bounded paths");
+        assert_eq!(many.paths.len(), 500);
+        assert_eq!(many.paths.first().expect("first path").path, "src/000.txt");
+        assert_eq!(many.paths.last().expect("last path").path, "src/499.txt");
+        assert!(many.path_limit_reached);
+
+        for hostile in ["/etc/passwd", "../x", "src/../x"] {
+            let mut status = b"M\0".to_vec();
+            status.extend_from_slice(hostile.as_bytes());
+            status.push(0);
+            let mut stats = b"1\t1\t".to_vec();
+            stats.extend_from_slice(hostile.as_bytes());
+            stats.push(0);
+            assert_eq!(
+                parse_changed_paths(&status, &stats),
+                Err(GitHistoryError::GitReadFailed)
+            );
+        }
     }
 
     #[test]

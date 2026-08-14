@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
-    FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitLogParams,
+    FileSearchParams, FileTreeParams, FileWriteParams, GitDiffParams, GitLogParams, GitShowParams,
     GitStatusParams, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
     RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
@@ -35,8 +35,8 @@ use crate::git::{
     run_git_inspection,
 };
 use crate::git_history::{
-    GIT_LOG_MAX_LIMIT, GitHistoryError, ValidatedHistoryPath, ValidatedRevision, run_git_log,
-    validate_history_path, validate_revision,
+    GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GitHistoryError, ValidatedHistoryPath,
+    ValidatedRevision, run_git_log, run_git_show, validate_history_path, validate_revision,
 };
 use crate::process::{
     ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
@@ -925,6 +925,46 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.show" => {
+            let params = match serde_json::from_value::<GitShowParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && (1..=GIT_PATCH_HARD_MAX_BYTES).contains(&params.max_patch_bytes) =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let revision = match validate_revision(params.revision) {
+                Ok(revision) => revision,
+                Err(error) => {
+                    let (code, message) = git_history_error_contract(&error);
+                    return error_response(Some(request.id), code, message);
+                }
+            };
+            let path = match validate_history_path(params.path) {
+                Ok(path) => path,
+                Err(error) => {
+                    let (code, message) = git_history_error_contract(&error);
+                    return error_response(Some(request.id), code, message);
+                }
+            };
+            dispatch_git_show(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                params.capability_id,
+                revision,
+                path,
+                params.include_patch,
+                params.max_patch_bytes,
+            )
+            .await
+        }
         "process.inspect_executable" => {
             let params =
                 match serde_json::from_value::<ProcessInspectExecutableParams>(request.params) {
@@ -1406,6 +1446,99 @@ async fn dispatch_git_log(
             revision,
             path,
             limit,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(result)) => {
+            if audit.outcome(&context, AuditOutcome::Success).is_err() {
+                return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request_id, json!(result))
+        }
+        Ok(Err(error)) => {
+            let (code, message) = git_history_error_contract(&error);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+        Err(_) => {
+            let (code, message) = git_history_error_contract(&GitHistoryError::GitReadFailed);
+            audited_failure(audit, &context, request_id, code, message)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_show(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    revision: ValidatedRevision,
+    path: Option<ValidatedHistoryPath>,
+    include_patch: bool,
+    max_patch_bytes: u32,
+) -> Value {
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action: AuditAction::GitCommitInspect,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        let (code, message) = git_history_error_contract(&GitHistoryError::GitUnavailable);
+        return audited_failure(audit, &context, request_id, code, message);
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_show(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            revision,
+            path,
+            include_patch,
+            max_patch_bytes,
             &raw_spool,
             &executions,
         )
@@ -2674,6 +2807,161 @@ mod tests {
             .filter(|line| {
                 line.contains("req_git_log_success")
                     && line.contains("\"action\":\"git_history_list\"")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(top_level.len(), 2);
+        assert_eq!(
+            top_level
+                .iter()
+                .filter(|line| line.contains("\"phase\":\"decision\""))
+                .count(),
+            1
+        );
+        assert_eq!(
+            top_level
+                .iter()
+                .filter(|line| line.contains("\"phase\":\"outcome\""))
+                .count(),
+            1
+        );
+
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn git_show_rejects_patch_bounds_before_audit_or_workspace_access() {
+        let (audit, audit_root) = audit_sink("git-show-patch-bounds");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+
+        for (request_id, max_patch_bytes) in [
+            ("req_git_show_patch_zero", 0_u32),
+            ("req_git_show_patch_over", 262_145_u32),
+        ] {
+            let response = next_response(
+                &request_tx,
+                &mut response_rx,
+                request_id,
+                "git.show",
+                json!({
+                    "capabilityId": "kc_intentionally_missing",
+                    "revision": { "kind": "head" },
+                    "includePatch": true,
+                    "maxPatchBytes": max_patch_bytes
+                }),
+            )
+            .await;
+            assert_eq!(response["error"]["message"], "INVALID_PARAMS");
+        }
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).unwrap_or_default();
+        assert!(!audit_text.contains("req_git_show_patch_zero"));
+        assert!(!audit_text.contains("req_git_show_patch_over"));
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn git_show_audit_precedes_workspace_access_and_records_one_top_level_pair() {
+        let (failing_audit, failing_root) = audit_sink("git-show-audit-fail");
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&failing_audit),
+        ));
+        failing_audit.inject_faults(AuditFaults {
+            fail_next_decision: true,
+            fail_next_outcome: false,
+        });
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_show_audit_fail",
+            "git.show",
+            json!({
+                "capabilityId": "kc_intentionally_missing",
+                "revision": { "kind": "head" },
+                "includePatch": false,
+                "maxPatchBytes": 65536
+            }),
+        )
+        .await;
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        drop(request_tx);
+        dispatcher.await.expect("failing dispatcher joins");
+        fs::remove_dir_all(failing_root).expect("failing audit root removed");
+
+        let (audit, audit_root) = audit_sink("git-show-audit-success");
+        let workspace = audit_root.with_extension("git-show-workspace");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        test_git(&workspace, &["init", "-q"]);
+        fs::write(workspace.join("tracked.txt"), "show fixture\n").expect("show file");
+        test_git(&workspace, &["add", "tracked.txt"]);
+        test_git(
+            &workspace,
+            &[
+                "-c",
+                "user.name=KodeGPT Test",
+                "-c",
+                "user.email=kodegpt@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "show fixture",
+            ],
+        );
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            develop_policy(false),
+            "git_show_success",
+        )
+        .await;
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_show_success",
+            "git.show",
+            json!({
+                "capabilityId": capability_id,
+                "revision": { "kind": "head" },
+                "includePatch": false,
+                "maxPatchBytes": 65536
+            }),
+        )
+        .await;
+        assert_eq!(response["result"]["commit"]["subject"], "show fixture");
+        assert_eq!(response["result"]["patch"], Value::Null);
+
+        drop(request_tx);
+        dispatcher.await.expect("success dispatcher joins");
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        let top_level = audit_text
+            .lines()
+            .filter(|line| {
+                line.contains("req_git_show_success")
+                    && line.contains("\"action\":\"git_commit_inspect\"")
             })
             .collect::<Vec<_>>();
         assert_eq!(top_level.len(), 2);
