@@ -5,10 +5,19 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ServiceMetadataStore, type ServiceReleaseRecord } from "../service/metadata.js";
+import {
+  ServiceRuntimeStatusStore,
+  type ServiceRuntimeStatusV1
+} from "../service/runtime-status.js";
 import type { SystemdUserManager } from "../service/systemd.js";
 import {
+  formatServiceStatus,
+  getServiceStatus,
   installService,
   parseServiceArguments,
+  restartService,
+  startService,
+  stopService,
   uninstallService,
   type ServiceOperatorDependencies
 } from "./service.js";
@@ -125,11 +134,111 @@ describe("service install and uninstall orchestration", () => {
   });
 });
 
+describe("service start, stop, restart, and status", () => {
+  it("promotes an initial staged release only after matching readiness", async () => {
+    const fixture = await serviceFixture();
+    await fixture.metadataStore.stageRelease(fixture.release);
+
+    const output = await startService(
+      { command: "start", stateRoot: fixture.stateRoot },
+      fixture.dependencies
+    );
+
+    expect(fixture.managerCalls).toEqual([
+      "reset-failed",
+      "start",
+      `wait:${fixture.release.releaseId}`
+    ]);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBeUndefined();
+    expect(output).toContain(`active=${fixture.release.releaseId}`);
+  });
+
+  it("stops through systemd without deleting general KodeGPT state", async () => {
+    const fixture = await serviceFixture();
+    const sentinel = join(fixture.stateRoot, "audit.jsonl");
+    await writeFile(sentinel, "keep", "utf8");
+
+    await expect(
+      stopService({ command: "stop", stateRoot: fixture.stateRoot }, fixture.dependencies)
+    ).resolves.toBe("KodeGPT service stopped");
+
+    expect(fixture.managerCalls).toEqual(["stop"]);
+    await expect(readFile(sentinel, "utf8")).resolves.toBe("keep");
+  });
+
+  it("cuts over a staged release on restart and retains the previous release for rollback", async () => {
+    const fixture = await serviceFixture();
+    const releaseB = secondRelease(fixture.release);
+    await fixture.metadataStore.stageRelease(fixture.release);
+    await fixture.metadataStore.promoteStagedRelease();
+    await fixture.metadataStore.stageRelease(releaseB);
+    fixture.dependencies.waitForReady = async (releaseId) => {
+      fixture.managerCalls.push(`wait:${releaseId}`);
+      return readyFor(releaseId);
+    };
+
+    const output = await restartService(
+      { command: "restart", stateRoot: fixture.stateRoot },
+      fixture.dependencies
+    );
+
+    expect(fixture.managerCalls).toEqual([
+      "daemon-reload",
+      "reset-failed",
+      "restart",
+      `wait:${releaseB.releaseId}`
+    ]);
+    const metadata = await fixture.metadataStore.read();
+    expect(metadata.activeReleaseId).toBe(releaseB.releaseId);
+    expect(metadata.rollbackReleaseId).toBe(fixture.release.releaseId);
+    expect(metadata.stagedReleaseId).toBeUndefined();
+    expect(await readFile(fixture.unitPath, "utf8")).toContain(releaseB.releaseId);
+    expect(output).toContain(`active=${releaseB.releaseId}`);
+  });
+
+  it("normalizes sanitized running status from manager, metadata, and runtime readiness", async () => {
+    const fixture = await serviceFixture();
+    await fixture.metadataStore.stageRelease(fixture.release);
+    await fixture.metadataStore.promoteStagedRelease();
+    await fixture.runtimeStatusStore.write(readyFor(fixture.release.releaseId));
+
+    const status = await getServiceStatus(fixture.dependencies);
+
+    expect(status).toMatchObject({
+      installed: true,
+      state: "running",
+      enabled: true,
+      packageVersion: "0.1.0",
+      activeReleaseId: fixture.release.releaseId,
+      runtimeVersion: "0.1",
+      protocolVersion: "2026-07-28",
+      surfaceVersion: "0.3",
+      localPort: 43_121,
+      managedExposure: true,
+      reservedName: "public:kodegpt-dev",
+      publicUrl: "https://kodegpt.example.invalid/mcp",
+      linger: "disabled"
+    });
+    const human = formatServiceStatus(status, false);
+    const json = formatServiceStatus(status, true);
+    expect(human).toContain("state=running");
+    expect(json).toContain('"surfaceVersion":"0.3"');
+    for (const output of [human, json]) {
+      expect(output).not.toContain("credential");
+      expect(output).not.toContain("verifier");
+      expect(output).not.toContain("rawZrok");
+    }
+  });
+});
+
 async function serviceFixture(): Promise<{
   stateRoot: string;
   serviceDataRoot: string;
   unitPath: string;
   metadataStore: ServiceMetadataStore;
+  runtimeStatusStore: ServiceRuntimeStatusStore;
   release: ServiceReleaseRecord;
   managerCalls: string[];
   dependencies: ServiceOperatorDependencies;
@@ -143,6 +252,7 @@ async function serviceFixture(): Promise<{
   await mkdir(serviceDataRoot, { recursive: true });
   await writeFile(join(serviceDataRoot, "owned.txt"), "service-owned", "utf8");
   const metadataStore = new ServiceMetadataStore(stateRoot);
+  const runtimeStatusStore = new ServiceRuntimeStatusStore(stateRoot);
   const releaseId = `rel_${"c".repeat(32)}`;
   const releaseRoot = join(serviceDataRoot, "releases", releaseId);
   const release: ServiceReleaseRecord = {
@@ -180,18 +290,53 @@ async function serviceFixture(): Promise<{
   };
   const dependencies: ServiceOperatorDependencies = {
     metadataStore,
+    runtimeStatusStore,
     manager,
     serviceDataRoot,
     unitPath,
-    prepareRelease: async () => release
+    prepareRelease: async () => release,
+    waitForReady: async (releaseId) => {
+      managerCalls.push(`wait:${releaseId}`);
+      return readyFor(releaseId);
+    }
   };
   return {
     stateRoot,
     serviceDataRoot,
     unitPath,
     metadataStore,
+    runtimeStatusStore,
     release,
     managerCalls,
     dependencies
+  };
+}
+
+function readyFor(releaseId: string): ServiceRuntimeStatusV1 {
+  return {
+    schemaVersion: 1,
+    releaseId,
+    pid: 99,
+    ready: true,
+    localPort: 43_121,
+    runtimeVersion: "0.1",
+    protocolVersion: "2026-07-28",
+    surfaceVersion: "0.3",
+    reservedName: "public:kodegpt-dev",
+    publicUrl: "https://kodegpt.example.invalid/mcp"
+  };
+}
+
+function secondRelease(first: ServiceReleaseRecord): ServiceReleaseRecord {
+  const releaseId = `rel_${"d".repeat(32)}`;
+  const releaseRoot = join(first.releaseRoot, "..", releaseId);
+  return {
+    ...first,
+    releaseId,
+    releaseRoot,
+    cliPath: join(releaseRoot, "bin", "kodegpt.mjs"),
+    runtimePath: join(releaseRoot, "node_modules", "@kodegpt", "runtime-linux-x64", "bin", "kodegpt-runtime"),
+    cliSha256: "3".repeat(64),
+    runtimeSha256: "4".repeat(64)
   };
 }
