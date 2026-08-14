@@ -32,6 +32,10 @@ const FIXTURE_NAMES = [
   "git.checkpoint.json",
   "git.checkpoint_patch.json",
   "git.diff.json",
+  "git.log.json",
+  "git.show.json",
+  "git.range.json",
+  "git.diff_history.json",
   "process.inspect_executable.json",
   "process.run.json",
   "verify.run.json",
@@ -67,6 +71,10 @@ const EXPECTED_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "git.log",
+  "git.show",
+  "git.range",
+  "git.diff_history",
   "process.inspect_executable",
   "process.run",
   "verify.run",
@@ -94,6 +102,29 @@ describe("TypeScript/Rust runtime fixture parity", () => {
     expect(serialized).not.toContain("initialized");
     expect(serialized).not.toContain("Mcp-Session-Id");
     expect(serialized).not.toContain("sessionId");
+  });
+
+  it("locks structured git history request schemas without raw git arguments", async () => {
+    const schemaUrl = new URL("../../schemas/runtime/request.schema.json", import.meta.url);
+    const schema = JSON.parse(await readFile(fileURLToPath(schemaUrl), "utf8")) as {
+      $defs?: { gitRevisionSpec?: unknown };
+      oneOf?: Array<{ properties?: { method?: { const?: string } } }>;
+    };
+    const historyMethods = new Set(["git.log", "git.show", "git.range", "git.diff_history"]);
+    const historySchemas = (schema.oneOf ?? []).filter((entry) => {
+      const method = entry.properties?.method?.const;
+      return typeof method === "string" && historyMethods.has(method);
+    });
+
+    expect(historySchemas).toHaveLength(4);
+    const serialized = JSON.stringify(historySchemas);
+    expect(serialized).toContain('"revision"');
+    expect(serialized).toContain('"baseRevision"');
+    expect(serialized).toContain('"headRevision"');
+    expect(JSON.stringify(schema.$defs?.gitRevisionSpec)).toContain('"kind"');
+    expect(serialized).not.toContain('"argv"');
+    expect(serialized).not.toContain('"revisionExpression"');
+    expect(serialized).not.toContain('"gitArgs"');
   });
 
   it("accepts every shared request fixture and round-trips it through exact framing", async () => {

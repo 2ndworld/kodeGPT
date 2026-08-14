@@ -21,6 +21,10 @@ export const RUNTIME_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "git.log",
+  "git.show",
+  "git.range",
+  "git.diff_history",
   "process.inspect_executable",
   "process.run",
   "verify.run",
@@ -185,6 +189,52 @@ const gitInspectionParamsSchema = z
   })
   .strict();
 
+const gitRevisionSpecSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("head") }).strict(),
+  z.object({ kind: z.literal("oid"), oid: z.string() }).strict(),
+  z.object({ kind: z.literal("branch"), name: z.string() }).strict(),
+  z.object({ kind: z.literal("tag"), name: z.string() }).strict()
+]);
+
+const gitLogParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    revision: gitRevisionSpecSchema,
+    path: z.string().optional(),
+    limit: z.number().int().nonnegative().max(0xffff).safe()
+  })
+  .strict();
+
+const gitShowParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    revision: gitRevisionSpecSchema,
+    path: z.string().optional(),
+    includePatch: z.boolean(),
+    maxPatchBytes: z.number().int().nonnegative().max(0xffff_ffff).safe()
+  })
+  .strict();
+
+const gitRangeParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    baseRevision: gitRevisionSpecSchema,
+    headRevision: gitRevisionSpecSchema,
+    mode: z.enum(["direct", "symmetric"]),
+    limit: z.number().int().nonnegative().max(0xffff).safe()
+  })
+  .strict();
+
+const gitDiffHistoryParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    baseRevision: gitRevisionSpecSchema,
+    headRevision: gitRevisionSpecSchema,
+    path: z.string().optional(),
+    maxPatchBytes: z.number().int().nonnegative().max(0xffff_ffff).safe()
+  })
+  .strict();
+
 const processInspectExecutableParamsSchema = z
   .object({
     capabilityId: z.string().min(1),
@@ -298,6 +348,10 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
+  requestSchema("git.log", gitLogParamsSchema),
+  requestSchema("git.show", gitShowParamsSchema),
+  requestSchema("git.range", gitRangeParamsSchema),
+  requestSchema("git.diff_history", gitDiffHistoryParamsSchema),
   requestSchema("process.inspect_executable", processInspectExecutableParamsSchema),
   requestSchema("process.run", processRunParamsSchema),
   requestSchema("verify.run", verifyRunParamsSchema),

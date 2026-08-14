@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_range",
+  "method": "git.range",
+  "params": {
+    "capabilityId": "cap_workspace",
+    "baseRevision": { "kind": "tag", "name": "v0.1" },
+    "headRevision": { "kind": "branch", "name": "main" },
+    "mode": "direct",
+    "limit": 50
+  }
+}

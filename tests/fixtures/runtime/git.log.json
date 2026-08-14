@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_log",
+  "method": "git.log",
+  "params": {
+    "capabilityId": "cap_workspace",
+    "revision": { "kind": "head" },
+    "path": "src/main.rs",
+    "limit": 20
+  }
+}

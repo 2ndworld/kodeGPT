@@ -40,6 +40,45 @@
           "items": { "type": "string" }
         }
       }
+    },
+    "gitRevisionSpec": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "head" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "oid"],
+          "properties": {
+            "kind": { "const": "oid" },
+            "oid": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "branch" },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "tag" },
+            "name": { "type": "string" }
+          }
+        }
+      ]
     }
   },
   "oneOf": [
@@ -449,6 +488,93 @@
           "required": ["capabilityId"],
           "properties": {
             "capabilityId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.log" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "revision", "limit"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "revision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "path": { "type": "string" },
+            "limit": { "type": "integer", "minimum": 0, "maximum": 65535 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.show" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "revision", "includePatch", "maxPatchBytes"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "revision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "path": { "type": "string" },
+            "includePatch": { "type": "boolean" },
+            "maxPatchBytes": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.range" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "baseRevision", "headRevision", "mode", "limit"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "baseRevision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "headRevision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "mode": { "enum": ["direct", "symmetric"] },
+            "limit": { "type": "integer", "minimum": 0, "maximum": 65535 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.diff_history" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "baseRevision", "headRevision", "maxPatchBytes"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "baseRevision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "headRevision": { "$ref": "#/$defs/gitRevisionSpec" },
+            "path": { "type": "string" },
+            "maxPatchBytes": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
           }
         }
       }

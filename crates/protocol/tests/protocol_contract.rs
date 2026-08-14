@@ -76,6 +76,10 @@ fn shared_runtime_request_fixtures_deserialize_into_closed_types() {
         "file.commit_patch_file.json",
         "git.checkpoint.json",
         "git.checkpoint_patch.json",
+        "git.log.json",
+        "git.show.json",
+        "git.range.json",
+        "git.diff_history.json",
         "process.inspect_executable.json",
         "process.run.json",
         "verify.run.json",
@@ -113,6 +117,26 @@ fn skill_source_params_reject_unknown_fields() {
     let error = serde_json::from_value::<RuntimeRequest>(value)
         .expect_err("skill source privilege field rejected");
     assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn git_history_params_are_structured_and_reject_unknown_fields() {
+    for name in [
+        "git.log.json",
+        "git.show.json",
+        "git.range.json",
+        "git.diff_history.json",
+    ] {
+        let value = fixture(name);
+        serde_json::from_value::<RuntimeRequest>(value.clone())
+            .unwrap_or_else(|error| panic!("{name} must deserialize: {error}"));
+
+        let mut with_raw_argv = value;
+        with_raw_argv["params"]["argv"] = json!(["--all"]);
+        let error = serde_json::from_value::<RuntimeRequest>(with_raw_argv)
+            .expect_err("raw git argv must be rejected");
+        assert!(error.to_string().contains("unknown field"));
+    }
 }
 
 #[test]

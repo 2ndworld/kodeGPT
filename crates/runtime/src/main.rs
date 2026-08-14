@@ -2,6 +2,7 @@ mod audit;
 mod dispatcher;
 mod execution;
 mod git;
+mod git_history;
 mod process;
 mod rpc;
 mod spool;
