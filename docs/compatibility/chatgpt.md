@@ -1,6 +1,6 @@
 # ChatGPT Compatibility Claim Gate
 
-Status date: 2026-08-13.
+Status date: 2026-08-14.
 
 KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compatibility. Passing KodeGPT's local protocol, security, Apps, and packaging suites is necessary but is not evidence that a specific ChatGPT plan/workspace can connect to or invoke every KodeGPT capability.
 
@@ -15,6 +15,8 @@ KodeGPT v0.1 supports three deliberately separate transport/exposure paths:
 - `kodegpt expose zrok --name <namespace:name>` is the explicit personal/development managed-exposure path. It resolves an existing zrok v2 reserved name through structured `zrok2` metadata, keeps the KodeGPT listener on loopback, enables the approved query-credential compatibility mode for that invocation, and supervises `zrok2` locally with `--force-local`.
 
 The query-bearing ChatGPT Server URL emitted on first managed exposure is itself a credential and must be kept private. KodeGPT does not read or manage zrok account/environment credentials. zrok provides reachability only; workspace trust, file/process authority, policy, sandboxing, and audit remain KodeGPT responsibilities. Structured zrok readiness output is parsed only for target/mode/frontend fields and is never logged raw because zrok-owned metadata may contain sensitive fields.
+
+The Stable Local Service & Managed Exposure Lifecycle candidate adds a machine-local operator lifecycle around this same managed-zrok contract without changing the MCP semantic surface. `kodegpt service install|start|stop|restart|status|uninstall` are local CLI operations only. A user `systemd` unit owns one foreground **installed** KodeGPT process, while the existing KodeGPT managed-exposure path continues to supervise the loopback server, Rust runtime, and zrok child. The unit and local status contain no connector token/verifier or zrok account secret, ordinary restart reuses existing connector state, and the installed release does not point at a Git worktree. KodeGPT does not change systemd linger automatically.
 
 OpenAI's current guidance recommends Secure MCP Tunnel when a local/private MCP server should be connected without exposing it to the public internet. That is an alternative private path, not a prerequisite for KodeGPT's explicitly public HTTPS zrok development path. Host compatibility must still be tested through the actual connection path used by the target ChatGPT workspace.
 
