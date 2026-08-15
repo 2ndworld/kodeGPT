@@ -43,6 +43,13 @@ pub enum GitLocalMutation {
     BranchDelete { name: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitRemoteMutation {
+    Fetch { remote: String, r#ref: String },
+    Pull { remote: String, r#ref: String },
+    Push { remote: String, r#ref: String },
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitLocalMutationResult {
@@ -288,6 +295,7 @@ pub fn run_git_local_mutation(
         executions,
         false,
         WorkspaceAccess::ReadWrite,
+        SandboxNetworkMode::Deny,
     )?;
 
     Ok(GitLocalMutationResult {
@@ -302,6 +310,213 @@ pub fn run_git_local_mutation(
         bytes_spooled: budgeted.artifact.bytes_written,
         artifact: budgeted.artifact,
     })
+}
+
+pub fn run_git_remote_mutation(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    mutation: GitRemoteMutation,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitLocalMutationResult, GitInspectionError> {
+    let provider = BubblewrapProvider::discover()?;
+    let program = resolve_trusted_executable("git").map_err(SandboxError::from)?;
+    let filter_overrides = discover_filter_overrides(
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        &provider,
+        &program,
+        spool,
+        executions,
+    )?;
+
+    match mutation {
+        GitRemoteMutation::Fetch { remote, r#ref } => {
+            validate_remote_mutation_input(&remote, &r#ref)?;
+            run_remote_mutation_command(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                "fetch",
+                remote_fetch_args(&remote, &r#ref, &filter_overrides),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )
+        }
+        GitRemoteMutation::Pull { remote, r#ref } => {
+            validate_remote_mutation_input(&remote, &r#ref)?;
+            let fetch_operation_id = format!("{operation_id}-fetch");
+            let fetch = run_remote_mutation_command(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                &fetch_operation_id,
+                "pull",
+                remote_fetch_args(&remote, &r#ref, &filter_overrides),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
+            if fetch.exit_code != 0 {
+                return Ok(fetch);
+            }
+            run_remote_mutation_command(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                "pull",
+                remote_pull_merge_args(&remote, &r#ref, &filter_overrides),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )
+        }
+        GitRemoteMutation::Push { remote, r#ref } => {
+            validate_remote_mutation_input(&remote, &r#ref)?;
+            run_remote_mutation_command(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                "push",
+                remote_push_args(&remote, &r#ref, &filter_overrides),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_remote_mutation_command(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    operation: &'static str,
+    args: Vec<OsString>,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitLocalMutationResult, GitInspectionError> {
+    let budgeted = run_git_command_with_budget(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        args,
+        GitCommandBudget {
+            wall_timeout: Some(GIT_MUTATION_TIMEOUT),
+            stdout_source_bytes: GIT_MUTATION_MAX_OUTPUT_BYTES,
+            stderr_source_bytes: GIT_MUTATION_MAX_OUTPUT_BYTES,
+            preview_bytes: PREVIEW_MAX_BYTES,
+            overflow_policy: GitOverflowPolicy::Truncate,
+        },
+        spool,
+        executions,
+        false,
+        WorkspaceAccess::ReadWrite,
+        SandboxNetworkMode::Unrestricted,
+    )?;
+
+    Ok(GitLocalMutationResult {
+        schema_version: 1,
+        operation,
+        exit_code: budgeted.output.exit_code,
+        stdout_preview: String::from_utf8_lossy(&budgeted.output.stdout).into_owned(),
+        stderr_preview: String::from_utf8_lossy(&budgeted.output.stderr_preview).into_owned(),
+        stdout_truncated: budgeted.output.stdout_truncated,
+        stderr_truncated: budgeted.output.stderr_truncated,
+        source_truncated: budgeted.output.source_truncated || budgeted.artifact.source_truncated,
+        bytes_spooled: budgeted.artifact.bytes_written,
+        artifact: budgeted.artifact,
+    })
+}
+
+pub(crate) fn validate_remote_mutation_input(
+    remote: &str,
+    r#ref: &str,
+) -> Result<(), GitInspectionError> {
+    if !valid_remote_name(remote) || !valid_branch_name(r#ref) {
+        return Err(GitInspectionError::InvalidMutationInput);
+    }
+    Ok(())
+}
+
+fn valid_remote_name(remote: &str) -> bool {
+    if remote.is_empty() || remote.len() > 128 {
+        return false;
+    }
+    let mut bytes = remote.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphanumeric() {
+        return false;
+    }
+    bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn remote_git_args(filter_overrides: &[OsString]) -> Vec<OsString> {
+    let mut args = base_git_args();
+    args.extend(filter_overrides.iter().cloned());
+    args.extend(
+        ["-c", "protocol.file.allow=always"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    args
+}
+
+fn remote_fetch_args(remote: &str, r#ref: &str, filter_overrides: &[OsString]) -> Vec<OsString> {
+    let mut args = remote_git_args(filter_overrides);
+    args.extend(["fetch", "--no-tags"].into_iter().map(OsString::from));
+    args.push(OsString::from(remote));
+    args.push(OsString::from(format!(
+        "{ref_name}:refs/remotes/{remote}/{ref_name}",
+        ref_name = r#ref
+    )));
+    args
+}
+
+fn remote_pull_merge_args(
+    remote: &str,
+    r#ref: &str,
+    filter_overrides: &[OsString],
+) -> Vec<OsString> {
+    let mut args = remote_git_args(filter_overrides);
+    args.extend(["merge", "--ff-only"].into_iter().map(OsString::from));
+    args.push(OsString::from(format!(
+        "refs/remotes/{remote}/{ref_name}",
+        ref_name = r#ref
+    )));
+    args
+}
+
+fn remote_push_args(remote: &str, r#ref: &str, filter_overrides: &[OsString]) -> Vec<OsString> {
+    let mut args = remote_git_args(filter_overrides);
+    args.push(OsString::from("push"));
+    args.push(OsString::from(remote));
+    args.push(OsString::from(format!(
+        "refs/heads/{ref_name}:refs/heads/{ref_name}",
+        ref_name = r#ref
+    )));
+    args
 }
 
 fn local_mutation_args(
@@ -935,6 +1150,7 @@ fn run_git_command_with_stdout_limit(
         executions,
         false,
         WorkspaceAccess::ReadOnly,
+        SandboxNetworkMode::Deny,
     )?;
 
     Ok(GitCommandResult {
@@ -973,6 +1189,7 @@ pub(crate) fn run_hardened_git_command(
         executions,
         history_no_lazy_fetch,
         WorkspaceAccess::ReadOnly,
+        SandboxNetworkMode::Deny,
     )?
     .output)
 }
@@ -997,13 +1214,15 @@ fn run_git_command_with_budget(
     executions: &Mutex<ExecutionRegistry>,
     history_no_lazy_fetch: bool,
     workspace_access: WorkspaceAccess,
+    network: SandboxNetworkMode,
 ) -> Result<BudgetedGitCommandResult, GitInspectionError> {
-    let spec = hardened_git_spec_with_access(
+    let mut spec = hardened_git_spec_with_access(
         program.clone(),
         args,
         history_no_lazy_fetch,
         workspace_access,
     );
+    spec.network = network;
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
     let execution_id = match executions.lock() {
@@ -1542,10 +1761,10 @@ mod tests {
 
     use super::{
         GitCheckpointRecordType, GitCommandBudget, GitInspectionError, GitLocalMutation,
-        GitOperation, GitOverflowPolicy, hardened_git_args, hardened_git_spec,
+        GitOperation, GitOverflowPolicy, GitRemoteMutation, hardened_git_args, hardened_git_spec,
         hardened_git_spec_with_options, parse_checkpoint_status, run_git_checkpoint,
         run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
-        run_hardened_git_command,
+        run_git_remote_mutation, run_hardened_git_command,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -1572,6 +1791,20 @@ mod tests {
             .status()
             .expect("test git available");
         assert!(status.success(), "test git command failed: {args:?}");
+    }
+
+    fn git_stdout(root: &Path, args: &[&str]) -> String {
+        let output = TestCommand::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .env("HOME", "/tmp")
+            .output()
+            .expect("test git available");
+        assert!(output.status.success(), "test git command failed: {args:?}");
+        String::from_utf8(output.stdout).expect("git stdout utf8")
     }
 
     fn fingerprint(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
@@ -2075,6 +2308,139 @@ mod tests {
                 .ids_for_workspace("kc_git_mutation")
                 .is_empty()
         );
+
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn remote_git_mutation_fetches_pulls_and_pushes_against_workspace_local_bare_remote() {
+        let workspace = temporary_root("remote-mutation");
+        let state = temporary_root("remote-mutation-state");
+        git(&workspace, &["init", "-b", "main"]);
+        git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        git(
+            &workspace,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(workspace.join("tracked.txt"), "base\n").expect("tracked file");
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "base"]);
+        git(&workspace, &["init", "--bare", "remote.git"]);
+        git(&workspace, &["remote", "add", "origin", "remote.git"]);
+        git(&workspace, &["push", "origin", "main"]);
+        git(
+            &workspace,
+            &[
+                "--git-dir",
+                "remote.git",
+                "symbolic-ref",
+                "HEAD",
+                "refs/heads/main",
+            ],
+        );
+
+        git(&workspace, &["clone", "remote.git", "seed"]);
+        let seed = workspace.join("seed");
+        git(&seed, &["config", "user.name", "KodeGPT Seed"]);
+        git(&seed, &["config", "user.email", "seed@example.invalid"]);
+        fs::write(seed.join("remote.txt"), "remote\n").expect("seed file");
+        git(&seed, &["add", "remote.txt"]);
+        git(&seed, &["commit", "-m", "remote update"]);
+        git(&seed, &["push", "origin", "main"]);
+        git(&seed, &["branch", "feature"]);
+        git(&seed, &["push", "origin", "feature"]);
+
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let fetch = run_git_remote_mutation(
+            &root_fd,
+            "kc_git_remote",
+            "req_git_fetch",
+            "op_git_fetch",
+            GitRemoteMutation::Fetch {
+                remote: "origin".to_owned(),
+                r#ref: "feature".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("fetch mutation");
+        assert_eq!(fetch.exit_code, 0);
+        assert!(workspace.join(".git/refs/remotes/origin/feature").exists());
+        assert!(!workspace.join("remote.txt").exists());
+
+        let pull = run_git_remote_mutation(
+            &root_fd,
+            "kc_git_remote",
+            "req_git_pull",
+            "op_git_pull",
+            GitRemoteMutation::Pull {
+                remote: "origin".to_owned(),
+                r#ref: "main".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("pull mutation");
+        assert_eq!(pull.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(workspace.join("remote.txt")).expect("pulled file"),
+            "remote\n"
+        );
+
+        fs::write(workspace.join("local.txt"), "local\n").expect("local file");
+        git(&workspace, &["add", "local.txt"]);
+        git(&workspace, &["commit", "-m", "local update"]);
+        let local_head = git_stdout(&workspace, &["rev-parse", "HEAD"]);
+        let push = run_git_remote_mutation(
+            &root_fd,
+            "kc_git_remote",
+            "req_git_push",
+            "op_git_push",
+            GitRemoteMutation::Push {
+                remote: "origin".to_owned(),
+                r#ref: "main".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("push mutation");
+        assert_eq!(push.exit_code, 0);
+        assert_eq!(
+            git_stdout(
+                &workspace,
+                &["--git-dir", "remote.git", "rev-parse", "refs/heads/main"]
+            ),
+            local_head
+        );
+
+        for mutation in [
+            GitRemoteMutation::Fetch {
+                remote: "https://secret@example.invalid/repo.git".to_owned(),
+                r#ref: "main".to_owned(),
+            },
+            GitRemoteMutation::Push {
+                remote: "origin".to_owned(),
+                r#ref: "main:evil".to_owned(),
+            },
+        ] {
+            assert!(matches!(
+                run_git_remote_mutation(
+                    &root_fd,
+                    "kc_git_remote",
+                    "req_git_remote_invalid",
+                    "op_git_remote_invalid",
+                    mutation,
+                    &spool,
+                    &executions,
+                ),
+                Err(GitInspectionError::InvalidMutationInput)
+            ));
+        }
 
         fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");

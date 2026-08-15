@@ -236,6 +236,12 @@ export interface WorkspaceGitMutationResult extends WorkspaceGitInspectionResult
   operation: WorkspaceGitMutationOperation;
 }
 
+export type WorkspaceGitRemoteMutationOperation = "fetch" | "pull" | "push";
+
+export interface WorkspaceGitRemoteMutationResult extends WorkspaceGitInspectionResult {
+  operation: WorkspaceGitRemoteMutationOperation;
+}
+
 export interface WorkspaceGitCheckpointRecord {
   recordType: "ordinary" | "rename" | "unmerged" | "untracked";
   path: string;
@@ -910,6 +916,30 @@ export class WorkspaceManager {
     return this.#gitLocalMutation(workspaceId, "branch_delete", { name });
   }
 
+  async gitFetch(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "fetch", remote, ref);
+  }
+
+  async gitPull(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "pull", remote, ref);
+  }
+
+  async gitPush(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "push", remote, ref);
+  }
+
   async runProcess(input: WorkspaceProcessRunInput): Promise<WorkspaceProcessOperationResult> {
     if (input.logicalExecutable.length === 0) {
       throw new TypeError("Process logical executable must not be empty");
@@ -1194,6 +1224,63 @@ export class WorkspaceManager {
       sourceTruncated: result.sourceTruncated,
       bytesSpooled: result.bytesSpooled as number,
       artifact: validateArtifactMetadata(result.artifact, "git.local_mutation")
+    };
+  }
+
+  async #gitRemoteMutation(
+    workspaceId: string,
+    operation: WorkspaceGitRemoteMutationOperation,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    const state = this.#requireReadyState(workspaceId);
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("git.remote_mutation", {
+        capabilityId: state.capabilityId,
+        operation,
+        remote,
+        ref
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_REMOTE_MUTATION_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, "git.remote_mutation failed");
+      }
+      throw error;
+    }
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.operation !== operation ||
+      !Number.isSafeInteger(result.exitCode) ||
+      typeof result.stdoutPreview !== "string" ||
+      typeof result.stderrPreview !== "string" ||
+      typeof result.stdoutTruncated !== "boolean" ||
+      typeof result.stderrTruncated !== "boolean" ||
+      typeof result.sourceTruncated !== "boolean" ||
+      !Number.isSafeInteger(result.bytesSpooled) ||
+      (result.bytesSpooled as number) < 0 ||
+      !isRecord(result.artifact) ||
+      "artifactId" in result ||
+      "processGroup" in result ||
+      "pid" in result
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.remote_mutation returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      operation,
+      exitCode: result.exitCode as number,
+      stdoutPreview: result.stdoutPreview,
+      stderrPreview: result.stderrPreview,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
+      sourceTruncated: result.sourceTruncated,
+      bytesSpooled: result.bytesSpooled as number,
+      artifact: validateArtifactMetadata(result.artifact, "git.remote_mutation")
     };
   }
 
@@ -1582,6 +1669,13 @@ const GIT_MUTATION_ERROR_CODES = new Set([
   "GIT_MUTATION_INPUT_INVALID",
   "GIT_MUTATION_UNAVAILABLE",
   "GIT_MUTATION_FAILED"
+]);
+
+const GIT_REMOTE_MUTATION_ERROR_CODES = new Set([
+  "GIT_REMOTE_POLICY_DENIED",
+  "GIT_REMOTE_INPUT_INVALID",
+  "GIT_REMOTE_UNAVAILABLE",
+  "GIT_REMOTE_FAILED"
 ]);
 
 const GIT_HISTORY_ERROR_CODES = new Set([

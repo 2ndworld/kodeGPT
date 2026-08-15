@@ -607,6 +607,61 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.remote_mutation" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operation": { "enum": ["fetch", "pull", "push"] },
+            "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "fetch" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "pull" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "push" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "git.log" },
         "params": {
           "type": "object",

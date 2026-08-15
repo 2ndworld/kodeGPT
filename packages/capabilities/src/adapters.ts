@@ -8,7 +8,8 @@ import type {
   GitShowResult,
   GitRangeResult,
   GitDiffHistoryResult,
-  GitLocalMutationResult
+  GitLocalMutationResult,
+  GitRemoteMutationResult
 } from "./contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -109,6 +110,16 @@ export interface GitLocalMutationAdapter {
   branchCreate(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
   branchSwitch(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
   branchDelete(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
+}
+
+export interface GitRemoteAuthorityAdapter {
+  effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean; network: string };
+}
+
+export interface GitRemoteMutationAdapter {
+  fetch(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
+  pull(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
+  push(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
 }
 
 export interface GitHistoryLogAdapterInput {

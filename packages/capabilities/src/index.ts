@@ -20,6 +20,7 @@ export {
   MAX_GIT_STAGE_PATHS,
   MAX_GIT_MUTATION_TEXT,
   MAX_GIT_BRANCH_NAME,
+  MAX_GIT_REMOTE_NAME,
   NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
 export type {
@@ -46,6 +47,9 @@ export type {
   GitBranchInput,
   GitLocalMutationOperation,
   GitLocalMutationResult,
+  GitRemoteInput,
+  GitRemoteMutationOperation,
+  GitRemoteMutationResult,
   GitRevision,
   GitLogInput,
   GitLogResult,
@@ -93,6 +97,8 @@ export type {
   GitInspectionAdapterResult,
   GitLocalAuthorityAdapter,
   GitLocalMutationAdapter,
+  GitRemoteAuthorityAdapter,
+  GitRemoteMutationAdapter,
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,
@@ -105,6 +111,7 @@ export type {
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
 export { gitLog, gitShow, gitRange, gitDiffHistory } from "./git-history.js";
 export { gitStage, gitCommit, gitBranchCreate, gitBranchSwitch, gitBranchDelete } from "./git-local.js";
+export { gitFetch, gitPull, gitPush } from "./git-remote.js";
 export type { CapabilityErrorCode } from "./errors.js";
 export {
   NATIVE_CAPABILITY_SEMANTICS,
@@ -126,6 +133,8 @@ export {
   GitCommitInputSchema,
   GitBranchInputSchema,
   GitLocalMutationResultSchema,
+  GitRemoteInputSchema,
+  GitRemoteMutationResultSchema,
   GitRevisionSchema,
   GitLogInputSchema,
   GitLogResultSchema,

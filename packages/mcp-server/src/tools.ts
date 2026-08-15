@@ -11,6 +11,8 @@ import {
   GitCommitInputSchema,
   GitBranchInputSchema,
   GitLocalMutationResultSchema,
+  GitRemoteInputSchema,
+  GitRemoteMutationResultSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,
@@ -44,6 +46,8 @@ import {
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
+  REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
@@ -72,7 +76,10 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.fetch", required: ["workspaceId", "ref"] },
   { name: "git.log", required: ["workspaceId"] },
+  { name: "git.pull", required: ["workspaceId", "ref"] },
+  { name: "git.push", required: ["workspaceId", "ref"] },
   { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
   { name: "git.show", required: ["workspaceId"] },
   { name: "git.stage", required: ["workspaceId", "paths"] },
@@ -510,6 +517,42 @@ export function registerKodegptTools(
     },
     async (input) =>
       nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchDelete(input)))
+  );
+
+  server.registerTool(
+    "git.fetch",
+    {
+      description: "Fetch a validated branch from a named remote into its bounded remote-tracking ref.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_FETCH_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.fetch(input)))
+  );
+
+  server.registerTool(
+    "git.pull",
+    {
+      description: "Fetch and fast-forward only from a validated remote branch in a trusted workspace.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.pull(input)))
+  );
+
+  server.registerTool(
+    "git.push",
+    {
+      description: "Push a validated local branch to the same branch on a named remote without force.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.push(input)))
   );
 
   server.registerTool(

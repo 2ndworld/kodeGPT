@@ -12,6 +12,7 @@ import {
   MAX_GIT_STAGE_PATHS,
   MAX_GIT_MUTATION_TEXT,
   MAX_GIT_BRANCH_NAME,
+  MAX_GIT_REMOTE_NAME,
   type CodeSearchInput,
   type CodeSearchResult,
   type ContextBuildInput,
@@ -24,6 +25,8 @@ import {
   type GitCommitInput,
   type GitBranchInput,
   type GitLocalMutationResult,
+  type GitRemoteInput,
+  type GitRemoteMutationResult,
   type GitLogInput,
   type GitLogResult,
   type GitShowInput,
@@ -361,6 +364,43 @@ export const GitLocalMutationResultSchema: z.ZodType<GitLocalMutationResult> = z
   .object({
     schemaVersion: z.literal(1),
     operation: z.enum(["stage", "commit", "branch_create", "branch_switch", "branch_delete"]),
+    exitCode: z.number().int().safe(),
+    stdoutPreview: z.string(),
+    stderrPreview: z.string(),
+    stdoutTruncated: z.boolean(),
+    stderrTruncated: z.boolean(),
+    sourceTruncated: z.boolean(),
+    bytesSpooled: z.number().int().nonnegative().safe(),
+    artifact: z
+      .object({
+        schemaVersion: z.literal(1),
+        uri: z.string().regex(/^artifact:\/\/.+$/) as z.ZodType<`artifact://${string}`>,
+        mediaType: z.string().min(1),
+        sizeBytes: z.number().int().nonnegative().safe(),
+        sourceTruncated: z.boolean()
+      })
+      .strict()
+  })
+  .strict();
+
+const gitRemoteNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_GIT_REMOTE_NAME)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "Git remote name is invalid");
+
+export const GitRemoteInputSchema: z.ZodType<GitRemoteInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    remote: gitRemoteNameSchema.optional(),
+    ref: gitBranchNameSchema
+  })
+  .strict();
+
+export const GitRemoteMutationResultSchema: z.ZodType<GitRemoteMutationResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    operation: z.enum(["fetch", "pull", "push"]),
     exitCode: z.number().int().safe(),
     stdoutPreview: z.string(),
     stderrPreview: z.string(),

@@ -12,6 +12,8 @@ import type {
   GitCommitInput,
   GitBranchInput,
   GitLocalMutationResult,
+  GitRemoteInput,
+  GitRemoteMutationResult,
   GitLogInput,
   GitLogResult,
   GitShowInput,
@@ -118,6 +120,9 @@ export interface GitToolContext {
   branchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
   branchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
   branchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  fetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  pull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  push(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   log(input: GitLogInput): Promise<GitLogResult>;
   show(input: GitShowInput): Promise<GitShowResult>;
   range(input: GitRangeInput): Promise<GitRangeResult>;
@@ -246,6 +251,9 @@ export interface NativeCapabilityToolAdapter {
   gitBranchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
   gitBranchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
   gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  gitPull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  gitPush(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   gitLog(input: GitLogInput): Promise<GitLogResult>;
   gitShow(input: GitShowInput): Promise<GitShowResult>;
   gitRange(input: GitRangeInput): Promise<GitRangeResult>;
@@ -323,6 +331,9 @@ export function createKodegptToolContext(options: {
       branchCreate: (input) => native.gitBranchCreate(input),
       branchSwitch: (input) => native.gitBranchSwitch(input),
       branchDelete: (input) => native.gitBranchDelete(input),
+      fetch: (input) => native.gitFetch(input),
+      pull: (input) => native.gitPull(input),
+      push: (input) => native.gitPush(input),
       log: (input) => native.gitLog(input),
       show: (input) => native.gitShow(input),
       range: (input) => native.gitRange(input),
@@ -401,6 +412,9 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
     gitBranchCreate: () => unavailable("git.branchCreate"),
     gitBranchSwitch: () => unavailable("git.branchSwitch"),
     gitBranchDelete: () => unavailable("git.branchDelete"),
+    gitFetch: () => unavailable("git.fetch"),
+    gitPull: () => unavailable("git.pull"),
+    gitPush: () => unavailable("git.push"),
     gitLog: () => unavailable("git.log"),
     gitShow: () => unavailable("git.show"),
     gitRange: () => unavailable("git.range"),

@@ -74,6 +74,9 @@ export interface ManagerBundle {
       | "gitShow"
       | "gitRange"
       | "gitDiffHistory"
+      | "gitFetch"
+      | "gitPull"
+      | "gitPush"
       | "pathIdentity"
       | "commitPatchFile"
       | "inspectExecutable"
@@ -266,6 +269,19 @@ export async function createProductionServiceStack(
           branchCreate: (workspaceId, name) => managers.workspaceManager.gitBranchCreate(workspaceId, name),
           branchSwitch: (workspaceId, name) => managers.workspaceManager.gitBranchSwitch(workspaceId, name),
           branchDelete: (workspaceId, name) => managers.workspaceManager.gitBranchDelete(workspaceId, name)
+        }
+      },
+      gitRemote: {
+        authority: {
+          effectivePolicy: (workspaceId) => {
+            const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
+            return { name: policy.name, allowWrite: policy.allowWrite, network: policy.network };
+          }
+        },
+        mutation: {
+          fetch: (workspaceId, remote, ref) => managers.workspaceManager.gitFetch(workspaceId, remote, ref),
+          pull: (workspaceId, remote, ref) => managers.workspaceManager.gitPull(workspaceId, remote, ref),
+          push: (workspaceId, remote, ref) => managers.workspaceManager.gitPush(workspaceId, remote, ref)
         }
       },
       gitHistory: {

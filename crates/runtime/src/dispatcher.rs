@@ -6,14 +6,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
-    GitLocalMutationParams, GitLogParams, GitRangeParams, GitShowParams, GitStatusParams,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
-    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
-    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
-    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
-    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
-    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
-    WorkspaceTraversalScope as ProtocolTraversalScope,
+    GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams, GitShowParams,
+    GitStatusParams, NetworkMode, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
+    ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
+    RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
+    SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
+    SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -32,8 +32,9 @@ use crate::audit::{
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
-    GitInspectionError, GitLocalMutation, GitOperation, run_git_checkpoint,
-    run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
+    GitInspectionError, GitLocalMutation, GitOperation, GitRemoteMutation, run_git_checkpoint,
+    run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation, run_git_remote_mutation,
+    validate_remote_mutation_input,
 };
 use crate::git_history::{
     GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GIT_RANGE_MAX_LIMIT, GitHistoryError,
@@ -992,6 +993,57 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.remote_mutation" => {
+            let params = match serde_json::from_value::<GitRemoteMutationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let (capability_id, mutation, action) = match params {
+                GitRemoteMutationParams::Fetch {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Fetch { remote, r#ref },
+                    AuditAction::GitFetch,
+                ),
+                GitRemoteMutationParams::Pull {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Pull { remote, r#ref },
+                    AuditAction::GitPull,
+                ),
+                GitRemoteMutationParams::Push {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Push { remote, r#ref },
+                    AuditAction::GitPush,
+                ),
+            };
+            if capability_id.is_empty() {
+                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+            }
+            dispatch_git_remote_mutation(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                capability_id,
+                mutation,
+                action,
+            )
+            .await
+        }
         "git.log" => {
             let params = match serde_json::from_value::<GitLogParams>(request.params) {
                 Ok(params)
@@ -1684,6 +1736,158 @@ async fn dispatch_git_local_mutation(
         AuditOutcome::Failed
     };
     if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_remote_mutation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    mutation: GitRemoteMutation,
+    action: AuditAction,
+) -> Value {
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
+        Err(_) => {
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
+        }
+    };
+    if policy.name != ProfileName::Trusted
+        || !policy.allow_write
+        || policy.network != NetworkMode::Unrestricted
+    {
+        return error_response(Some(request_id), -32062, "GIT_REMOTE_POLICY_DENIED");
+    }
+
+    let (remote, ref_name) = match &mutation {
+        GitRemoteMutation::Fetch { remote, r#ref }
+        | GitRemoteMutation::Pull { remote, r#ref }
+        | GitRemoteMutation::Push { remote, r#ref } => (remote.as_str(), r#ref.as_str()),
+    };
+    if validate_remote_mutation_input(remote, ref_name).is_err() {
+        return error_response(Some(request_id), -32063, "GIT_REMOTE_INPUT_INVALID");
+    }
+    let remote = remote.to_owned();
+    let ref_name = ref_name.to_owned();
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision_with_git_remote(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+            &remote,
+            &ref_name,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_git_remote_failure(
+                    audit, &context, request_id, code, message, &remote, &ref_name,
+                );
+            }
+        },
+        Err(_) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+                &remote,
+                &ref_name,
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_git_remote_failure(
+            audit,
+            &context,
+            request_id,
+            -32064,
+            "GIT_REMOTE_UNAVAILABLE",
+            &remote,
+            &ref_name,
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_remote_mutation(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            mutation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::InvalidMutationInput)) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32063,
+                "GIT_REMOTE_INPUT_INVALID",
+                &remote,
+                &ref_name,
+            );
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32065,
+                "GIT_REMOTE_FAILED",
+                &remote,
+                &ref_name,
+            );
+        }
+    };
+    let outcome = if result.exit_code == 0 {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit
+        .outcome_with_git_remote(&context, outcome, &remote, &ref_name)
+        .is_err()
+    {
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     success_response(request_id, json!(result))
@@ -2712,6 +2916,25 @@ fn audited_failure(
     error_response(Some(request_id), code, message)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn audited_git_remote_failure(
+    audit: &AuditSink,
+    context: &AuditContext,
+    request_id: String,
+    code: i64,
+    message: &str,
+    remote: &str,
+    ref_name: &str,
+) -> Value {
+    if audit
+        .outcome_with_git_remote(context, AuditOutcome::Failed, remote, ref_name)
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    error_response(Some(request_id), code, message)
+}
+
 fn audited_skill_source_failure(
     audit: &AuditSink,
     context: &AuditContext,
@@ -3304,6 +3527,123 @@ mod tests {
         drop(request_tx);
         dispatcher.await.expect("dispatcher joins");
         fs::remove_dir_all(develop_workspace).expect("develop workspace cleanup");
+        fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
+        fs::remove_dir_all(audit_root).expect("audit root cleanup");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_git_mutation_requires_trusted_write_and_unrestricted_network() {
+        let (audit, audit_root) = audit_sink("git-remote-mutation-policy");
+        let denied_workspace = audit_root.with_extension("git-remote-denied-workspace");
+        let trusted_workspace = audit_root.with_extension("git-remote-trusted-workspace");
+        for workspace in [&denied_workspace, &trusted_workspace] {
+            fs::create_dir_all(workspace).expect("workspace created");
+            test_git(workspace, &["init", "-b", "main"]);
+            test_git(workspace, &["config", "user.name", "KodeGPT Test"]);
+            test_git(
+                workspace,
+                &["config", "user.email", "kodegpt@example.invalid"],
+            );
+            fs::write(workspace.join("tracked.txt"), "content\n").expect("tracked file");
+            test_git(workspace, &["add", "tracked.txt"]);
+            test_git(workspace, &["commit", "-m", "base"]);
+            test_git(workspace, &["init", "--bare", "remote.git"]);
+            test_git(workspace, &["remote", "add", "origin", "remote.git"]);
+        }
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let mut narrowed_policy = trusted_policy();
+        narrowed_policy["network"] = json!("deny");
+        let denied_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &denied_workspace,
+            narrowed_policy,
+            "git_remote_denied",
+        )
+        .await;
+        let trusted_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &trusted_workspace,
+            trusted_policy(),
+            "git_remote_trusted",
+        )
+        .await;
+
+        let denied = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_denied",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": denied_capability,
+                "operation": "push",
+                "remote": "origin",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["message"], "GIT_REMOTE_POLICY_DENIED");
+        assert!(!denied_workspace.join("remote.git/refs/heads/main").exists());
+
+        let pushed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_push",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "push",
+                "remote": "origin",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(pushed["result"]["schemaVersion"], 1);
+        assert_eq!(pushed["result"]["operation"], "push");
+        assert_eq!(pushed["result"]["exitCode"], 0);
+        assert!(
+            !test_git(
+                &trusted_workspace,
+                &["--git-dir", "remote.git", "rev-parse", "refs/heads/main"]
+            )
+            .trim()
+            .is_empty()
+        );
+
+        let invalid = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_invalid_url",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "fetch",
+                "remote": "https://transport-secret@example.invalid/repo.git",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(invalid["error"]["message"], "GIT_REMOTE_INPUT_INVALID");
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit log");
+        assert!(audit_text.contains("git_push"));
+        assert!(audit_text.contains("\"remote\":\"origin\""));
+        assert!(audit_text.contains("\"ref\":\"main\""));
+        assert!(!audit_text.contains("transport-secret"));
+        assert!(!audit_text.contains("example.invalid/repo.git"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(denied_workspace).expect("denied workspace cleanup");
         fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
         fs::remove_dir_all(audit_root).expect("audit root cleanup");
     }

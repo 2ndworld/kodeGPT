@@ -264,6 +264,31 @@ pub enum GitLocalMutationParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum GitRemoteMutationParams {
+    Fetch {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
+    Pull {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
+    Push {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum GitRevisionSpec {
     Head,
@@ -540,6 +565,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitLocalMutationParams,
+    },
+    #[serde(rename = "git.remote_mutation")]
+    GitRemoteMutation {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitRemoteMutationParams,
     },
     #[serde(rename = "git.log")]
     GitLog {

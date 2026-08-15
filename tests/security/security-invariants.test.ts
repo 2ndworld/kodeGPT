@@ -161,8 +161,8 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust and local Git surface with no generic authority or execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.5");
+  it("ships only the intended typed trust and bounded Git surface with no generic authority or execution tools", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.6");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
@@ -173,6 +173,9 @@ describe("full security acceptance invariants", () => {
       "git.branchCreate",
       "git.branchSwitch",
       "git.branchDelete",
+      "git.fetch",
+      "git.pull",
+      "git.push",
       "verify.list",
       "verify.run",
       "file.patch",

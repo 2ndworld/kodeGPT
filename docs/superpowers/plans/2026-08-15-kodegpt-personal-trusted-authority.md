@@ -222,35 +222,35 @@ Commit message: `feat(git): add trusted local workflow`
 - Network behavior follows trusted profile authority.
 - No force push, arbitrary rebase, raw Git argv, or shell.
 
-- [ ] **Step 1: Write RED deterministic local-remote tests**
+- [x] **Step 1: Write RED deterministic local-remote tests**
 
 Use temporary repositories and local bare remotes to prove ref updates, pull/integration semantics, and push correctness without relying on external network availability.
 
-- [ ] **Step 2: Add separate RED policy/network gating tests**
+- [x] **Step 2: Add separate RED policy/network gating tests**
 
 Prove non-trusted/non-network-authorized contexts cannot use remote Git, while trusted authority reaches the remote operation path.
 
-- [ ] **Step 3: Add/implement bounded protocol variants for fetch/pull/push**
+- [x] **Step 3: Add/implement bounded protocol variants for fetch/pull/push**
 
 Use explicit remote/ref inputs with safe defaults and closed operation semantics.
 
-- [ ] **Step 4: Implement fixed-argv runtime operations**
+- [x] **Step 4: Implement fixed-argv runtime operations**
 
 `fetch` may update refs but must not modify the working tree. `pull` behavior must be explicit rather than an opaque arbitrary integration command. `push` must not expose force semantics in this phase.
 
-- [ ] **Step 5: Run Rust/integration tests to GREEN**
+- [x] **Step 5: Run Rust/integration tests to GREEN**
 
 Expected: PASS.
 
-- [ ] **Step 6: Write and implement TypeScript capability + MCP schemas**
+- [x] **Step 6: Write and implement TypeScript capability + MCP schemas**
 
 Route through the runtime path from Tasks 3–4 and require trusted authority.
 
-- [ ] **Step 7: Add audit tests for fetch/pull/push**
+- [x] **Step 7: Add audit tests for fetch/pull/push**
 
 Record bounded remote/ref metadata and outcome without credentials or transport secrets.
 
-- [ ] **Step 8: Run affected MCP/security/integration suites to GREEN**
+- [x] **Step 8: Run affected MCP/security/integration suites to GREEN**
 
 Expected: PASS.
 

@@ -4,6 +4,7 @@ export interface TestCapabilityDependencyOverrides {
   workspace?: Partial<NativeCapabilityDependencies["workspace"]>;
   git?: NativeCapabilityDependencies["git"];
   gitLocal?: NativeCapabilityDependencies["gitLocal"];
+  gitRemote?: NativeCapabilityDependencies["gitRemote"];
   gitHistory?: NativeCapabilityDependencies["gitHistory"];
   patch?: Partial<NativeCapabilityDependencies["patch"]>;
   verification?: Partial<NativeCapabilityDependencies["verification"]>;
@@ -40,6 +41,16 @@ export function createTestCapabilityDependencies(
         branchCreate: async () => unexpected("gitLocal.mutation.branchCreate"),
         branchSwitch: async () => unexpected("gitLocal.mutation.branchSwitch"),
         branchDelete: async () => unexpected("gitLocal.mutation.branchDelete")
+      }
+    },
+    gitRemote: {
+      authority: {
+        effectivePolicy: () => unexpected("gitRemote.authority.effectivePolicy")
+      },
+      mutation: {
+        fetch: async () => unexpected("gitRemote.mutation.fetch"),
+        pull: async () => unexpected("gitRemote.mutation.pull"),
+        push: async () => unexpected("gitRemote.mutation.push")
       }
     },
     gitHistory: {
@@ -80,6 +91,7 @@ export function createTestCapabilityDependencies(
     },
     git: overrides.git ?? defaults.git,
     gitLocal: overrides.gitLocal ?? defaults.gitLocal,
+    gitRemote: overrides.gitRemote ?? defaults.gitRemote,
     gitHistory: overrides.gitHistory ?? defaults.gitHistory,
     patch: {
       ...defaults.patch,

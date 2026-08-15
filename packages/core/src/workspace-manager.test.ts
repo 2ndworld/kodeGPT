@@ -242,6 +242,25 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "git.remote_mutation":
+        return {
+          schemaVersion: 1,
+          operation: params.operation,
+          exitCode: 0,
+          stdoutPreview: "",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 0,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_git_remote_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 0,
+            sourceTruncated: false
+          }
+        } as T;
       case "git.diff":
         return {
           schemaVersion: 1,
@@ -1008,6 +1027,38 @@ describe("WorkspaceManager", () => {
     ]);
     expect(JSON.stringify(stage)).toContain("artifact://ka_git_mutation_fixture");
     expect(JSON.stringify(stage)).not.toContain("artifactId");
+  });
+
+  it("routes typed remote Git mutations through the private runtime capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_git_remote"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const fetch = await manager.gitFetch("ws_git_remote", "origin", "main");
+    const pull = await manager.gitPull("ws_git_remote", "upstream", "feature/a");
+    const push = await manager.gitPush("ws_git_remote", "origin", "main");
+
+    expect([fetch.operation, pull.operation, push.operation]).toEqual(["fetch", "pull", "push"]);
+    expect(kernel.calls.slice(-3)).toEqual([
+      {
+        method: "git.remote_mutation",
+        params: { capabilityId: "kc_fixture", operation: "fetch", remote: "origin", ref: "main" }
+      },
+      {
+        method: "git.remote_mutation",
+        params: { capabilityId: "kc_fixture", operation: "pull", remote: "upstream", ref: "feature/a" }
+      },
+      {
+        method: "git.remote_mutation",
+        params: { capabilityId: "kc_fixture", operation: "push", remote: "origin", ref: "main" }
+      }
+    ]);
+    expect(JSON.stringify(fetch)).toContain("artifact://ka_git_remote_fixture");
+    expect(JSON.stringify(fetch)).not.toContain("artifactId");
   });
 
   it("routes conditional patch commits through the private runtime capability and rejects leaked fields", async () => {

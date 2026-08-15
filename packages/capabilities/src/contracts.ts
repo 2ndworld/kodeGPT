@@ -19,6 +19,7 @@ export const MAX_GIT_HISTORY_PATHS = 500;
 export const MAX_GIT_STAGE_PATHS = 128;
 export const MAX_GIT_MUTATION_TEXT = 4096;
 export const MAX_GIT_BRANCH_NAME = 255;
+export const MAX_GIT_REMOTE_NAME = 128;
 export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "workspace.inspect",
   "code.search",
@@ -34,6 +35,9 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "git.branchCreate",
   "git.branchSwitch",
   "git.branchDelete",
+  "git.fetch",
+  "git.pull",
+  "git.push",
   "git.log",
   "git.show",
   "git.range",
@@ -331,6 +335,27 @@ export interface GitBranchInput {
 export interface GitLocalMutationResult {
   schemaVersion: 1;
   operation: GitLocalMutationOperation;
+  exitCode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  sourceTruncated: boolean;
+  bytesSpooled: number;
+  artifact: CapabilityArtifactMetadata;
+}
+
+export type GitRemoteMutationOperation = "fetch" | "pull" | "push";
+
+export interface GitRemoteInput {
+  workspaceId: string;
+  remote?: string;
+  ref: string;
+}
+
+export interface GitRemoteMutationResult {
+  schemaVersion: 1;
+  operation: GitRemoteMutationOperation;
   exitCode: number;
   stdoutPreview: string;
   stderrPreview: string;

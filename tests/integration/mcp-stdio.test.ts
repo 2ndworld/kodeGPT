@@ -41,6 +41,20 @@ const localGitMutationAnnotations = {
   openWorldHint: false
 };
 
+const remoteGitFetchAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+
+const remoteGitMutationAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+};
+
 const processRunAnnotations = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -225,6 +239,10 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           tool.name === "git.branchDelete"
         ) {
           expect(tool.annotations).toEqual(localGitMutationAnnotations);
+        } else if (tool.name === "git.fetch") {
+          expect(tool.annotations).toEqual(remoteGitFetchAnnotations);
+        } else if (tool.name === "git.pull" || tool.name === "git.push") {
+          expect(tool.annotations).toEqual(remoteGitMutationAnnotations);
         } else if (tool.name === "process.run" || tool.name === "verify.run") {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel") {

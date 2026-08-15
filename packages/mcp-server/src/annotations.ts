@@ -26,6 +26,20 @@ export const LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS = Object.freeze({
   openWorldHint: false
 });
 
+export const REMOTE_GIT_FETCH_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+});
+
+export const REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
 export const PROCESS_CONTROL_TOOL_ANNOTATIONS = Object.freeze({
   readOnlyHint: false,
   destructiveHint: true,

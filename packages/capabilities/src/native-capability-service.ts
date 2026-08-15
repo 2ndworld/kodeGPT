@@ -4,6 +4,8 @@ import type {
   GitHistoryAdapter,
   GitLocalAuthorityAdapter,
   GitLocalMutationAdapter,
+  GitRemoteAuthorityAdapter,
+  GitRemoteMutationAdapter,
   PatchCommitAdapter,
   PatchWorkspaceAdapter,
   VerificationAvailabilityAdapter,
@@ -33,6 +35,8 @@ import type {
   GitCommitInput,
   GitBranchInput,
   GitLocalMutationResult,
+  GitRemoteInput,
+  GitRemoteMutationResult,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -45,6 +49,7 @@ import { buildContext as composeContext } from "./context-build.js";
 import { gitChanges } from "./git-changes.js";
 import { gitDiffHistory, gitLog, gitRange, gitShow } from "./git-history.js";
 import { gitBranchCreate, gitBranchDelete, gitBranchSwitch, gitCommit, gitStage } from "./git-local.js";
+import { gitFetch, gitPull, gitPush } from "./git-remote.js";
 import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
@@ -58,6 +63,9 @@ export type NativeCapabilityName =
   | "git.branchCreate"
   | "git.branchSwitch"
   | "git.branchDelete"
+  | "git.fetch"
+  | "git.pull"
+  | "git.push"
   | "git.log"
   | "git.show"
   | "git.range"
@@ -76,6 +84,10 @@ export interface NativeCapabilityDependencies {
   gitLocal: {
     authority: GitLocalAuthorityAdapter;
     mutation: GitLocalMutationAdapter;
+  };
+  gitRemote: {
+    authority: GitRemoteAuthorityAdapter;
+    mutation: GitRemoteMutationAdapter;
   };
   gitHistory: GitHistoryAdapter;
   patch: {
@@ -140,6 +152,18 @@ export class NativeCapabilityService {
 
   async gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult> {
     return gitBranchDelete(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
+    return gitFetch(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
+  }
+
+  async gitPull(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
+    return gitPull(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
+  }
+
+  async gitPush(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
+    return gitPush(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
   }
 
   async gitLog(input: GitLogInput): Promise<GitLogResult> {

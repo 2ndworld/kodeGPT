@@ -96,6 +96,21 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "remove branch",
     "safe branch delete"
   ]),
+  "git.fetch": entry("git.fetch", "Fetch a validated branch from a named remote in a trusted workspace.", [
+    "git fetch",
+    "fetch remote branch",
+    "update remote tracking branch"
+  ]),
+  "git.pull": entry("git.pull", "Fast-forward a trusted workspace from a validated remote branch.", [
+    "git pull",
+    "fast-forward pull",
+    "update from remote"
+  ]),
+  "git.push": entry("git.push", "Push a validated local branch to the same branch on a named remote.", [
+    "git push",
+    "push branch",
+    "publish branch"
+  ]),
   "git.log": entry("git.log", "List bounded structured local Git commit history.", [
     "git log",
     "commit history",

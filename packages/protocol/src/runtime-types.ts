@@ -23,6 +23,7 @@ export const RUNTIME_METHODS = [
   "git.checkpoint_patch",
   "git.diff",
   "git.local_mutation",
+  "git.remote_mutation",
   "git.log",
   "git.show",
   "git.range",
@@ -225,6 +226,18 @@ const gitLocalMutationParamsSchema = z.discriminatedUnion("operation", [
   )
 ]);
 
+const gitRemoteMutationBase = {
+  capabilityId: z.string().min(1),
+  remote: z.string().min(1).max(128).refine((value) => !value.includes("\0")),
+  ref: z.string().min(1).max(255).refine((value) => !value.includes("\0"))
+};
+
+const gitRemoteMutationParamsSchema = z.discriminatedUnion("operation", [
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("fetch") }).strict(),
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("pull") }).strict(),
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("push") }).strict()
+]);
+
 const gitRevisionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("head") }).strict(),
   z.object({ kind: z.literal("oid"), oid: z.string() }).strict(),
@@ -386,6 +399,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
   requestSchema("git.local_mutation", gitLocalMutationParamsSchema),
+  requestSchema("git.remote_mutation", gitRemoteMutationParamsSchema),
   requestSchema("git.log", gitLogParamsSchema),
   requestSchema("git.show", gitShowParamsSchema),
   requestSchema("git.range", gitRangeParamsSchema),

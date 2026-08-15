@@ -50,7 +50,7 @@ describe("hardened Git source regressions", () => {
     expect(production).not.toContain("to_be_bytes()");
   });
 
-  it("publishes only typed Git inspection and trusted local mutation tools on opaque workspace IDs", async () => {
+  it("publishes only typed Git inspection and bounded trusted mutation tools on opaque workspace IDs", async () => {
     const tools = await source("packages/mcp-server/src/tools.ts");
 
     for (const name of [
@@ -64,12 +64,17 @@ describe("hardened Git source regressions", () => {
       "git.commit",
       "git.branchCreate",
       "git.branchSwitch",
-      "git.branchDelete"
+      "git.branchDelete",
+      "git.fetch",
+      "git.pull",
+      "git.push"
     ]) {
       expect(tools).toContain(`"${name}"`);
     }
     expect(tools).toContain("READ_ONLY_TOOL_ANNOTATIONS");
     expect(tools).toContain("LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS");
+    expect(tools).toContain("REMOTE_GIT_FETCH_TOOL_ANNOTATIONS");
+    expect(tools).toContain("REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS");
     for (const forbidden of ["git.run", "git.exec", "git.command", "git.reset", "git.rebase"]) {
       expect(tools).not.toContain(`"${forbidden}"`);
     }
@@ -92,6 +97,9 @@ describe("hardened Git source regressions", () => {
     expect(audit).toContain("GitBranchCreate");
     expect(audit).toContain("GitBranchSwitch");
     expect(audit).toContain("GitBranchDelete");
+    expect(audit).toContain("GitFetch");
+    expect(audit).toContain("GitPull");
+    expect(audit).toContain("GitPush");
     expect(dispatcher).toContain("AuditAction::GitStatus");
     expect(dispatcher).toContain("AuditAction::GitDiff");
     expect(dispatcher).toContain("AuditAction::GitHistoryList");
@@ -103,5 +111,8 @@ describe("hardened Git source regressions", () => {
     expect(dispatcher).toContain("AuditAction::GitBranchCreate");
     expect(dispatcher).toContain("AuditAction::GitBranchSwitch");
     expect(dispatcher).toContain("AuditAction::GitBranchDelete");
+    expect(dispatcher).toContain("AuditAction::GitFetch");
+    expect(dispatcher).toContain("AuditAction::GitPull");
+    expect(dispatcher).toContain("AuditAction::GitPush");
   });
 });
