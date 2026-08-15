@@ -18,6 +18,7 @@ describe("release CI contract", () => {
     expect(source).toContain("sudo chown \"$(id -u):$(id -g)\" \"$node_root\"");
     expect(source).toContain("chmod 0755 \"$node_root\"");
     expect(source).toContain("chmod 0755 \"$pnpm_target\"");
+    expect(source).toContain("chmod 0755 \"$node_target\"");
     expect(source).toContain("stat -c '%u:%g:%a' \"$node_root\"");
     expect(source).toContain("rustup toolchain install stable --profile minimal");
     expect(source).toContain("1b80120ef26a28e065e67f89bfef873f13bdd317");

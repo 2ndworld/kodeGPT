@@ -51,10 +51,15 @@ jobs:
           chmod 0755 "$pnpm_target"
           test "$(stat -Lc '%a' "$pnpm_entry")" = "755"
           node_target="$(readlink -f "$node_root/bin/node")"
+          case "$node_target" in
+            "$node_root"/*) ;;
+            *) echo "node target escaped trusted Node root" >&2; exit 1 ;;
+          esac
+          chmod 0755 "$node_target"
+          test "$(stat -Lc '%a' "$node_root/bin/node")" = "755"
           corepack_home="$HOME/.cache/node/corepack"
-          printf 'node_target_stat=%s\n' "$(stat -Lc '%u:%g:%a:%F' "$node_target")"
-          printf 'corepack_home=%s\n' "$corepack_home"
-          printf 'corepack_home_stat=%s\n' "$(stat -Lc '%u:%g:%a:%F' "$corepack_home")"
+          test "$(stat -c '%u:%g' "$corepack_home")" = "$(id -u):$(id -g)"
+          test $(( 8#$(stat -c '%a' "$corepack_home") & 8#022 )) -eq 0
 
       - name: Setup Rust stable
         shell: bash
