@@ -42,6 +42,14 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$node_root"
           chmod 0755 "$node_root"
           test "$(stat -c '%u:%g:%a' "$node_root")" = "$(id -u):$(id -g):755"
+          pnpm_entry="$node_root/bin/pnpm"
+          pnpm_target="$(readlink -f "$pnpm_entry")"
+          printf 'node_root=%s\n' "$node_root"
+          printf 'node_root_stat=%s\n' "$(stat -c '%u:%g:%a:%F' "$node_root")"
+          printf 'pnpm_entry=%s\n' "$pnpm_entry"
+          printf 'pnpm_entry_stat=%s\n' "$(stat -c '%u:%g:%a:%F' "$pnpm_entry")"
+          printf 'pnpm_target=%s\n' "$pnpm_target"
+          printf 'pnpm_target_stat=%s\n' "$(stat -Lc '%u:%g:%a:%F' "$pnpm_entry")"
 
       - name: Setup Rust stable
         shell: bash
