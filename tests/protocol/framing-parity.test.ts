@@ -14,6 +14,7 @@ import {
 const FIXTURE_NAMES = [
   "runtime.hello.json",
   "system.inspect_root.json",
+  "trust.audit.json",
   "workspace.register.json",
   "workspace.read_project_profile.json",
   "workspace.restrict_policy.json",
@@ -53,6 +54,7 @@ const FIXTURE_NAMES = [
 const EXPECTED_METHODS = [
   "runtime.hello",
   "system.inspect_root",
+  "trust.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",

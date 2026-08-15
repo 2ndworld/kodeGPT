@@ -36,13 +36,16 @@ const LOCKED_SURFACE = [
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
+  { name: "workspace.open", required: ["rootPath"] },
+  { name: "workspace.trust", required: ["rootPath"] },
+  { name: "workspace.untrust", required: ["trustId"] }
 ] as const;
 
 const expectedTools = LOCKED_SURFACE.map(({ name }) => name);

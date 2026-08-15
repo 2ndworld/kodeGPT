@@ -11,6 +11,7 @@ import {
 import type { RuntimeMethod } from "@kodegpt/protocol";
 import type {
   PersistentFilesystemIdentity,
+  ProfileCeiling,
   TrustedWorkspaceEntry
 } from "@kodegpt/trust";
 
@@ -21,6 +22,13 @@ export interface KernelTransport {
 }
 
 export interface TrustResolver {
+  list(): TrustedWorkspaceEntry[] | Promise<TrustedWorkspaceEntry[]>;
+  trust(input: {
+    canonicalRoot: string;
+    identity: PersistentFilesystemIdentity;
+    profileCeiling: ProfileCeiling;
+  }): TrustedWorkspaceEntry | Promise<TrustedWorkspaceEntry>;
+  untrust(id: string): boolean | Promise<boolean>;
   requireTrusted(
     canonicalRoot: string,
     actualIdentity: PersistentFilesystemIdentity
@@ -32,6 +40,16 @@ export interface OpenWorkspace {
   canonicalRoot: string;
   effectivePolicy: ProfilePolicy;
 }
+
+export interface TrustedWorkspaceSummary {
+  id: string;
+  canonicalRoot: string;
+  profileCeiling: ProfileCeiling;
+  trustedAt: string;
+}
+
+type TrustAuditAction = "trust" | "profile_update" | "untrust";
+type TrustAuditPhase = "decision" | "success" | "failed";
 
 export interface WorkspaceFileReadResult {
   contents: string;
@@ -309,6 +327,7 @@ type WorkspaceState = {
   phase: WorkspacePhase;
   closeInFlight: boolean;
   canonicalRoot?: string;
+  trustId?: string;
   capabilityId?: string;
   effectivePolicy?: ProfilePolicy;
 };
@@ -372,6 +391,7 @@ export class WorkspaceManager {
   readonly #kernel: KernelTransport;
   readonly #trust: TrustResolver;
   readonly #idFactory: () => string;
+  readonly #auditOperationIdFactory: () => string;
   readonly #closeTimeoutMs: number;
   readonly #workspaces = new Map<string, WorkspaceState>();
 
@@ -379,12 +399,16 @@ export class WorkspaceManager {
     kernel: KernelTransport;
     trust: TrustResolver;
     idFactory?: () => string;
+    auditOperationIdFactory?: () => string;
     closeTimeoutMs?: number;
   }) {
     this.#kernel = options.kernel;
     this.#trust = options.trust;
     this.#idFactory =
       options.idFactory ?? (() => `ws_${randomUUID().replaceAll("-", "")}`);
+    this.#auditOperationIdFactory =
+      options.auditOperationIdFactory ??
+      (() => `op_trust_${randomUUID().replaceAll("-", "")}`);
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 5_000;
     if (
       !Number.isSafeInteger(this.#closeTimeoutMs) ||
@@ -403,6 +427,14 @@ export class WorkspaceManager {
         `${method} returned an invalid acknowledgement`
       );
     }
+  }
+
+  async #auditTrust(
+    operationId: string,
+    action: TrustAuditAction,
+    phase: TrustAuditPhase
+  ): Promise<void> {
+    await this.#requestOk("trust.audit", { operationId, action, phase });
   }
 
   async openWorkspace(rootPath: string): Promise<OpenWorkspace> {
@@ -428,6 +460,7 @@ export class WorkspaceManager {
       state.canonicalRoot = inspected.canonicalRoot;
 
       const trusted = await this.#trust.requireTrusted(inspected.canonicalRoot, inspected.identity);
+      state.trustId = trusted.id;
       const ceiling = getProfilePreset(trusted.profileCeiling);
 
       const registered = await this.#kernel.request<RegisterResult>("workspace.register", {
@@ -486,6 +519,83 @@ export class WorkspaceManager {
       .filter((state) => state.phase === "READY" && state.capabilityId !== undefined)
       .map(publicWorkspace)
       .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async trustWorkspace(
+    rootPath: string,
+    profileCeiling: ProfileCeiling = "observe"
+  ): Promise<TrustedWorkspaceSummary> {
+    if (rootPath.length === 0) {
+      throw new TypeError("Workspace root path must not be empty");
+    }
+    const inspected = await this.#kernel.request<InspectRootResult>("system.inspect_root", {
+      path: rootPath
+    });
+    validateInspectResult(inspected);
+    const existing = (await this.#trust.list()).find(
+      (entry) => entry.canonicalRoot === inspected.canonicalRoot
+    );
+    const action: TrustAuditAction = existing === undefined ? "trust" : "profile_update";
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditTrust(operationId, action, "decision");
+    let trusted: TrustedWorkspaceEntry;
+    try {
+      trusted = await this.#trust.trust({
+        canonicalRoot: inspected.canonicalRoot,
+        identity: inspected.identity,
+        profileCeiling
+      });
+    } catch (error) {
+      try {
+        await this.#auditTrust(operationId, action, "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+    await this.#auditTrust(operationId, action, "success");
+    return publicTrustedWorkspace(trusted);
+  }
+
+  async listTrustedWorkspaces(): Promise<TrustedWorkspaceSummary[]> {
+    const entries = await this.#trust.list();
+    return entries
+      .map(publicTrustedWorkspace)
+      .sort((left, right) => left.canonicalRoot.localeCompare(right.canonicalRoot));
+  }
+
+  async untrustWorkspace(trustId: string): Promise<boolean> {
+    if (trustId.length === 0) {
+      throw new TypeError("Workspace trust ID must not be empty");
+    }
+    const trusted = (await this.#trust.list()).find((entry) => entry.id === trustId);
+    const bound = [...this.#workspaces.values()].filter(
+      (state) =>
+        state.trustId === trustId ||
+        (trusted !== undefined && state.canonicalRoot === trusted.canonicalRoot)
+    );
+    const transitioning = bound.find((state) => state.phase !== "READY");
+    if (transitioning !== undefined) {
+      throw new WorkspaceNotReadyError(transitioning.id);
+    }
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditTrust(operationId, "untrust", "decision");
+    let removed: boolean;
+    try {
+      for (const state of bound) {
+        await this.closeWorkspace(state.id);
+      }
+      removed = await this.#trust.untrust(trustId);
+    } catch (error) {
+      try {
+        await this.#auditTrust(operationId, "untrust", "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+    await this.#auditTrust(operationId, "untrust", "success");
+    return removed;
   }
 
   requireReady(workspaceId: string): OpenWorkspace {
@@ -1086,6 +1196,15 @@ function publicWorkspace(state: WorkspaceState): OpenWorkspace {
       allowedExecutableNames: [...state.effectivePolicy.allowedExecutableNames],
       envAllowlist: [...state.effectivePolicy.envAllowlist]
     }
+  };
+}
+
+function publicTrustedWorkspace(entry: TrustedWorkspaceEntry): TrustedWorkspaceSummary {
+  return {
+    id: entry.id,
+    canonicalRoot: entry.canonicalRoot,
+    profileCeiling: entry.profileCeiling,
+    trustedAt: entry.trustedAt
   };
 }
 

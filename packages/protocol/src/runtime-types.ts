@@ -3,6 +3,7 @@ import { z } from "zod";
 export const RUNTIME_METHODS = [
   "runtime.hello",
   "system.inspect_root",
+  "trust.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
@@ -65,6 +66,14 @@ const runtimeHelloParamsSchema = z.object({}).strict();
 const systemInspectRootParamsSchema = z
   .object({
     path: z.string().min(1)
+  })
+  .strict();
+
+const trustAuditParamsSchema = z
+  .object({
+    operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
+    action: z.enum(["trust", "profile_update", "untrust"]),
+    phase: z.enum(["decision", "success", "failed"])
   })
   .strict();
 
@@ -330,6 +339,7 @@ function requestSchema<M extends RuntimeMethod, P extends z.ZodType>(method: M, 
 export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("runtime.hello", runtimeHelloParamsSchema),
   requestSchema("system.inspect_root", systemInspectRootParamsSchema),
+  requestSchema("trust.audit", trustAuditParamsSchema),
   requestSchema("workspace.register", workspaceRegisterParamsSchema),
   requestSchema("workspace.read_project_profile", workspaceCapabilityParamsSchema),
   requestSchema("workspace.restrict_policy", workspaceRestrictPolicyParamsSchema),

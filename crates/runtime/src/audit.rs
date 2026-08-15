@@ -14,6 +14,9 @@ pub const DEFAULT_AUDIT_ROTATIONS: usize = 5;
 #[derive(Debug, Clone, Copy)]
 pub enum AuditAction {
     InspectRoot,
+    WorkspaceTrust,
+    WorkspaceTrustProfileUpdate,
+    WorkspaceUntrust,
     WorkspaceRegister,
     WorkspaceReadProjectProfile,
     WorkspaceRestrictPolicy,
@@ -391,6 +394,9 @@ impl AuditAction {
     fn as_str(self) -> &'static str {
         match self {
             Self::InspectRoot => "inspect_root",
+            Self::WorkspaceTrust => "workspace_trust",
+            Self::WorkspaceTrustProfileUpdate => "workspace_trust_profile_update",
+            Self::WorkspaceUntrust => "workspace_untrust",
             Self::WorkspaceRegister => "workspace_register",
             Self::WorkspaceReadProjectProfile => "workspace_read_project_profile",
             Self::WorkspaceRestrictPolicy => "workspace_restrict_policy",

@@ -21,6 +21,11 @@ function baseDependencies(events: string[]) {
 
   const workspaceManager = {
     listWorkspaces: () => [],
+    listTrustedWorkspaces: async () => [],
+    trustWorkspace: async () => {
+      throw new Error("not used");
+    },
+    untrustWorkspace: async () => false,
     openWorkspace: async () => {
       throw new Error("not used");
     },

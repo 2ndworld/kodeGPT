@@ -26,6 +26,7 @@ import type {
 import type {
   ExecutionManager,
   OpenWorkspace,
+  TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
   WorkspaceManager,
   WorkspaceSearchMatch,
@@ -53,6 +54,11 @@ export interface WorkspaceCloseResult {
   ok: true;
 }
 
+export interface WorkspaceUntrustResult {
+  trustId: string;
+  removed: boolean;
+}
+
 export interface ProfileCurrentResult {
   workspaceId: string;
   effectivePolicy: OpenWorkspace["effectivePolicy"];
@@ -61,6 +67,11 @@ export interface ProfileCurrentResult {
 export interface WorkspaceToolContext {
   list(): MaybePromise<OpenWorkspace[]>;
   open(input: { rootPath: string }): MaybePromise<OpenWorkspace>;
+  trust(input: {
+    rootPath: string;
+    profile?: "observe" | "develop" | "trusted";
+  }): MaybePromise<TrustedWorkspaceSummary>;
+  untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
   info(input: { workspaceId: string }): MaybePromise<OpenWorkspace>;
   readFile(input: {
@@ -88,6 +99,10 @@ export interface WorkspaceToolContext {
   }): MaybePromise<WorkspaceSearchMatch[]>;
   tree(input: { workspaceId: string; path?: string }): MaybePromise<WorkspaceTreeEntry[]>;
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
+}
+
+export interface TrustToolContext {
+  list(): MaybePromise<TrustedWorkspaceSummary[]>;
 }
 
 export interface GitToolContext {
@@ -172,6 +187,7 @@ export interface SkillToolContext {
 
 export interface KodegptToolContext {
   workspace: WorkspaceToolContext;
+  trust: TrustToolContext;
   git: GitToolContext;
   process: ProcessToolContext;
   artifact: ArtifactToolContext;
@@ -188,7 +204,10 @@ export interface KodegptToolContext {
 export type WorkspaceManagerToolAdapter = Pick<
   WorkspaceManager,
   | "listWorkspaces"
+  | "listTrustedWorkspaces"
   | "openWorkspace"
+  | "trustWorkspace"
+  | "untrustWorkspace"
   | "closeWorkspace"
   | "requireReady"
   | "readFile"
@@ -246,6 +265,11 @@ export function createKodegptToolContext(options: {
     workspace: {
       list: () => options.workspaceManager.listWorkspaces(),
       open: ({ rootPath }) => options.workspaceManager.openWorkspace(rootPath),
+      trust: ({ rootPath, profile }) => options.workspaceManager.trustWorkspace(rootPath, profile),
+      untrust: async ({ trustId }) => ({
+        trustId,
+        removed: await options.workspaceManager.untrustWorkspace(trustId)
+      }),
       close: async ({ workspaceId }) => {
         await options.workspaceManager.closeWorkspace(workspaceId);
         return { ok: true };
@@ -267,6 +291,9 @@ export function createKodegptToolContext(options: {
         options.workspaceManager.search(workspaceId, query, path),
       tree: ({ workspaceId, path }) => options.workspaceManager.tree(workspaceId, path),
       inspect: (input) => native.inspectWorkspace(input)
+    },
+    trust: {
+      list: () => options.workspaceManager.listTrustedWorkspaces()
     },
     git: {
       status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),

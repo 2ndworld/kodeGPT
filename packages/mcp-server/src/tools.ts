@@ -77,13 +77,16 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
+  { name: "workspace.open", required: ["rootPath"] },
+  { name: "workspace.trust", required: ["rootPath"] },
+  { name: "workspace.untrust", required: ["trustId"] }
 ] as const);
 
 export function listSurfaceTools(): Array<{ name: string; required: string[] }> {
@@ -163,6 +166,16 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "trust.list",
+    {
+      description: "List durable trusted workspace records without exposing filesystem identity.",
+      inputSchema: {},
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async () => structuredToolResult(await context.trust.list())
+  );
+
+  server.registerTool(
     "workspace.open",
     {
       description: "Open a locally trusted workspace. This tool cannot establish workspace trust.",
@@ -170,6 +183,30 @@ export function registerKodegptTools(
       annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
     },
     async ({ rootPath }) => structuredToolResult(await context.workspace.open({ rootPath }))
+  );
+
+  server.registerTool(
+    "workspace.trust",
+    {
+      description: "Trust a local workspace path using locally derived persistent filesystem identity.",
+      inputSchema: {
+        rootPath: z.string().min(1),
+        profile: z.enum(["observe", "develop", "trusted"]).optional()
+      },
+      annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    },
+    async ({ rootPath, profile }) =>
+      structuredToolResult(await context.workspace.trust({ rootPath, profile }))
+  );
+
+  server.registerTool(
+    "workspace.untrust",
+    {
+      description: "Remove durable workspace trust and revoke active workspace authority when open.",
+      inputSchema: { trustId: z.string().min(1) },
+      annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    },
+    async ({ trustId }) => structuredToolResult(await context.workspace.untrust({ trustId }))
   );
 
   server.registerTool(

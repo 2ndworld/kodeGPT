@@ -123,7 +123,15 @@ describe("bridge command unit tests", () => {
       createManagers: () => ({
         workspaceManager: {
           listWorkspaces: () => [],
+          listTrustedWorkspaces: async () => [],
           openWorkspace: async () => readyWorkspace,
+          trustWorkspace: async () => ({
+            id: "trust_1",
+            canonicalRoot: "/tmp",
+            profileCeiling: "observe" as const,
+            trustedAt: "2026-08-15T00:00:00.000Z"
+          }),
+          untrustWorkspace: async () => true,
           closeWorkspace: async () => undefined,
           requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),

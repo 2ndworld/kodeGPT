@@ -39,20 +39,68 @@ function deferred<T>() {
 }
 
 class FakeTrust implements TrustResolver {
-  constructor(private readonly entry: TrustedWorkspaceEntry = TRUSTED_DEVELOP) {}
+  readonly trustCalls: Array<{
+    canonicalRoot: string;
+    identity: PersistentFilesystemIdentity;
+    profileCeiling: "observe" | "develop" | "trusted";
+  }> = [];
+  readonly untrustCalls: string[] = [];
+  beforeTrust: (() => void) | undefined;
+  beforeUntrust: (() => void) | undefined;
+  requireTrustedCalls = 0;
+  requireTrustedGate: Promise<void> | undefined;
+  private entry: TrustedWorkspaceEntry | undefined;
+
+  constructor(entry: TrustedWorkspaceEntry | null = TRUSTED_DEVELOP) {
+    this.entry = entry ?? undefined;
+  }
+
+  async trust(input: {
+    canonicalRoot: string;
+    identity: PersistentFilesystemIdentity;
+    profileCeiling: "observe" | "develop" | "trusted";
+  }): Promise<TrustedWorkspaceEntry> {
+    this.beforeTrust?.();
+    this.trustCalls.push({ ...input, identity: { ...input.identity } });
+    this.entry = {
+      ...(this.entry ?? TRUSTED_DEVELOP),
+      canonicalRoot: input.canonicalRoot,
+      identity: { ...input.identity },
+      profileCeiling: input.profileCeiling
+    };
+    return this.entry;
+  }
+
+  async list(): Promise<TrustedWorkspaceEntry[]> {
+    return this.entry === undefined ? [] : [this.entry];
+  }
+
+  async untrust(id: string): Promise<boolean> {
+    this.beforeUntrust?.();
+    this.untrustCalls.push(id);
+    if (this.entry?.id !== id) return false;
+    this.entry = undefined;
+    return true;
+  }
 
   async requireTrusted(
     canonicalRoot: string,
     actualIdentity: PersistentFilesystemIdentity
   ): Promise<TrustedWorkspaceEntry> {
-    expect(canonicalRoot).toBe(this.entry.canonicalRoot);
-    expect(actualIdentity).toEqual(this.entry.identity);
-    return this.entry;
+    const entry = this.entry;
+    if (entry === undefined) throw new Error("workspace is not trusted");
+    this.requireTrustedCalls += 1;
+    expect(canonicalRoot).toBe(entry.canonicalRoot);
+    expect(actualIdentity).toEqual(entry.identity);
+    await this.requireTrustedGate;
+    return entry;
   }
 }
 
 class FakeKernel implements KernelTransport {
   readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  inspectRootError: unknown;
+  trustAuditErrorPhase: "decision" | "success" | "failed" | undefined;
   profileRead: Promise<{ contents: string | null }> = Promise.resolve({ contents: null });
   activateResult: unknown = { ok: true };
   cancel: Promise<{ ok: true }> = Promise.resolve({ ok: true });
@@ -81,10 +129,14 @@ class FakeKernel implements KernelTransport {
     this.calls.push({ method, params });
     switch (method) {
       case "system.inspect_root":
+        if (this.inspectRootError !== undefined) throw this.inspectRootError;
         return {
           canonicalRoot: "/workspace",
           identity: IDENTITY
         } as T;
+      case "trust.audit":
+        if (params.phase === this.trustAuditErrorPhase) throw new Error("trust audit failed");
+        return { ok: true } as T;
       case "workspace.register":
         return { capabilityId: "kc_fixture" } as T;
       case "workspace.read_project_profile":
@@ -238,6 +290,329 @@ class FakeKernel implements KernelTransport {
 }
 
 describe("WorkspaceManager", () => {
+  it("trusts a workspace by inspected path without caller-supplied filesystem identity", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust(null);
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_control",
+      auditOperationIdFactory: () => "op_trust_control"
+    });
+
+    const trusted = await manager.trustWorkspace("/requested-workspace", "trusted");
+
+    expect(kernel.calls).toEqual([
+      {
+        method: "system.inspect_root",
+        params: { path: "/requested-workspace" }
+      },
+      {
+        method: "trust.audit",
+        params: { operationId: "op_trust_control", action: "trust", phase: "decision" }
+      },
+      {
+        method: "trust.audit",
+        params: { operationId: "op_trust_control", action: "trust", phase: "success" }
+      }
+    ]);
+    expect(trust.trustCalls).toEqual([
+      {
+        canonicalRoot: "/workspace",
+        identity: IDENTITY,
+        profileCeiling: "trusted"
+      }
+    ]);
+    expect(trusted).toEqual({
+      id: "trust_fixture",
+      canonicalRoot: "/workspace",
+      profileCeiling: "trusted",
+      trustedAt: "2026-08-09T00:00:00.000Z"
+    });
+    expect(trusted).not.toHaveProperty("identity");
+  });
+
+  it("defaults trust to observe and exposes one safe durable record after profile update by re-trust", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust(null);
+    const operationIds = ["op_trust_create", "op_trust_update"];
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_update",
+      auditOperationIdFactory: () => operationIds.shift() ?? "op_trust_unexpected"
+    });
+
+    const first = await manager.trustWorkspace("/requested-workspace");
+    const second = await manager.trustWorkspace("/requested-workspace", "trusted");
+    const listed = await manager.listTrustedWorkspaces();
+
+    expect(first.id).toBe("trust_fixture");
+    expect(first.profileCeiling).toBe("observe");
+    expect(second.id).toBe(first.id);
+    expect(second.profileCeiling).toBe("trusted");
+    expect(trust.trustCalls.map((call) => call.profileCeiling)).toEqual(["observe", "trusted"]);
+    expect(
+      kernel.calls.filter((call) => call.method === "trust.audit").map((call) => call.params)
+    ).toEqual([
+      { operationId: "op_trust_create", action: "trust", phase: "decision" },
+      { operationId: "op_trust_create", action: "trust", phase: "success" },
+      { operationId: "op_trust_update", action: "profile_update", phase: "decision" },
+      { operationId: "op_trust_update", action: "profile_update", phase: "success" }
+    ]);
+    expect(listed).toEqual([
+      {
+        id: "trust_fixture",
+        canonicalRoot: "/workspace",
+        profileCeiling: "trusted",
+        trustedAt: "2026-08-09T00:00:00.000Z"
+      }
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("deviceMajor");
+    expect(JSON.stringify(listed)).not.toContain("inode");
+  });
+
+  it("does not mutate trust when local root inspection fails", async () => {
+    const kernel = new FakeKernel();
+    kernel.inspectRootError = new Error("root inspection failed");
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_invalid_root"
+    });
+
+    await expect(manager.trustWorkspace("/missing-workspace", "trusted")).rejects.toThrow(
+      "root inspection failed"
+    );
+    expect(trust.trustCalls).toEqual([]);
+    expect(kernel.calls.map((call) => call.method)).toEqual(["system.inspect_root"]);
+  });
+
+  it("fails closed before trust mutation when the Rust audit decision cannot be recorded", async () => {
+    const kernel = new FakeKernel();
+    kernel.trustAuditErrorPhase = "decision";
+    const trust = new FakeTrust(null);
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_audit_fail",
+      auditOperationIdFactory: () => "op_trust_audit_fail"
+    });
+
+    await expect(manager.trustWorkspace("/requested-workspace", "trusted")).rejects.toThrow(
+      "trust audit failed"
+    );
+    expect(trust.trustCalls).toEqual([]);
+    expect(kernel.calls.map((call) => call.method)).toEqual(["system.inspect_root", "trust.audit"]);
+  });
+
+  it("records a failed audit outcome when durable trust mutation fails after decision", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust(null);
+    trust.beforeTrust = () => {
+      throw new Error("trust store failed");
+    };
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_store_fail",
+      auditOperationIdFactory: () => "op_trust_store_fail"
+    });
+
+    await expect(manager.trustWorkspace("/requested-workspace", "trusted")).rejects.toThrow(
+      "trust store failed"
+    );
+    expect(kernel.calls.filter((call) => call.method === "trust.audit").map((call) => call.params)).toEqual([
+      { operationId: "op_trust_store_fail", action: "trust", phase: "decision" },
+      { operationId: "op_trust_store_fail", action: "trust", phase: "failed" }
+    ]);
+    expect(trust.trustCalls).toEqual([]);
+  });
+
+  it("does not emit a false failed outcome when success auditing fails after durable trust mutation", async () => {
+    const kernel = new FakeKernel();
+    kernel.trustAuditErrorPhase = "success";
+    const trust = new FakeTrust(null);
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_trust_success_audit_fail",
+      auditOperationIdFactory: () => "op_trust_success_audit_fail"
+    });
+
+    await expect(manager.trustWorkspace("/requested-workspace", "trusted")).rejects.toThrow(
+      "trust audit failed"
+    );
+    expect(trust.trustCalls).toHaveLength(1);
+    expect(kernel.calls.filter((call) => call.method === "trust.audit").map((call) => call.params)).toEqual([
+      { operationId: "op_trust_success_audit_fail", action: "trust", phase: "decision" },
+      { operationId: "op_trust_success_audit_fail", action: "trust", phase: "success" }
+    ]);
+  });
+
+  it("does not let repository-controlled project profile loading mutate durable trust", async () => {
+    const kernel = new FakeKernel();
+    kernel.profileRead = Promise.resolve({
+      contents: JSON.stringify({
+        ...getProfilePreset("develop"),
+        allowWrite: false
+      })
+    });
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_repo_content_no_authority"
+    });
+
+    await manager.openWorkspace("/workspace");
+
+    expect(trust.trustCalls).toEqual([]);
+    expect(trust.untrustCalls).toEqual([]);
+  });
+
+  it("untrusts a closed workspace without invoking runtime lifecycle operations", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_untrust_closed",
+      auditOperationIdFactory: () => "op_untrust_closed"
+    });
+
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+
+    expect(kernel.calls).toEqual([
+      {
+        method: "trust.audit",
+        params: { operationId: "op_untrust_closed", action: "untrust", phase: "decision" }
+      },
+      {
+        method: "trust.audit",
+        params: { operationId: "op_untrust_closed", action: "untrust", phase: "success" }
+      }
+    ]);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+    await expect(manager.listTrustedWorkspaces()).resolves.toEqual([]);
+  });
+
+  it("closes and cancels an active workspace before removing its durable trust", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_untrust_active",
+      auditOperationIdFactory: () => "op_untrust_active"
+    });
+    await manager.openWorkspace("/workspace");
+    kernel.calls.length = 0;
+    trust.beforeUntrust = () => expect(manager.listWorkspaces()).toEqual([]);
+
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+
+    expect(kernel.calls).toEqual([
+      {
+        method: "trust.audit",
+        params: { operationId: "op_untrust_active", action: "untrust", phase: "decision" }
+      },
+      { method: "workspace.begin_close", params: { capabilityId: "kc_fixture" } },
+      { method: "workspace.cancel_executions", params: { capabilityId: "kc_fixture" } },
+      { method: "workspace.unregister", params: { capabilityId: "kc_fixture" } },
+      {
+        method: "trust.audit",
+        params: { operationId: "op_untrust_active", action: "untrust", phase: "success" }
+      }
+    ]);
+    expect(manager.listWorkspaces()).toEqual([]);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+  });
+
+  it("fails closed instead of removing trust while a matching workspace is still opening", async () => {
+    const kernel = new FakeKernel();
+    const profileRead = deferred<{ contents: string | null }>();
+    kernel.profileRead = profileRead.promise;
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_untrust_opening"
+    });
+
+    const opening = manager.openWorkspace("/workspace");
+    while (!kernel.calls.some((call) => call.method === "workspace.read_project_profile")) {
+      await Promise.resolve();
+    }
+
+    await expect(manager.untrustWorkspace("trust_fixture")).rejects.toBeInstanceOf(
+      WorkspaceNotReadyError
+    );
+    expect(trust.untrustCalls).toEqual([]);
+
+    profileRead.resolve({ contents: null });
+    await opening;
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+  });
+
+  it("fails closed before trust binding completes while a matching canonical root is opening", async () => {
+    const kernel = new FakeKernel();
+    const trustGate = deferred<void>();
+    const trust = new FakeTrust();
+    trust.requireTrustedGate = trustGate.promise;
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_untrust_prebinding"
+    });
+
+    const opening = manager.openWorkspace("/workspace");
+    while (trust.requireTrustedCalls === 0) {
+      await Promise.resolve();
+    }
+
+    await expect(manager.untrustWorkspace("trust_fixture")).rejects.toBeInstanceOf(
+      WorkspaceNotReadyError
+    );
+    expect(trust.untrustCalls).toEqual([]);
+
+    trustGate.resolve();
+    await opening;
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+  });
+
+  it("fails closed instead of removing trust while a matching workspace close is already in flight", async () => {
+    const kernel = new FakeKernel();
+    const cancel = deferred<{ ok: true }>();
+    kernel.cancel = cancel.promise;
+    const trust = new FakeTrust();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      idFactory: () => "ws_untrust_closing"
+    });
+    await manager.openWorkspace("/workspace");
+    kernel.calls.length = 0;
+
+    const closing = manager.closeWorkspace("ws_untrust_closing");
+    while (!kernel.calls.some((call) => call.method === "workspace.cancel_executions")) {
+      await Promise.resolve();
+    }
+
+    await expect(manager.untrustWorkspace("trust_fixture")).rejects.toBeInstanceOf(
+      WorkspaceNotReadyError
+    );
+    expect(trust.untrustCalls).toEqual([]);
+
+    cancel.resolve({ ok: true });
+    await closing;
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+  });
+
   it("routes structured Git history requests through the private READY capability", async () => {
     const kernel = new FakeKernel();
     const manager = new WorkspaceManager({

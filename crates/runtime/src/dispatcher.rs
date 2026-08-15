@@ -10,9 +10,10 @@ use kodegpt_protocol::{
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
     SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
-    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
+    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
+    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -53,6 +54,16 @@ use std::io::Write as _;
 #[serde(deny_unknown_fields)]
 struct SystemInspectRootParams {
     path: String,
+}
+
+fn valid_audit_operation_id(value: &str) -> bool {
+    value.strip_prefix("op_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.len() <= 93
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
 }
 
 #[cfg(feature = "runtime-test-methods")]
@@ -251,6 +262,36 @@ async fn dispatch_one(
                     "identity": inspected.identity
                 }),
             )
+        }
+        "trust.audit" => {
+            let params = match serde_json::from_value::<TrustAuditParams>(request.params) {
+                Ok(params) if valid_audit_operation_id(&params.operation_id) => params,
+                _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let action = match params.action {
+                TrustAuditAction::Trust => AuditAction::WorkspaceTrust,
+                TrustAuditAction::ProfileUpdate => AuditAction::WorkspaceTrustProfileUpdate,
+                TrustAuditAction::Untrust => AuditAction::WorkspaceUntrust,
+            };
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: params.operation_id,
+                capability_id: None,
+                action,
+            };
+            let recorded = match params.phase {
+                TrustAuditPhase::Decision => audit.decision(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                ),
+                TrustAuditPhase::Success => audit.outcome(&audit_context, AuditOutcome::Success),
+                TrustAuditPhase::Failed => audit.outcome(&audit_context, AuditOutcome::Failed),
+            };
+            if recorded.is_err() {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request.id, json!({ "ok": true }))
         }
         "skill_source.inspect_root" => {
             let params =
@@ -2718,6 +2759,101 @@ mod tests {
             .expect("response channel open");
         dispatcher.await.expect("dispatcher task joins");
         response
+    }
+
+    async fn trust_audit_once(
+        audit: Arc<AuditSink>,
+        id: &str,
+        operation_id: &str,
+        action: &str,
+        phase: &str,
+    ) -> Value {
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
+        request_tx
+            .send(request(
+                id,
+                "trust.audit",
+                json!({
+                    "operationId": operation_id,
+                    "action": action,
+                    "phase": phase
+                }),
+            ))
+            .expect("trust audit request accepted");
+        drop(request_tx);
+
+        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+            .await
+            .expect("trust audit response arrives")
+            .expect("response channel open");
+        dispatcher.await.expect("dispatcher task joins");
+        response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_audit_routes_control_plane_records_through_the_single_rust_sink() {
+        let (audit, audit_root) = audit_sink("trust-control-plane");
+
+        let decision = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_decision",
+            "op_trust_control_plane",
+            "profile_update",
+            "decision",
+        )
+        .await;
+        assert_eq!(decision["result"]["ok"], true);
+
+        let outcome = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_success",
+            "op_trust_control_plane",
+            "profile_update",
+            "success",
+        )
+        .await;
+        assert_eq!(outcome["result"]["ok"], true);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert_eq!(audit_text.lines().count(), 2);
+        assert!(audit_text.contains("workspace_trust_profile_update"));
+        assert!(audit_text.contains("op_trust_control_plane"));
+        assert!(!audit_text.contains("rootPath"));
+        assert!(!audit_text.contains("deviceMajor"));
+        assert!(!audit_text.contains("inode"));
+
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_audit_fails_closed_when_the_single_rust_sink_is_unavailable() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-trust-audit-fault-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+
+        let response = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_fault",
+            "op_trust_fault",
+            "trust",
+            "decision",
+        )
+        .await;
+
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

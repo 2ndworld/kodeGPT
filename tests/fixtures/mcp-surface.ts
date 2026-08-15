@@ -30,13 +30,16 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
+  { name: "workspace.open", required: ["rootPath"] },
+  { name: "workspace.trust", required: ["rootPath"] },
+  { name: "workspace.untrust", required: ["trustId"] }
 ] as const;
 
 export const EXPECTED_MCP_TOOL_NAMES = EXPECTED_MCP_SURFACE_TOOLS.map(({ name }) => name);

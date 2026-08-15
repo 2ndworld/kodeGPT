@@ -82,6 +82,14 @@ function dependencies(
   };
   const workspaceManager = {
     listWorkspaces: () => [],
+    listTrustedWorkspaces: async () => [],
+    trustWorkspace: async () => ({
+      id: "trust_test",
+      canonicalRoot: readyWorkspace.canonicalRoot,
+      profileCeiling: "observe" as const,
+      trustedAt: "2026-08-15T00:00:00.000Z"
+    }),
+    untrustWorkspace: async () => true,
     openWorkspace: async () => readyWorkspace,
     closeWorkspace: async () => undefined,
     requireReady: () => readyWorkspace,

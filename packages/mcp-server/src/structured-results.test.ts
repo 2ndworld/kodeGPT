@@ -37,7 +37,8 @@ import type { OpenWorkspace } from "../../core/src/index.js";
 import {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
-  READ_ONLY_TOOL_ANNOTATIONS
+  READ_ONLY_TOOL_ANNOTATIONS,
+  WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
 } from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
 import { registerKodegptTools } from "./tools.js";
@@ -196,6 +197,13 @@ function makeContext(): KodegptToolContext {
     workspace: {
       list: async () => typedWorkspaceListResult,
       open: async () => typedWorkspaceListResult[0],
+      trust: async () => ({
+        id: "trust_fixture",
+        canonicalRoot: "/workspace",
+        profileCeiling: "trusted",
+        trustedAt: "2026-08-15T00:00:00.000Z"
+      }),
+      untrust: async ({ trustId }) => ({ trustId, removed: true }),
       close: async () => ({ ok: true }),
       info: async () => typedWorkspaceListResult[0],
       inspect: async () => typedWorkspaceInspectResult,
@@ -204,6 +212,9 @@ function makeContext(): KodegptToolContext {
       editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
       search: async () => [],
       tree: async () => []
+    },
+    trust: {
+      list: async () => []
     },
     git: {
       status: async () => ({} as never),
@@ -255,6 +266,75 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("registers the small trust control plane without caller-supplied filesystem identity", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const trusted = {
+      id: "trust_fixture",
+      canonicalRoot: "/workspace",
+      profileCeiling: "trusted" as const,
+      trustedAt: "2026-08-15T00:00:00.000Z"
+    };
+    type TrustAwareContext = KodegptToolContext & {
+      trust: { list(): Promise<Array<typeof trusted>> };
+      workspace: KodegptToolContext["workspace"] & {
+        trust(input: { rootPath: string; profile?: "observe" | "develop" | "trusted" }): Promise<typeof trusted>;
+        untrust(input: { trustId: string }): Promise<{ trustId: string; removed: boolean }>;
+      };
+    };
+    const context = makeContext() as TrustAwareContext;
+    context.trust = { list: async () => [trusted] };
+    context.workspace.trust = async ({ rootPath, profile }) => {
+      expect({ rootPath, profile }).toEqual({ rootPath: "/workspace", profile: "trusted" });
+      return trusted;
+    };
+    context.workspace.untrust = async ({ trustId }) => ({ trustId, removed: true });
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+
+    expect(Object.keys((definitions.get("trust.list")?.inputSchema ?? {}) as object)).toEqual([]);
+    expect(definitions.get("trust.list")?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    expect(Object.keys((definitions.get("workspace.trust")?.inputSchema ?? {}) as object).sort()).toEqual([
+      "profile",
+      "rootPath"
+    ]);
+    expect(definitions.get("workspace.trust")?.annotations).toEqual(
+      WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    );
+    expect(Object.keys((definitions.get("workspace.untrust")?.inputSchema ?? {}) as object)).toEqual([
+      "trustId"
+    ]);
+    expect(definitions.get("workspace.untrust")?.annotations).toEqual(
+      WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    );
+    const schemaText = JSON.stringify([
+      definitions.get("trust.list")?.inputSchema,
+      definitions.get("workspace.trust")?.inputSchema,
+      definitions.get("workspace.untrust")?.inputSchema
+    ]);
+    for (const forbidden of ["deviceMajor", "deviceMinor", "inode", "identity", "policy", "grant"]) {
+      expect(schemaText).not.toContain(forbidden);
+    }
+
+    const listResult = (await handlers.get("trust.list")!()) as { structuredContent?: unknown };
+    expect(listResult.structuredContent).toEqual([trusted]);
+    const trustResult = (await handlers.get("workspace.trust")!({
+      rootPath: "/workspace",
+      profile: "trusted"
+    } as never)) as { structuredContent?: unknown };
+    expect(trustResult.structuredContent).toEqual(trusted);
+    const untrustResult = (await handlers.get("workspace.untrust")!({
+      trustId: "trust_fixture"
+    } as never)) as { structuredContent?: unknown };
+    expect(untrustResult.structuredContent).toEqual({ trustId: "trust_fixture", removed: true });
+  });
+
   it("registers Git history with closed schemas and read-only annotations", () => {
     const definitions = new Map<string, Record<string, unknown>>();
     const server = {

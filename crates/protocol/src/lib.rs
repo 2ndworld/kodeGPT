@@ -13,7 +13,8 @@ pub use types::{
     RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy, RuntimeRequest, RuntimeResponse,
     RuntimeRpcError, RuntimeSuccessResponse, SkillSourceCapabilityParams,
     SkillSourceInspectRootParams, SkillSourceReadEncoding, SkillSourceReadParams,
-    SkillSourceRegisterParams, SkillSourceTreeParams, SystemInspectRootParams, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope,
+    SkillSourceRegisterParams, SkillSourceTreeParams, SystemInspectRootParams, TrustAuditAction,
+    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceTraversalScope,
 };

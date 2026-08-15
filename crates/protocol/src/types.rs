@@ -81,6 +81,30 @@ pub struct SystemInspectRootParams {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustAuditAction {
+    Trust,
+    ProfileUpdate,
+    Untrust,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrustAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrustAuditParams {
+    pub operation_id: String,
+    pub action: TrustAuditAction,
+    pub phase: TrustAuditPhase,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceRegisterParams {
@@ -366,6 +390,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: SystemInspectRootParams,
+    },
+    #[serde(rename = "trust.audit")]
+    TrustAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: TrustAuditParams,
     },
     #[serde(rename = "workspace.register")]
     WorkspaceRegister {

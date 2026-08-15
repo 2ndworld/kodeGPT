@@ -190,10 +190,19 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
-      expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
+      expect(tools.filter((tool) => tool.name.includes("trust")).map((tool) => tool.name)).toEqual([
+        "trust.list",
+        "workspace.trust",
+        "workspace.untrust"
+      ]);
 
       for (const tool of tools) {
-        if (tool.name === "workspace.open" || tool.name === "workspace.close") {
+        if (
+          tool.name === "workspace.open" ||
+          tool.name === "workspace.close" ||
+          tool.name === "workspace.trust" ||
+          tool.name === "workspace.untrust"
+        ) {
           expect(tool.annotations).toEqual(lifecycleAnnotations);
         } else if (
           tool.name === "file.write" ||
