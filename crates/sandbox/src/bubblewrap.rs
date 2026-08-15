@@ -12,13 +12,18 @@ use std::time::Duration;
 use rustix::io::{FdFlags, fcntl_setfd};
 
 use crate::PROCESS_SPAWN_LOCK;
-use crate::executable::{TrustedExecutable, TrustedExecutableError, resolve_bubblewrap};
+use crate::executable::{
+    ExplicitExecutableMount, TrustedExecutable, TrustedExecutableError,
+    open_explicit_directory_from_env, resolve_bubblewrap,
+};
 
+const CHILD_COREPACK_HOME: &str = "/opt/kodegpt-corepack";
 const CHILD_HOME: &str = "/home/kodegpt";
+const CHILD_TOOL_ROOT: &str = "/opt/kodegpt-toolchain";
 const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const RUNTIME_SYSTEM_PATHS: [&str; 5] = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
-const RESERVED_ENV: [&str; 4] = ["HOME", "PATH", "TMPDIR", "PWD"];
+const RESERVED_ENV: [&str; 5] = ["COREPACK_HOME", "HOME", "PATH", "TMPDIR", "PWD"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxNetworkMode {
@@ -148,6 +153,20 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let explicit_mount = spec.program.open_explicit_mount()?;
+        if let Some(mount) = &explicit_mount {
+            fcntl_setfd(&mount.root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
+        let corepack_mount = if spec.program.uses_node_toolchain() {
+            open_explicit_directory_from_env("KODEGPT_HOST_COREPACK_HOME")?
+        } else {
+            None
+        };
+        if let Some(root_fd) = &corepack_mount {
+            fcntl_setfd(root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
         let (status_reader, status_writer) = UnixStream::pair()?;
         status_reader.set_read_timeout(Some(Duration::from_secs(3)))?;
         fcntl_setfd(&status_writer, FdFlags::empty())
@@ -156,6 +175,8 @@ impl BubblewrapProvider {
         let mut command = self.build_command(
             inherited_workspace_fd.as_raw_fd(),
             Some(status_writer.as_raw_fd()),
+            explicit_mount.as_ref(),
+            corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
             spec,
         )?;
         self.executable.revalidate()?;
@@ -192,6 +213,8 @@ impl BubblewrapProvider {
         &self,
         workspace_fd: i32,
         status_fd: Option<i32>,
+        explicit_mount: Option<&ExplicitExecutableMount>,
+        corepack_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
         if matches!(
@@ -244,6 +267,25 @@ impl BubblewrapProvider {
             "--dir", "/home", "--dir", CHILD_HOME, "--chmod", "0700", CHILD_HOME,
         ]);
 
+        if let Some(mount) = explicit_mount {
+            command.args([
+                "--dir",
+                "/opt",
+                "--ro-bind-fd",
+                &mount.root_fd.as_raw_fd().to_string(),
+                CHILD_TOOL_ROOT,
+            ]);
+        }
+        if let Some(corepack_fd) = corepack_fd {
+            command.args([
+                "--dir",
+                "/opt",
+                "--ro-bind-fd",
+                &corepack_fd.to_string(),
+                CHILD_COREPACK_HOME,
+            ]);
+        }
+
         match spec.workspace_access {
             WorkspaceAccess::ReadOnly => {
                 command.args(["--ro-bind-fd", &workspace_fd.to_string(), CHILD_WORKSPACE]);
@@ -253,19 +295,34 @@ impl BubblewrapProvider {
             }
         }
 
+        let child_path = if explicit_mount.is_some() {
+            format!("{CHILD_TOOL_ROOT}/bin:{FIXED_PATH}")
+        } else {
+            FIXED_PATH.to_owned()
+        };
         command.args([
-            "--setenv", "HOME", CHILD_HOME, "--setenv", "PATH", FIXED_PATH, "--setenv", "TMPDIR",
+            "--setenv",
+            "HOME",
+            CHILD_HOME,
+            "--setenv",
+            "PATH",
+            &child_path,
+            "--setenv",
+            "TMPDIR",
             "/tmp",
         ]);
+        if corepack_fd.is_some() {
+            command.args(["--setenv", "COREPACK_HOME", CHILD_COREPACK_HOME]);
+        }
         for (name, value) in &spec.env {
             command.args(["--setenv", name, value]);
         }
 
         command.arg("--chdir").arg(&spec.cwd);
-        command
-            .arg("--")
-            .arg(spec.program.canonical_path())
-            .args(&spec.args);
+        let child_program = explicit_mount
+            .map(|mount| Path::new(CHILD_TOOL_ROOT).join(&mount.relative_program))
+            .unwrap_or_else(|| spec.program.canonical_path().to_path_buf());
+        command.arg("--").arg(child_program).args(&spec.args);
         Ok(command)
     }
 }
@@ -324,13 +381,216 @@ fn cwd_is_beneath_workspace(cwd: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs::{self, File};
+    use std::os::fd::OwnedFd;
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
         cwd_is_beneath_workspace,
     };
     use crate::resolve_trusted_executable;
+
+    fn temporary_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "kodegpt-bubblewrap-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary root");
+        root
+    }
+
+    #[test]
+    fn explicit_node_root_is_materialized_read_only_for_sandbox_execution() {
+        let tool_root = temporary_root("node-root");
+        let bin = tool_root.join("bin");
+        fs::create_dir_all(&bin).expect("node bin");
+        let node = bin.join("node");
+        fs::write(&node, b"#!/bin/sh\nprintf 'kodegpt-node-smoke\\n'\n").expect("node fixture");
+        let mut permissions = fs::metadata(&node).expect("node metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&node, permissions).expect("node executable mode");
+        let workspace = temporary_root("workspace");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "bubblewrap::tests::explicit_node_root_sandbox_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_NODE_ROOT", &tool_root)
+            .env(
+                "KODEGPT_HOST_COREPACK_HOME",
+                tool_root.join("missing-corepack"),
+            )
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .output()
+            .expect("nested sandbox test runs");
+
+        assert!(
+            output.status.success(),
+            "nested sandbox failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(tool_root).expect("tool root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by explicit_node_root_is_materialized_read_only_for_sandbox_execution"]
+    fn explicit_node_root_sandbox_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let program = resolve_trusted_executable("node").expect("explicit node root resolves");
+        let spec = SandboxLaunchSpec::new(program);
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let output = provider
+            .run_capture(&workspace_fd, &spec)
+            .expect("explicit node sandbox execution");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "kodegpt-node-smoke\n"
+        );
+    }
+
+    #[test]
+    fn explicit_node_root_runs_pnpm_through_only_the_sanitized_toolchain_path() {
+        let tool_root = temporary_root("pnpm-root");
+        let bin = tool_root.join("bin");
+        let lib = tool_root.join("lib");
+        fs::create_dir_all(&bin).expect("tool bin");
+        fs::create_dir_all(&lib).expect("tool lib");
+        let node = bin.join("node");
+        fs::write(&node, b"#!/bin/sh\nprintf 'kodegpt-pnpm-smoke\\n'\n").expect("node fixture");
+        let mut node_permissions = fs::metadata(&node).expect("node metadata").permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node, node_permissions).expect("node executable mode");
+        let pnpm_target = lib.join("pnpm.js");
+        fs::write(&pnpm_target, b"#!/usr/bin/env node\n").expect("pnpm fixture");
+        let mut pnpm_permissions = fs::metadata(&pnpm_target)
+            .expect("pnpm metadata")
+            .permissions();
+        pnpm_permissions.set_mode(0o755);
+        fs::set_permissions(&pnpm_target, pnpm_permissions).expect("pnpm executable mode");
+        symlink("../lib/pnpm.js", bin.join("pnpm")).expect("pnpm symlink");
+        let workspace = temporary_root("pnpm-workspace");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "bubblewrap::tests::explicit_pnpm_sandbox_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_NODE_ROOT", &tool_root)
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .output()
+            .expect("nested pnpm sandbox test runs");
+
+        assert!(
+            output.status.success(),
+            "nested pnpm sandbox failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(tool_root).expect("tool root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by explicit_node_root_runs_pnpm_through_only_the_sanitized_toolchain_path"]
+    fn explicit_pnpm_sandbox_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let program = resolve_trusted_executable("pnpm").expect("explicit pnpm root resolves");
+        let spec = SandboxLaunchSpec::new(program);
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let output = provider
+            .run_capture(&workspace_fd, &spec)
+            .expect("explicit pnpm sandbox execution");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "kodegpt-pnpm-smoke\n"
+        );
+    }
+
+    #[test]
+    fn explicit_rust_toolchain_root_runs_cargo_without_rustup_shims_or_host_path() {
+        let tool_root = temporary_root("cargo-root");
+        let bin = tool_root.join("bin");
+        fs::create_dir_all(&bin).expect("cargo bin");
+        let cargo = bin.join("cargo");
+        fs::write(&cargo, b"#!/bin/sh\nprintf 'kodegpt-cargo-smoke\\n'\n").expect("cargo fixture");
+        let mut permissions = fs::metadata(&cargo).expect("cargo metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&cargo, permissions).expect("cargo executable mode");
+        let workspace = temporary_root("cargo-workspace");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "bubblewrap::tests::explicit_cargo_sandbox_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &tool_root)
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .output()
+            .expect("nested cargo sandbox test runs");
+
+        assert!(
+            output.status.success(),
+            "nested cargo sandbox failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(tool_root).expect("tool root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by explicit_rust_toolchain_root_runs_cargo_without_rustup_shims_or_host_path"]
+    fn explicit_cargo_sandbox_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let program = resolve_trusted_executable("cargo").expect("explicit cargo root resolves");
+        let spec = SandboxLaunchSpec::new(program);
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let output = provider
+            .run_capture(&workspace_fd, &spec)
+            .expect("explicit cargo sandbox execution");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "kodegpt-cargo-smoke\n"
+        );
+    }
 
     #[test]
     fn child_cwd_must_stay_in_workspace_surface() {
@@ -364,7 +624,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, &spec),
+                provider.build_command(3, None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

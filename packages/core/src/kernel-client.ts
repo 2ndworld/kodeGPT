@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { FrameDecoder, encodeFrame } from "@kodegpt/protocol";
 
@@ -37,6 +39,19 @@ type PendingRequest = {
 };
 
 type ClientState = "running" | "stopping" | "unavailable" | "closed";
+
+function stableRustToolchainRoot(): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  const target =
+    process.arch === "x64"
+      ? "x86_64-unknown-linux-gnu"
+      : process.arch === "arm64"
+        ? "aarch64-unknown-linux-gnu"
+        : undefined;
+  return target === undefined
+    ? undefined
+    : join(homedir(), ".rustup", "toolchains", `stable-${target}`);
+}
 
 export class KernelClient {
   readonly #child: ChildProcessWithoutNullStreams;
@@ -111,8 +126,14 @@ export class KernelClient {
     enableTestMethods?: boolean;
   }): Promise<KernelClient> {
     const environment: NodeJS.ProcessEnv = {
-      KODEGPT_STATE_ROOT: options.stateRoot
+      KODEGPT_STATE_ROOT: options.stateRoot,
+      KODEGPT_HOST_NODE_ROOT: dirname(dirname(process.execPath)),
+      KODEGPT_HOST_COREPACK_HOME: join(homedir(), ".cache", "node", "corepack")
     };
+    const rustToolchainRoot = stableRustToolchainRoot();
+    if (rustToolchainRoot !== undefined) {
+      environment.KODEGPT_HOST_RUST_TOOLCHAIN_ROOT = rustToolchainRoot;
+    }
     if (options.enableTestMethods === true) {
       environment.KODEGPT_RUNTIME_TEST_METHODS = "1";
     }
