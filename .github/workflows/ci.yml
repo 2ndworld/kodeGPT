@@ -34,6 +34,15 @@ jobs:
           corepack prepare pnpm@10.15.0 --activate
           test "$(pnpm --version)" = "10.15.0"
 
+      - name: Harden trusted Node toolchain root
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_root="$(node -p 'require("node:path").dirname(require("node:path").dirname(process.execPath))')"
+          sudo chown "$(id -u):$(id -g)" "$node_root"
+          chmod 0755 "$node_root"
+          test "$(stat -c '%u:%g:%a' "$node_root")" = "$(id -u):$(id -g):755"
+
       - name: Setup Rust stable
         shell: bash
         run: |
