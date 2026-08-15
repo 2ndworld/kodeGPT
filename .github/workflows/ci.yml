@@ -50,6 +50,11 @@ jobs:
           esac
           chmod 0755 "$pnpm_target"
           test "$(stat -Lc '%a' "$pnpm_entry")" = "755"
+          node_target="$(readlink -f "$node_root/bin/node")"
+          corepack_home="$HOME/.cache/node/corepack"
+          printf 'node_target_stat=%s\n' "$(stat -Lc '%u:%g:%a:%F' "$node_target")"
+          printf 'corepack_home=%s\n' "$corepack_home"
+          printf 'corepack_home_stat=%s\n' "$(stat -Lc '%u:%g:%a:%F' "$corepack_home")"
 
       - name: Setup Rust stable
         shell: bash
