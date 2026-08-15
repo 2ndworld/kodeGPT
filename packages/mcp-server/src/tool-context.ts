@@ -8,6 +8,10 @@ import type {
   FilePatchResult,
   GitChangesInput,
   GitChangesResult,
+  GitStageInput,
+  GitCommitInput,
+  GitBranchInput,
+  GitLocalMutationResult,
   GitLogInput,
   GitLogResult,
   GitShowInput,
@@ -109,6 +113,11 @@ export interface GitToolContext {
   status(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   diff(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   changes(input: GitChangesInput): Promise<GitChangesResult>;
+  stage(input: GitStageInput): Promise<GitLocalMutationResult>;
+  commit(input: GitCommitInput): Promise<GitLocalMutationResult>;
+  branchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  branchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  branchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
   log(input: GitLogInput): Promise<GitLogResult>;
   show(input: GitShowInput): Promise<GitShowResult>;
   range(input: GitRangeInput): Promise<GitRangeResult>;
@@ -215,6 +224,11 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "editFile"
   | "gitStatus"
   | "gitDiff"
+  | "gitStage"
+  | "gitCommit"
+  | "gitBranchCreate"
+  | "gitBranchSwitch"
+  | "gitBranchDelete"
   | "search"
   | "tree"
 >;
@@ -227,6 +241,11 @@ export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
   searchCode(input: CodeSearchInput): Promise<CodeSearchResult>;
   gitChanges(input: GitChangesInput): Promise<GitChangesResult>;
+  gitStage(input: GitStageInput): Promise<GitLocalMutationResult>;
+  gitCommit(input: GitCommitInput): Promise<GitLocalMutationResult>;
+  gitBranchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitBranchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
   gitLog(input: GitLogInput): Promise<GitLogResult>;
   gitShow(input: GitShowInput): Promise<GitShowResult>;
   gitRange(input: GitRangeInput): Promise<GitRangeResult>;
@@ -299,6 +318,11 @@ export function createKodegptToolContext(options: {
       status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),
       diff: ({ workspaceId }) => options.workspaceManager.gitDiff(workspaceId),
       changes: (input) => native.gitChanges(input),
+      stage: (input) => native.gitStage(input),
+      commit: (input) => native.gitCommit(input),
+      branchCreate: (input) => native.gitBranchCreate(input),
+      branchSwitch: (input) => native.gitBranchSwitch(input),
+      branchDelete: (input) => native.gitBranchDelete(input),
       log: (input) => native.gitLog(input),
       show: (input) => native.gitShow(input),
       range: (input) => native.gitRange(input),
@@ -372,6 +396,11 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
     inspectWorkspace: () => unavailable("workspace.inspect"),
     searchCode: () => unavailable("code.search"),
     gitChanges: () => unavailable("git.changes"),
+    gitStage: () => unavailable("git.stage"),
+    gitCommit: () => unavailable("git.commit"),
+    gitBranchCreate: () => unavailable("git.branchCreate"),
+    gitBranchSwitch: () => unavailable("git.branchSwitch"),
+    gitBranchDelete: () => unavailable("git.branchDelete"),
     gitLog: () => unavailable("git.log"),
     gitShow: () => unavailable("git.show"),
     gitRange: () => unavailable("git.range"),

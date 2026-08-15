@@ -223,6 +223,25 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "git.local_mutation":
+        return {
+          schemaVersion: 1,
+          operation: params.operation,
+          exitCode: 0,
+          stdoutPreview: "",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 0,
+          artifact: {
+            schemaVersion: 1,
+            artifactId: "ka_git_mutation_fixture",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            bytesWritten: 0,
+            sourceTruncated: false
+          }
+        } as T;
       case "git.diff":
         return {
           schemaVersion: 1,
@@ -937,6 +956,58 @@ describe("WorkspaceManager", () => {
         }
       }
     ]);
+  });
+
+  it("routes typed local Git mutations through the private runtime capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_git_mutation"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const stage = await manager.gitStage("ws_git_mutation", ["src/a.ts", "src/b.ts"]);
+    const commit = await manager.gitCommit("ws_git_mutation", "bounded message");
+    const branchCreate = await manager.gitBranchCreate("ws_git_mutation", "feature/test");
+    const branchSwitch = await manager.gitBranchSwitch("ws_git_mutation", "feature/test");
+    const branchDelete = await manager.gitBranchDelete("ws_git_mutation", "feature/test");
+
+    expect([stage, commit, branchCreate, branchSwitch, branchDelete].map((result) => result.operation)).toEqual([
+      "stage",
+      "commit",
+      "branch_create",
+      "branch_switch",
+      "branch_delete"
+    ]);
+    expect(kernel.calls.slice(-5)).toEqual([
+      {
+        method: "git.local_mutation",
+        params: {
+          capabilityId: "kc_fixture",
+          operation: "stage",
+          paths: ["src/a.ts", "src/b.ts"]
+        }
+      },
+      {
+        method: "git.local_mutation",
+        params: { capabilityId: "kc_fixture", operation: "commit", message: "bounded message" }
+      },
+      {
+        method: "git.local_mutation",
+        params: { capabilityId: "kc_fixture", operation: "branch_create", name: "feature/test" }
+      },
+      {
+        method: "git.local_mutation",
+        params: { capabilityId: "kc_fixture", operation: "branch_switch", name: "feature/test" }
+      },
+      {
+        method: "git.local_mutation",
+        params: { capabilityId: "kc_fixture", operation: "branch_delete", name: "feature/test" }
+      }
+    ]);
+    expect(JSON.stringify(stage)).toContain("artifact://ka_git_mutation_fixture");
+    expect(JSON.stringify(stage)).not.toContain("artifactId");
   });
 
   it("routes conditional patch commits through the private runtime capability and rejects leaked fields", async () => {

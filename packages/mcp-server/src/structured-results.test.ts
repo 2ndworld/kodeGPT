@@ -8,6 +8,10 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitStageInputSchema,
+  GitCommitInputSchema,
+  GitBranchInputSchema,
+  GitLocalMutationResultSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,
@@ -26,6 +30,7 @@ import {
   type ContextBuildResult,
   type FilePatchResult,
   type GitChangesResult,
+  type GitLocalMutationResult,
   type VerifyListResult,
   type VerifyRunResult,
   type WorkspaceInspectResult
@@ -35,6 +40,7 @@ import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { describe, expect, it } from "vitest";
 import type { OpenWorkspace } from "../../core/src/index.js";
 import {
+  LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
@@ -110,6 +116,25 @@ const typedGitChangesResult: GitChangesResult = {
   patchCoverage: { staged: true, worktree: true, untracked: false },
   truncated: false,
   fingerprint: "a".repeat(64)
+};
+
+const typedGitMutationResult: GitLocalMutationResult = {
+  schemaVersion: 1,
+  operation: "stage",
+  exitCode: 0,
+  stdoutPreview: "",
+  stderrPreview: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  sourceTruncated: false,
+  bytesSpooled: 0,
+  artifact: {
+    schemaVersion: 1,
+    uri: "artifact://ka_git_mutation_fixture",
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    sizeBytes: 0,
+    sourceTruncated: false
+  }
 };
 
 const typedVerifyListResult: VerifyListResult = {
@@ -220,6 +245,11 @@ function makeContext(): KodegptToolContext {
       status: async () => ({} as never),
       diff: async () => ({} as never),
       changes: async () => typedGitChangesResult,
+      stage: async () => typedGitMutationResult,
+      commit: async () => ({ ...typedGitMutationResult, operation: "commit" as const }),
+      branchCreate: async () => ({ ...typedGitMutationResult, operation: "branch_create" as const }),
+      branchSwitch: async () => ({ ...typedGitMutationResult, operation: "branch_switch" as const }),
+      branchDelete: async () => ({ ...typedGitMutationResult, operation: "branch_delete" as const }),
       log: async () => ({ schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
       show: async () => ({ schemaVersion: 1, commit: { oid: "1".repeat(40), shortOid: "1".repeat(12), parents: [], authorName: "A", authorTime: 1, committerTime: 1, subject: "s", body: "", messageTruncated: false, encodingLossy: false }, changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: null, truncated: false, truncationReasons: [] }),
       range: async () => ({ schemaVersion: 1, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
@@ -333,6 +363,40 @@ describe("structured MCP tool results", () => {
       trustId: "trust_fixture"
     } as never)) as { structuredContent?: unknown };
     expect(untrustResult.structuredContent).toEqual({ trustId: "trust_fixture", removed: true });
+  });
+
+  it("registers trusted local Git mutations with closed schemas, mutating annotations, and structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const expected = [
+      ["git.stage", GitStageInputSchema, "stage", { workspaceId: "ws_1", paths: ["src/main.ts"] }],
+      ["git.commit", GitCommitInputSchema, "commit", { workspaceId: "ws_1", message: "bounded" }],
+      ["git.branchCreate", GitBranchInputSchema, "branch_create", { workspaceId: "ws_1", name: "feature/a" }],
+      ["git.branchSwitch", GitBranchInputSchema, "branch_switch", { workspaceId: "ws_1", name: "feature/a" }],
+      ["git.branchDelete", GitBranchInputSchema, "branch_delete", { workspaceId: "ws_1", name: "feature/a" }]
+    ] as const;
+
+    for (const [name, inputSchema, operation, input] of expected) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(GitLocalMutationResultSchema);
+      expect(definition?.annotations).toEqual(LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS);
+      const schemaText = JSON.stringify(inputSchema);
+      for (const forbidden of ["argv", "command", "gitArgs", "shell", "rootPath", "hostPath"]) {
+        expect(schemaText).not.toContain(forbidden);
+      }
+      const result = (await handlers.get(name)!(input as never)) as { structuredContent?: unknown };
+      expect(result.structuredContent).toMatchObject({ schemaVersion: 1, operation });
+      expect(JSON.stringify(result.structuredContent)).not.toContain("capabilityId");
+    }
   });
 
   it("registers Git history with closed schemas and read-only annotations", () => {

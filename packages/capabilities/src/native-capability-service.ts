@@ -2,6 +2,8 @@ import type {
   CodeSearchAdapter,
   GitCheckpointAdapter,
   GitHistoryAdapter,
+  GitLocalAuthorityAdapter,
+  GitLocalMutationAdapter,
   PatchCommitAdapter,
   PatchWorkspaceAdapter,
   VerificationAvailabilityAdapter,
@@ -27,6 +29,10 @@ import type {
   GitRangeResult,
   GitDiffHistoryInput,
   GitDiffHistoryResult,
+  GitStageInput,
+  GitCommitInput,
+  GitBranchInput,
+  GitLocalMutationResult,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -38,6 +44,7 @@ import { CapabilityError } from "./errors.js";
 import { buildContext as composeContext } from "./context-build.js";
 import { gitChanges } from "./git-changes.js";
 import { gitDiffHistory, gitLog, gitRange, gitShow } from "./git-history.js";
+import { gitBranchCreate, gitBranchDelete, gitBranchSwitch, gitCommit, gitStage } from "./git-local.js";
 import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
 import { inspectWorkspace } from "./workspace-inspect.js";
@@ -46,6 +53,11 @@ export type NativeCapabilityName =
   | "workspace.inspect"
   | "code.search"
   | "git.changes"
+  | "git.stage"
+  | "git.commit"
+  | "git.branchCreate"
+  | "git.branchSwitch"
+  | "git.branchDelete"
   | "git.log"
   | "git.show"
   | "git.range"
@@ -61,6 +73,10 @@ export interface NativeCapabilityDependencies {
     search: CodeSearchAdapter;
   };
   git: GitCheckpointAdapter;
+  gitLocal: {
+    authority: GitLocalAuthorityAdapter;
+    mutation: GitLocalMutationAdapter;
+  };
   gitHistory: GitHistoryAdapter;
   patch: {
     workspace: PatchWorkspaceAdapter;
@@ -104,6 +120,26 @@ export class NativeCapabilityService {
 
   async gitChanges(input: GitChangesInput): Promise<GitChangesResult> {
     return gitChanges(this.#dependencies.git, input);
+  }
+
+  async gitStage(input: GitStageInput): Promise<GitLocalMutationResult> {
+    return gitStage(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitCommit(input: GitCommitInput): Promise<GitLocalMutationResult> {
+    return gitCommit(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitBranchCreate(input: GitBranchInput): Promise<GitLocalMutationResult> {
+    return gitBranchCreate(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitBranchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult> {
+    return gitBranchSwitch(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult> {
+    return gitBranchDelete(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
   }
 
   async gitLog(input: GitLogInput): Promise<GitLogResult> {

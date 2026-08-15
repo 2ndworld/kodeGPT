@@ -42,6 +42,21 @@ function baseDependencies(events: string[]) {
     gitDiff: async () => {
       throw new Error("not used");
     },
+    gitStage: async () => {
+      throw new Error("not used");
+    },
+    gitCommit: async () => {
+      throw new Error("not used");
+    },
+    gitBranchCreate: async () => {
+      throw new Error("not used");
+    },
+    gitBranchSwitch: async () => {
+      throw new Error("not used");
+    },
+    gitBranchDelete: async () => {
+      throw new Error("not used");
+    },
     search: async () => [],
     tree: async () => [],
     treeBounded: async () => ({ entries: [], truncated: false }),

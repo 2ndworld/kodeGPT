@@ -8,13 +8,16 @@ async function source(relativePath: string): Promise<string> {
   return readFile(fileURLToPath(url), "utf8");
 }
 
-describe("hardened read-only Git inspection source regressions", () => {
+describe("hardened Git source regressions", () => {
   it("routes Git only through the retained-root Bubblewrap provider with helper hardening", async () => {
     const implementation = await source("crates/runtime/src/git.rs");
     const production = implementation.split("#[cfg(test)]", 1)[0] ?? implementation;
 
     for (const required of [
       "WorkspaceAccess::ReadOnly",
+      "WorkspaceAccess::ReadWrite",
+      "SandboxNetworkMode::Deny",
+      "run_git_local_mutation",
       "GIT_OPTIONAL_LOCKS",
       "GIT_CONFIG_NOSYSTEM",
       "GIT_PAGER",
@@ -47,16 +50,29 @@ describe("hardened read-only Git inspection source regressions", () => {
     expect(production).not.toContain("to_be_bytes()");
   });
 
-  it("publishes only read-only Git MCP tools on opaque workspace IDs", async () => {
+  it("publishes only typed Git inspection and trusted local mutation tools on opaque workspace IDs", async () => {
     const tools = await source("packages/mcp-server/src/tools.ts");
 
-    expect(tools).toContain('"git.status"');
-    expect(tools).toContain('"git.diff"');
-    expect(tools).toContain('"git.log"');
-    expect(tools).toContain('"git.show"');
-    expect(tools).toContain('"git.range"');
-    expect(tools).toContain('"git.diffHistory"');
+    for (const name of [
+      "git.status",
+      "git.diff",
+      "git.log",
+      "git.show",
+      "git.range",
+      "git.diffHistory",
+      "git.stage",
+      "git.commit",
+      "git.branchCreate",
+      "git.branchSwitch",
+      "git.branchDelete"
+    ]) {
+      expect(tools).toContain(`"${name}"`);
+    }
     expect(tools).toContain("READ_ONLY_TOOL_ANNOTATIONS");
+    expect(tools).toContain("LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS");
+    for (const forbidden of ["git.run", "git.exec", "git.command", "git.reset", "git.rebase"]) {
+      expect(tools).not.toContain(`"${forbidden}"`);
+    }
     expect(tools).not.toContain("process_group: z.");
     expect(tools).not.toContain("capabilityId: z.");
   });
@@ -71,11 +87,21 @@ describe("hardened read-only Git inspection source regressions", () => {
     expect(audit).toContain("GitCommitInspect");
     expect(audit).toContain("GitHistoryRange");
     expect(audit).toContain("GitHistoryDiff");
+    expect(audit).toContain("GitStage");
+    expect(audit).toContain("GitCommit");
+    expect(audit).toContain("GitBranchCreate");
+    expect(audit).toContain("GitBranchSwitch");
+    expect(audit).toContain("GitBranchDelete");
     expect(dispatcher).toContain("AuditAction::GitStatus");
     expect(dispatcher).toContain("AuditAction::GitDiff");
     expect(dispatcher).toContain("AuditAction::GitHistoryList");
     expect(dispatcher).toContain("AuditAction::GitCommitInspect");
     expect(dispatcher).toContain("AuditAction::GitHistoryRange");
     expect(dispatcher).toContain("AuditAction::GitHistoryDiff");
+    expect(dispatcher).toContain("AuditAction::GitStage");
+    expect(dispatcher).toContain("AuditAction::GitCommit");
+    expect(dispatcher).toContain("AuditAction::GitBranchCreate");
+    expect(dispatcher).toContain("AuditAction::GitBranchSwitch");
+    expect(dispatcher).toContain("AuditAction::GitBranchDelete");
   });
 });

@@ -96,7 +96,7 @@ export interface ServiceStatusSnapshot {
   rollbackReleaseId?: string;
   runtimeVersion?: string;
   protocolVersion?: "2026-07-28";
-  surfaceVersion?: "0.3" | "0.4";
+  surfaceVersion?: "0.3" | "0.4" | "0.5";
   localPort?: number;
   listenerReady: boolean;
   managedExposure: boolean;

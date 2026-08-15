@@ -22,6 +22,7 @@ export const RUNTIME_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "git.local_mutation",
   "git.log",
   "git.show",
   "git.range",
@@ -198,6 +199,32 @@ const gitInspectionParamsSchema = z
   })
   .strict();
 
+const gitLocalMutationParamsSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("stage"),
+      paths: z.array(z.string().min(1).max(4096)).min(1).max(128)
+    })
+    .strict(),
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("commit"),
+      message: z.string().min(1).max(4096).refine((value) => !value.includes("\0"))
+    })
+    .strict(),
+  ...(["branch_create", "branch_switch", "branch_delete"] as const).map((operation) =>
+    z
+      .object({
+        capabilityId: z.string().min(1),
+        operation: z.literal(operation),
+        name: z.string().min(1).max(255).refine((value) => !value.includes("\0"))
+      })
+      .strict()
+  )
+]);
+
 const gitRevisionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("head") }).strict(),
   z.object({ kind: z.literal("oid"), oid: z.string() }).strict(),
@@ -358,6 +385,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
+  requestSchema("git.local_mutation", gitLocalMutationParamsSchema),
   requestSchema("git.log", gitLogParamsSchema),
   requestSchema("git.show", gitShowParamsSchema),
   requestSchema("git.range", gitRangeParamsSchema),

@@ -190,6 +190,11 @@ describe("bridge command unit tests", () => {
             bytesSpooled: 0,
             artifact: processResult.artifact
           }),
+          gitStage: async () => { throw new Error("unexpected gitStage"); },
+          gitCommit: async () => { throw new Error("unexpected gitCommit"); },
+          gitBranchCreate: async () => { throw new Error("unexpected gitBranchCreate"); },
+          gitBranchSwitch: async () => { throw new Error("unexpected gitBranchSwitch"); },
+          gitBranchDelete: async () => { throw new Error("unexpected gitBranchDelete"); },
           runProcess: async () => processResult,
           inspectExecutable: async () => ({
             schemaVersion: 1 as const,

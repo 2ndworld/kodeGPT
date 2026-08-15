@@ -12,7 +12,7 @@ export interface ServiceRuntimeStatusV1 {
   localPort: number;
   runtimeVersion: string;
   protocolVersion: "2026-07-28";
-  surfaceVersion: "0.3" | "0.4";
+  surfaceVersion: "0.3" | "0.4" | "0.5";
   reservedName: string;
   publicUrl: string;
 }
@@ -133,7 +133,11 @@ function parseRuntimeStatus(value: unknown): ServiceRuntimeStatusV1 {
   }
   const runtimeVersion = stringField(value.runtimeVersion, "runtimeVersion");
   if (value.protocolVersion !== "2026-07-28") throw new Error("invalid service runtime protocolVersion");
-  if (value.surfaceVersion !== "0.3" && value.surfaceVersion !== "0.4") {
+  if (
+    value.surfaceVersion !== "0.3" &&
+    value.surfaceVersion !== "0.4" &&
+    value.surfaceVersion !== "0.5"
+  ) {
     throw new Error("invalid service runtime surfaceVersion");
   }
   const reservedName = stringField(value.reservedName, "reservedName");

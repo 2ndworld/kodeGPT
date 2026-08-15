@@ -7,6 +7,10 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitStageInputSchema,
+  GitCommitInputSchema,
+  GitBranchInputSchema,
+  GitLocalMutationResultSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,
@@ -37,6 +41,7 @@ import {
 import { z } from "zod";
 
 import {
+  LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
@@ -60,12 +65,17 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.branchCreate", required: ["workspaceId", "name"] },
+  { name: "git.branchDelete", required: ["workspaceId", "name"] },
+  { name: "git.branchSwitch", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
+  { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
   { name: "git.log", required: ["workspaceId"] },
   { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
   { name: "git.show", required: ["workspaceId"] },
+  { name: "git.stage", required: ["workspaceId", "paths"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -440,6 +450,66 @@ export function registerKodegptTools(
       nativeCapabilityResult(async () =>
         GitDiffHistoryResultSchema.parse(await context.git.diffHistory(input))
       )
+  );
+
+  server.registerTool(
+    "git.stage",
+    {
+      description: "Stage bounded workspace-relative paths through the trusted local Git workflow.",
+      inputSchema: GitStageInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.stage(input)))
+  );
+
+  server.registerTool(
+    "git.commit",
+    {
+      description: "Create a local Git commit with a bounded message through trusted workspace authority.",
+      inputSchema: GitCommitInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.commit(input)))
+  );
+
+  server.registerTool(
+    "git.branchCreate",
+    {
+      description: "Create a validated local Git branch through trusted workspace authority.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchCreate(input)))
+  );
+
+  server.registerTool(
+    "git.branchSwitch",
+    {
+      description: "Switch to a validated existing local Git branch through trusted workspace authority.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchSwitch(input)))
+  );
+
+  server.registerTool(
+    "git.branchDelete",
+    {
+      description: "Safely delete a validated merged local Git branch without force deletion.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchDelete(input)))
   );
 
   server.registerTool(

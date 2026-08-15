@@ -9,6 +9,9 @@ import {
   MAX_GIT_RANGE_LIMIT,
   MAX_GIT_PATCH_BYTES,
   MAX_GIT_HISTORY_PATHS,
+  MAX_GIT_STAGE_PATHS,
+  MAX_GIT_MUTATION_TEXT,
+  MAX_GIT_BRANCH_NAME,
   type CodeSearchInput,
   type CodeSearchResult,
   type ContextBuildInput,
@@ -17,6 +20,10 @@ import {
   type FilePatchResult,
   type GitChangesInput,
   type GitChangesResult,
+  type GitStageInput,
+  type GitCommitInput,
+  type GitBranchInput,
+  type GitLocalMutationResult,
   type GitLogInput,
   type GitLogResult,
   type GitShowInput,
@@ -291,6 +298,85 @@ export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
       .optional(),
     truncated: z.boolean(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict();
+
+const gitMutationPathSchema = z
+  .string()
+  .min(1)
+  .max(MAX_GIT_MUTATION_TEXT)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      !value.includes("\0") &&
+      value !== "." &&
+      value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+    "Git stage paths must be bounded relative workspace paths"
+  );
+
+const gitBranchNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_GIT_BRANCH_NAME)
+  .refine(
+    (name) =>
+      name !== "@" &&
+      !name.startsWith("-") &&
+      !name.startsWith(".") &&
+      !name.startsWith("/") &&
+      !name.endsWith(".") &&
+      !name.endsWith("/") &&
+      !name.includes("..") &&
+      !name.includes("//") &&
+      !name.includes("@{") &&
+      !name.includes("\\") &&
+      !/[\u0000-\u0020\u007f~^:?*[\]]/.test(name) &&
+      name.split("/").every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock")),
+    "Git branch name is invalid"
+  );
+
+export const GitStageInputSchema: z.ZodType<GitStageInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    paths: z.array(gitMutationPathSchema).min(1).max(MAX_GIT_STAGE_PATHS)
+  })
+  .strict();
+
+export const GitCommitInputSchema: z.ZodType<GitCommitInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    message: z.string().min(1).max(MAX_GIT_MUTATION_TEXT).refine((value) => !value.includes("\0"))
+  })
+  .strict();
+
+export const GitBranchInputSchema: z.ZodType<GitBranchInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    name: gitBranchNameSchema
+  })
+  .strict();
+
+export const GitLocalMutationResultSchema: z.ZodType<GitLocalMutationResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    operation: z.enum(["stage", "commit", "branch_create", "branch_switch", "branch_delete"]),
+    exitCode: z.number().int().safe(),
+    stdoutPreview: z.string(),
+    stderrPreview: z.string(),
+    stdoutTruncated: z.boolean(),
+    stderrTruncated: z.boolean(),
+    sourceTruncated: z.boolean(),
+    bytesSpooled: z.number().int().nonnegative().safe(),
+    artifact: z
+      .object({
+        schemaVersion: z.literal(1),
+        uri: z.string().regex(/^artifact:\/\/.+$/) as z.ZodType<`artifact://${string}`>,
+        mediaType: z.string().min(1),
+        sizeBytes: z.number().int().nonnegative().safe(),
+        sourceTruncated: z.boolean()
+      })
+      .strict()
   })
   .strict();
 

@@ -234,6 +234,36 @@ pub struct GitDiffParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum GitLocalMutationParams {
+    Stage {
+        capability_id: String,
+        paths: Vec<String>,
+    },
+    Commit {
+        capability_id: String,
+        message: String,
+    },
+    BranchCreate {
+        capability_id: String,
+        name: String,
+    },
+    BranchSwitch {
+        capability_id: String,
+        name: String,
+    },
+    BranchDelete {
+        capability_id: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum GitRevisionSpec {
     Head,
@@ -504,6 +534,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitDiffParams,
+    },
+    #[serde(rename = "git.local_mutation")]
+    GitLocalMutation {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitLocalMutationParams,
     },
     #[serde(rename = "git.log")]
     GitLog {

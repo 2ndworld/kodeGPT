@@ -161,13 +161,18 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust control-plane surface and no shell, Codex, grant, or skill execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.4");
+  it("ships only the intended typed trust and local Git surface with no generic authority or execution tools", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.5");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
       "code.search",
       "git.changes",
+      "git.stage",
+      "git.commit",
+      "git.branchCreate",
+      "git.branchSwitch",
+      "git.branchDelete",
       "verify.list",
       "verify.run",
       "file.patch",
@@ -204,7 +209,12 @@ describe("full security acceptance invariants", () => {
       "skill.source.remove",
       "provider.list",
       "provider.tools",
-      "provider.invoke"
+      "provider.invoke",
+      "git.run",
+      "git.exec",
+      "git.command",
+      "git.reset",
+      "git.rebase"
     ]) {
       expect(names).not.toContain(forbidden);
     }

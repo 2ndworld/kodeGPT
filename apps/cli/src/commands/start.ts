@@ -253,6 +253,21 @@ export async function createProductionServiceStack(
         },
         checkpointPatch: (workspaceId) => managers.workspaceManager.gitCheckpointPatch(workspaceId)
       },
+      gitLocal: {
+        authority: {
+          effectivePolicy: (workspaceId) => {
+            const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
+            return { name: policy.name, allowWrite: policy.allowWrite };
+          }
+        },
+        mutation: {
+          stage: (workspaceId, paths) => managers.workspaceManager.gitStage(workspaceId, paths),
+          commit: (workspaceId, message) => managers.workspaceManager.gitCommit(workspaceId, message),
+          branchCreate: (workspaceId, name) => managers.workspaceManager.gitBranchCreate(workspaceId, name),
+          branchSwitch: (workspaceId, name) => managers.workspaceManager.gitBranchSwitch(workspaceId, name),
+          branchDelete: (workspaceId, name) => managers.workspaceManager.gitBranchDelete(workspaceId, name)
+        }
+      },
       gitHistory: {
         log: (input) => managers.workspaceManager.gitLog(input),
         show: (input) => managers.workspaceManager.gitShow(input),

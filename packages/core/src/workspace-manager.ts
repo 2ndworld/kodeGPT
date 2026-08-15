@@ -225,6 +225,17 @@ export interface WorkspaceGitInspectionResult {
   artifact: ArtifactMetadata;
 }
 
+export type WorkspaceGitMutationOperation =
+  | "stage"
+  | "commit"
+  | "branch_create"
+  | "branch_switch"
+  | "branch_delete";
+
+export interface WorkspaceGitMutationResult extends WorkspaceGitInspectionResult {
+  operation: WorkspaceGitMutationOperation;
+}
+
 export interface WorkspaceGitCheckpointRecord {
   recordType: "ordinary" | "rename" | "unmerged" | "untracked";
   path: string;
@@ -879,6 +890,26 @@ export class WorkspaceManager {
     return this.#gitInspection(workspaceId, "git.diff");
   }
 
+  async gitStage(workspaceId: string, paths: string[]): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "stage", { paths });
+  }
+
+  async gitCommit(workspaceId: string, message: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "commit", { message });
+  }
+
+  async gitBranchCreate(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_create", { name });
+  }
+
+  async gitBranchSwitch(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_switch", { name });
+  }
+
+  async gitBranchDelete(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_delete", { name });
+  }
+
   async runProcess(input: WorkspaceProcessRunInput): Promise<WorkspaceProcessOperationResult> {
     if (input.logicalExecutable.length === 0) {
       throw new TypeError("Process logical executable must not be empty");
@@ -1108,6 +1139,61 @@ export class WorkspaceManager {
       sourceTruncated: result.sourceTruncated,
       bytesSpooled: result.bytesSpooled as number,
       artifact: validateArtifactMetadata(result.artifact, method)
+    };
+  }
+
+  async #gitLocalMutation(
+    workspaceId: string,
+    operation: WorkspaceGitMutationOperation,
+    params: Record<string, unknown>
+  ): Promise<WorkspaceGitMutationResult> {
+    const state = this.#requireReadyState(workspaceId);
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("git.local_mutation", {
+        capabilityId: state.capabilityId,
+        operation,
+        ...params
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_MUTATION_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, "git.local_mutation failed");
+      }
+      throw error;
+    }
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.operation !== operation ||
+      !Number.isSafeInteger(result.exitCode) ||
+      typeof result.stdoutPreview !== "string" ||
+      typeof result.stderrPreview !== "string" ||
+      typeof result.stdoutTruncated !== "boolean" ||
+      typeof result.stderrTruncated !== "boolean" ||
+      typeof result.sourceTruncated !== "boolean" ||
+      !Number.isSafeInteger(result.bytesSpooled) ||
+      (result.bytesSpooled as number) < 0 ||
+      !isRecord(result.artifact) ||
+      "artifactId" in result ||
+      "processGroup" in result ||
+      "pid" in result
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.local_mutation returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      operation,
+      exitCode: result.exitCode as number,
+      stdoutPreview: result.stdoutPreview,
+      stderrPreview: result.stderrPreview,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
+      sourceTruncated: result.sourceTruncated,
+      bytesSpooled: result.bytesSpooled as number,
+      artifact: validateArtifactMetadata(result.artifact, "git.local_mutation")
     };
   }
 
@@ -1490,6 +1576,13 @@ function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
     );
   });
 }
+
+const GIT_MUTATION_ERROR_CODES = new Set([
+  "GIT_POLICY_DENIED",
+  "GIT_MUTATION_INPUT_INVALID",
+  "GIT_MUTATION_UNAVAILABLE",
+  "GIT_MUTATION_FAILED"
+]);
 
 const GIT_HISTORY_ERROR_CODES = new Set([
   "NOT_A_GIT_REPOSITORY",

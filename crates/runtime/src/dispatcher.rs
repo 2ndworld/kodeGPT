@@ -6,7 +6,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
-    GitLogParams, GitRangeParams, GitShowParams, GitStatusParams,
+    GitLocalMutationParams, GitLogParams, GitRangeParams, GitShowParams, GitStatusParams,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
     SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
@@ -32,8 +32,8 @@ use crate::audit::{
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
-    GitInspectionError, GitOperation, run_git_checkpoint, run_git_checkpoint_patch,
-    run_git_inspection,
+    GitInspectionError, GitLocalMutation, GitOperation, run_git_checkpoint,
+    run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
 };
 use crate::git_history::{
     GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GIT_RANGE_MAX_LIMIT, GitHistoryError,
@@ -928,6 +928,70 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.local_mutation" => {
+            let params = match serde_json::from_value::<GitLocalMutationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let (capability_id, mutation, action) = match params {
+                GitLocalMutationParams::Stage {
+                    capability_id,
+                    paths,
+                } => (
+                    capability_id,
+                    GitLocalMutation::Stage { paths },
+                    AuditAction::GitStage,
+                ),
+                GitLocalMutationParams::Commit {
+                    capability_id,
+                    message,
+                } => (
+                    capability_id,
+                    GitLocalMutation::Commit { message },
+                    AuditAction::GitCommit,
+                ),
+                GitLocalMutationParams::BranchCreate {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchCreate { name },
+                    AuditAction::GitBranchCreate,
+                ),
+                GitLocalMutationParams::BranchSwitch {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchSwitch { name },
+                    AuditAction::GitBranchSwitch,
+                ),
+                GitLocalMutationParams::BranchDelete {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchDelete { name },
+                    AuditAction::GitBranchDelete,
+                ),
+            };
+            if capability_id.is_empty() {
+                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+            }
+            dispatch_git_local_mutation(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                capability_id,
+                mutation,
+                action,
+            )
+            .await
+        }
         "git.log" => {
             let params = match serde_json::from_value::<GitLogParams>(request.params) {
                 Ok(params)
@@ -1495,6 +1559,123 @@ async fn dispatch_git_operation(
         Ok(Ok(result)) => result,
         Ok(Err(_)) | Err(_) => {
             return audited_failure(audit, &context, request_id, -32039, "GIT_INSPECTION_FAILED");
+        }
+    };
+    let outcome = if result.exit_code == 0 {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_local_mutation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    mutation: GitLocalMutation,
+    action: AuditAction,
+) -> Value {
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
+        Err(_) => {
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
+        }
+    };
+    if policy.name != ProfileName::Trusted || !policy.allow_write {
+        return error_response(Some(request_id), -32059, "GIT_POLICY_DENIED");
+    }
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32061,
+            "GIT_MUTATION_UNAVAILABLE",
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_local_mutation(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            mutation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::InvalidMutationInput)) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32060,
+                "GIT_MUTATION_INPUT_INVALID",
+            );
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_failure(audit, &context, request_id, -32061, "GIT_MUTATION_FAILED");
         }
     };
     let outcome = if result.exit_code == 0 {
@@ -2929,6 +3110,18 @@ mod tests {
         })
     }
 
+    fn trusted_policy() -> Value {
+        json!({
+            "name": "trusted",
+            "allowWrite": true,
+            "allowProcess": true,
+            "network": "unrestricted",
+            "allowedExecutableNames": ["git", "node", "python3"],
+            "inheritEnv": false,
+            "envAllowlist": ["LANG"]
+        })
+    }
+
     async fn next_response(
         request_tx: &mpsc::UnboundedSender<Value>,
         response_rx: &mut mpsc::UnboundedReceiver<Value>,
@@ -2990,6 +3183,129 @@ mod tests {
         .await;
         assert_eq!(activated["result"]["ok"], true);
         capability_id
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_git_mutation_requires_ready_trusted_policy_and_audits_success() {
+        let (audit, audit_root) = audit_sink("git-local-mutation-policy");
+        let develop_workspace = audit_root.with_extension("git-develop-workspace");
+        let trusted_workspace = audit_root.with_extension("git-trusted-workspace");
+        for workspace in [&develop_workspace, &trusted_workspace] {
+            fs::create_dir_all(workspace).expect("workspace created");
+            test_git(workspace, &["init", "-b", "main"]);
+            test_git(workspace, &["config", "user.name", "KodeGPT Test"]);
+            test_git(
+                workspace,
+                &["config", "user.email", "kodegpt@example.invalid"],
+            );
+            fs::write(workspace.join("tracked.txt"), "content\n").expect("tracked file");
+        }
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let develop_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &develop_workspace,
+            develop_policy(true),
+            "git_local_develop",
+        )
+        .await;
+        let trusted_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &trusted_workspace,
+            trusted_policy(),
+            "git_local_trusted",
+        )
+        .await;
+
+        let denied = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_develop_denied",
+            "git.local_mutation",
+            json!({
+                "capabilityId": develop_capability,
+                "operation": "stage",
+                "paths": ["tracked.txt"]
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["message"], "GIT_POLICY_DENIED");
+        assert!(test_git(&develop_workspace, &["diff", "--cached", "--name-only"]).is_empty());
+
+        let staged = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_stage",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "stage",
+                "paths": ["tracked.txt"]
+            }),
+        )
+        .await;
+        assert_eq!(staged["result"]["schemaVersion"], 1);
+        assert_eq!(staged["result"]["operation"], "stage");
+        assert_eq!(staged["result"]["exitCode"], 0);
+        assert_eq!(
+            test_git(&trusted_workspace, &["diff", "--cached", "--name-only"]).trim(),
+            "tracked.txt"
+        );
+
+        let committed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_commit",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "commit",
+                "message": "top-secret-commit-message"
+            }),
+        )
+        .await;
+        assert_eq!(committed["result"]["operation"], "commit");
+        assert_eq!(committed["result"]["exitCode"], 0);
+
+        let branch_created = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_branch_create",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "branch_create",
+                "name": "secret-target-branch"
+            }),
+        )
+        .await;
+        assert_eq!(branch_created["result"]["operation"], "branch_create");
+        assert_eq!(branch_created["result"]["exitCode"], 0);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit log");
+        assert!(audit_text.contains("git_stage"));
+        assert!(audit_text.contains("git_commit"));
+        assert!(audit_text.contains("git_branch_create"));
+        assert!(audit_text.contains(&trusted_capability));
+        assert!(audit_text.contains("success"));
+        assert!(!audit_text.contains("tracked.txt"));
+        assert!(!audit_text.contains("top-secret-commit-message"));
+        assert!(!audit_text.contains("secret-target-branch"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(develop_workspace).expect("develop workspace cleanup");
+        fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
+        fs::remove_dir_all(audit_root).expect("audit root cleanup");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

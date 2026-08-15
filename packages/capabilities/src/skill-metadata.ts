@@ -71,6 +71,31 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "changed files",
     "summarize changes"
   ]),
+  "git.stage": entry("git.stage", "Stage bounded workspace-relative paths in trusted local Git.", [
+    "git stage",
+    "git add",
+    "stage changes"
+  ]),
+  "git.commit": entry("git.commit", "Create a bounded trusted local Git commit.", [
+    "git commit",
+    "commit changes",
+    "local commit"
+  ]),
+  "git.branchCreate": entry("git.branchCreate", "Create a validated trusted local Git branch.", [
+    "create git branch",
+    "new branch",
+    "git branch create"
+  ]),
+  "git.branchSwitch": entry("git.branchSwitch", "Switch to a validated trusted local Git branch.", [
+    "switch git branch",
+    "checkout branch",
+    "git switch"
+  ]),
+  "git.branchDelete": entry("git.branchDelete", "Safely delete a merged validated trusted local Git branch.", [
+    "delete git branch",
+    "remove branch",
+    "safe branch delete"
+  ]),
   "git.log": entry("git.log", "List bounded structured local Git commit history.", [
     "git log",
     "commit history",

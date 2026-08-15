@@ -34,6 +34,13 @@ const mutatingFileAnnotations = {
   openWorldHint: false
 };
 
+const localGitMutationAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false
+};
+
 const processRunAnnotations = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -210,6 +217,14 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           tool.name === "file.patch"
         ) {
           expect(tool.annotations).toEqual(mutatingFileAnnotations);
+        } else if (
+          tool.name === "git.stage" ||
+          tool.name === "git.commit" ||
+          tool.name === "git.branchCreate" ||
+          tool.name === "git.branchSwitch" ||
+          tool.name === "git.branchDelete"
+        ) {
+          expect(tool.annotations).toEqual(localGitMutationAnnotations);
         } else if (tool.name === "process.run" || tool.name === "verify.run") {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel") {
