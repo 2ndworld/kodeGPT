@@ -1,8 +1,8 @@
 # KodeGPT Personal Trusted Authority — Design
 
 Date: 2026-08-15
-Status: approved design; implementation not started
-Baseline: canonical `main`, MCP surface `0.4`
+Status: implemented and accepted on `feat/personal-trusted-authority`; merge pending
+Baseline: canonical `main`, MCP surface `0.4`; accepted feature candidate, MCP surface `0.6`
 
 ## 1. Goal
 
@@ -189,15 +189,17 @@ Invalid trust state never fails open to `trusted`.
 
 ## 13. MCP surface and versioning
 
-Adding trust mutation and Git mutation changes the public capability surface. The implementation must choose the next semantic MCP surface version according to existing project conventions and update:
+Trust mutation plus local and remote Git mutation advance the accepted feature candidate to MCP surface `0.6`. The accepted fresh installed-release inventory contains 46 public tools, including the trust control plane, bounded local Git mutation, and `git.fetch` / `git.pull` / `git.push`.
 
-- `system.capabilities`;
-- exact tool inventory;
-- MCP schemas/tests;
-- fresh-host acceptance expectations;
-- release/readiness documentation.
+The implementation updates:
 
-Do not silently add tools while leaving surface `0.4` unchanged.
+- `system.capabilities` to report surface `0.6`;
+- exact tool inventory and MCP schemas/tests;
+- service/runtime parsing while retaining compatibility with prior relevant surfaces;
+- fresh installed-release acceptance expectations;
+- release/readiness evidence.
+
+Canonical `main` remains unchanged until an explicit merge. Provider interoperability remains outside this surface.
 
 ## 14. Retained security invariants
 
@@ -238,3 +240,22 @@ The phase is complete when the user can stay in ChatGPT and:
 9. inspect health/audit evidence;
 10. untrust the workspace and prove future opens are denied;
 11. use CLI only when the ChatGPT/MCP path itself requires recovery.
+
+## 17. Closure evidence
+
+Accepted implementation commits before final documentation closure:
+
+- `5b631fd feat(trust): manage workspace trust from chatgpt`;
+- `b13d39c fix(sandbox): support explicit trusted toolchains`;
+- `c4834b1 feat(git): add trusted local workflow`;
+- `908401c feat(git): add trusted remote workflow`.
+
+Accepted code candidate provenance is `908401cf3769ac2646bd22109febf66050bcee83` with `sourceDirty=false`. The immutable installed-service candidate is `rel_2c9e12bd2de99faab0b1fb775af8da4f`; the prior known-good release `rel_f00862ed93f8e2919402fc60048ba2a7` remains the rollback release. Live Node, Rust, and zrok process provenance was verified under the immutable candidate release root rather than a mutable worktree.
+
+Fresh installed-release acceptance reported runtime `0.1`, MCP protocol `2026-07-28`, MCP surface `0.6`, healthy durable audit, available filesystem boundary, and an exact 46-tool public inventory. The disposable end-to-end acceptance completed trust/open, inspect/read/search/context, patch/edit/write, `process.run`, verification `test`/`typecheck`/`build`, current-state and history Git inspection, stage/commit/branch lifecycle, fetch, fast-forward-only pull, push, durable `git_fetch` / `git_pull` / `git_push` audit evidence, profile lowering by re-trust, untrust, and denial of a later open. The final disposable repository was clean.
+
+Final pre-closure verification for the code candidate passed `cargo fmt --all -- --check`, `cargo test -p kodegpt-protocol` (11/11), serial `cargo test -p kodegpt-runtime -- --test-threads=1` (71/71), `pnpm test` (487/487), full workspace typecheck, full workspace build, protocol/schema parity, MCP conformance, and security/isolation suites. A broader `cargo test --workspace -- --test-threads=1` run can still trigger the repository's known approximately one-second dispatcher timing contention; exact reruns and the required serial runtime suite passed and no deterministic Task 4 regression was found.
+
+Known non-blocking limitation at closure: the live `skill.list` handler is reachable and its public schema includes the `compatibility` filter, but the current live skill catalog returned an empty list with `SOURCE_UNAVAILABLE`. This did not block the accepted daily development loop and is not treated as authority to begin provider interoperability.
+
+Conclusion: for normal trusted personal development, ChatGPT + KodeGPT is now the intended primary path. CodexPro/CLI remains useful for bootstrap, diagnostics, recovery, and repository administration outside the typed KodeGPT surface, not as a routine requirement for the accepted development loop. Merge remains pending explicit instruction.

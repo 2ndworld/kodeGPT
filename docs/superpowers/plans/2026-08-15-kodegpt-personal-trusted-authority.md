@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Baseline is canonical `main` with MCP surface `0.4`; adding public tools requires an explicit surface bump.
+- Baseline is canonical `main` with MCP surface `0.4`; the accepted feature candidate is MCP surface `0.6` and remains unmerged until explicit instruction.
 - `trusted means trusted` for routine workspace-scoped development.
 - Public trust surface is intentionally small: `trust.list`, `workspace.trust`, `workspace.untrust`.
 - Re-trusting an existing canonical root with another profile is the profile-update path; do not add separate policy/grant tools in this phase.
@@ -42,61 +42,61 @@
 - Calling `workspace.trust` again for the same canonical root with another profile updates `profileCeiling` while preserving one trust identity record.
 - `workspace.untrust` removes trust and revokes active workspace authority using existing lifecycle mechanisms where supported.
 
-- [ ] **Step 1: Write RED trust-store tests for create/update semantics**
+- [x] **Step 1: Write RED trust-store tests for create/update semantics**
 
 Cover one canonical record per root, profile update on re-trust, persistent identity validation, atomic persistence, invalid profile rejection, and fail-closed unsupported/corrupt state.
 
-- [ ] **Step 2: Run trust package tests and verify RED**
+- [x] **Step 2: Run trust package tests and verify RED**
 
 Run: `pnpm --filter @kodegpt/trust test`
 Expected: new assertions fail while existing tests remain green.
 
-- [ ] **Step 3: Implement only the missing trust-store behavior**
+- [x] **Step 3: Implement only the missing trust-store behavior**
 
 Reuse `TrustedWorkspaceEntry`, `profileCeiling`, and schema version 1 if current representation already supports the required behavior. Do not introduce grants or a second policy database.
 
-- [ ] **Step 4: Run trust tests to GREEN**
+- [x] **Step 4: Run trust tests to GREEN**
 
 Run: `pnpm --filter @kodegpt/trust test`
 Expected: PASS.
 
-- [ ] **Step 5: Write RED workspace-manager tests**
+- [x] **Step 5: Write RED workspace-manager tests**
 
 Cover trust-by-path canonicalization, local persistent identity derivation, nonexistent/non-directory rejection, profile update by re-trust, and untrust behavior for closed and already-open workspaces.
 
 Include a regression proving that merely reading/parsing/loading repository content does not call trust mutation code.
 
-- [ ] **Step 6: Run core tests and verify RED**
+- [x] **Step 6: Run core tests and verify RED**
 
 Run: `pnpm --filter @kodegpt/core test`
 Expected: missing manager methods/behavior fail deterministically.
 
-- [ ] **Step 7: Implement manager trust/list/untrust operations**
+- [x] **Step 7: Implement manager trust/list/untrust operations**
 
 Reuse current root inspection, trust resolver/store, workspace registry, close/cancel lifecycle, and audit paths. Do not add a separate prompt-injection subsystem or new supervisor.
 
-- [ ] **Step 8: Run core tests to GREEN**
+- [x] **Step 8: Run core tests to GREEN**
 
 Run: `pnpm --filter @kodegpt/core test`
 Expected: PASS.
 
-- [ ] **Step 9: Write RED MCP tests for exactly three public trust semantics**
+- [x] **Step 9: Write RED MCP tests for exactly three public trust semantics**
 
 Assert `trust.list`, `workspace.trust`, and `workspace.untrust` schemas, annotations, structured results, and safe error behavior. No caller-supplied device/inode fields. No `policy.*`, `profile.set`, or grant tools.
 
-- [ ] **Step 10: Implement MCP/context wiring**
+- [x] **Step 10: Implement MCP/context wiring**
 
 Expose only the three intended semantics. Return safe trust metadata and effective profile state without exposing trust-store host paths.
 
-- [ ] **Step 11: Run MCP + core + trust suites to GREEN**
+- [x] **Step 11: Run MCP + core + trust suites to GREEN**
 
 Expected: PASS.
 
-- [ ] **Step 12: Add audit assertions for trust/profile/untrust mutations**
+- [x] **Step 12: Add audit assertions for trust/profile/untrust mutations**
 
 Use existing audit conventions and verify operation, target trust/workspace identity, previous/resulting profile where relevant, outcome, and timestamp/provenance without conversation-body logging.
 
-- [ ] **Step 13: Commit Task 1**
+- [x] **Step 13: Commit Task 1**
 
 Commit message: `feat(trust): manage workspace trust from chatgpt`
 
@@ -114,35 +114,35 @@ Commit message: `feat(trust): manage workspace trust from chatgpt`
 - `observe` and `develop` stay unchanged unless separate defect evidence appears.
 - Normal discovered verification recipes should be executable in `trusted` when the underlying executable is genuinely available.
 
-- [ ] **Step 1: Reproduce the current trusted verification/process behavior**
+- [x] **Step 1: Reproduce the current trusted verification/process behavior**
 
 Create/use a trusted fixture and inspect `verify.list` plus the relevant process execution path for representative `pnpm` and Cargo recipes.
 
 Expected: either reproduce a deterministic blocker or prove the current trusted path already works.
 
-- [ ] **Step 2: Identify the actual blocking layer before changing code**
+- [x] **Step 2: Identify the actual blocking layer before changing code**
 
 Distinguish among profile resolution, executable allowlist, executable discovery/PATH, installed runtime environment, sandbox visibility, or verification adapter logic.
 
 Do not modify `presets.ts` merely because it is nearby; current evidence already shows trusted includes common Node/Rust package tooling.
 
-- [ ] **Step 3: Write one focused RED test at the proven defective layer**
+- [x] **Step 3: Write one focused RED test at the proven defective layer**
 
 The test must reproduce the exact blocker from Step 1 and keep observe/develop behavior explicit.
 
-- [ ] **Step 4: Implement the narrowest fix**
+- [x] **Step 4: Implement the narrowest fix**
 
 Change only the responsible layer. Do not introduce wildcard executable authority or broaden `develop` as a side effect.
 
-- [ ] **Step 5: Run focused tests to GREEN**
+- [x] **Step 5: Run focused tests to GREEN**
 
 Expected: trusted verification/process path succeeds where the executable is available; observe/develop regressions remain green.
 
-- [ ] **Step 6: Run package-level verification/process/profile regression suites**
+- [x] **Step 6: Run package-level verification/process/profile regression suites**
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 2 only if code changed**
+- [x] **Step 7: Commit Task 2 only if code changed**
 
 Commit message: `fix(runtime): unblock trusted development workflows`
 
@@ -165,47 +165,47 @@ If reproduction proves no defect exists, record evidence and do not create a no-
 - READY workspace + effective trusted authority required.
 - No public raw Git argv or shell string.
 
-- [ ] **Step 1: Trace and document the existing hardened Git execution chain**
+- [x] **Step 1: Trace and document the existing hardened Git execution chain**
 
 Use symbol/reference search from current Git tools to the Rust fixed-command executor. Reuse it rather than spawning Git independently in TypeScript.
 
-- [ ] **Step 2: Write RED protocol tests for local mutation variants**
+- [x] **Step 2: Write RED protocol tests for local mutation variants**
 
 Define bounded typed inputs for stage paths, commit message, branch name, switch target, and safe delete. Reject unknown fields and malformed names according to existing protocol conventions.
 
-- [ ] **Step 3: Implement TS/Rust protocol variants and restore parity**
+- [x] **Step 3: Implement TS/Rust protocol variants and restore parity**
 
 Run targeted protocol tests until GREEN.
 
-- [ ] **Step 4: Write RED Rust runtime tests with temporary repositories**
+- [x] **Step 4: Write RED Rust runtime tests with temporary repositories**
 
 Cover stage, commit, branch create/switch/delete, workspace scoping, policy denial outside trusted, deterministic errors, bounded output, and no shell invocation.
 
-- [ ] **Step 5: Implement fixed-argv local Git mutations**
+- [x] **Step 5: Implement fixed-argv local Git mutations**
 
 Construct argv internally from typed requests. Do not add hard reset or rebase.
 
-- [ ] **Step 6: Run targeted Rust Git/security tests to GREEN**
+- [x] **Step 6: Run targeted Rust Git/security tests to GREEN**
 
 Expected: PASS.
 
-- [ ] **Step 7: Write RED TypeScript capability + MCP tests**
+- [x] **Step 7: Write RED TypeScript capability + MCP tests**
 
 Assert trusted requirement, schemas, annotations, structured results, and safe public errors.
 
-- [ ] **Step 8: Implement capability/MCP wiring through the hardened runtime**
+- [x] **Step 8: Implement capability/MCP wiring through the hardened runtime**
 
 Do not duplicate Git execution logic in the MCP layer.
 
-- [ ] **Step 9: Add durable audit tests for local Git mutation**
+- [x] **Step 9: Add durable audit tests for local Git mutation**
 
 Verify operation class, workspace, bounded targets, outcome, and no secret leakage.
 
-- [ ] **Step 10: Run affected TS/MCP/security suites to GREEN**
+- [x] **Step 10: Run affected TS/MCP/security suites to GREEN**
 
 Expected: PASS.
 
-- [ ] **Step 11: Commit Task 3**
+- [x] **Step 11: Commit Task 3**
 
 Commit message: `feat(git): add trusted local workflow`
 
@@ -254,7 +254,7 @@ Record bounded remote/ref metadata and outcome without credentials or transport 
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit Task 4**
+- [x] **Step 9: Commit Task 4**
 
 Commit message: `feat(git): add trusted remote workflow`
 
@@ -271,51 +271,64 @@ Commit message: `feat(git): add trusted remote workflow`
 **Interfaces:**
 - Produces the next explicit MCP surface version, exact candidate verification, immutable installed-service provenance, and fresh ChatGPT acceptance.
 
-- [ ] **Step 1: Write RED exact surface inventory tests**
+- [x] **Step 1: Write RED exact surface inventory tests**
 
 Assert the three trust semantics plus the new local/remote Git tools. Assert raw shell, raw Git argv, force push, and provider tools remain absent.
 
-- [ ] **Step 2: Bump semantic MCP surface according to existing conventions**
+- [x] **Step 2: Bump semantic MCP surface according to existing conventions**
 
 Update `system.capabilities` and all exact inventory/schema tests. Do not leave the public surface at `0.4`.
 
-- [ ] **Step 3: Run focused cross-capability security regressions**
+- [x] **Step 3: Run focused cross-capability security regressions**
 
 Include trust identity, filesystem boundary, process isolation, verification, Git current-state/history, new Git mutation, skills, audit durability, service provenance, and package provenance.
 
-- [ ] **Step 4: Run the complete CI-equivalent verification matrix**
+- [x] **Step 4: Run the complete CI-equivalent verification matrix**
 
 Run repository-defined TypeScript typecheck/tests/build, Cargo formatting/tests, protocol parity, integration/security/isolation/acceptance, forbidden-pattern scan, and clean-install/package-smoke gates as defined by current CI.
 
 Expected: all PASS on the exact candidate head.
 
-- [ ] **Step 5: Stage/install the exact candidate through the existing immutable service lifecycle**
+- [x] **Step 5: Stage/install the exact candidate through the existing immutable service lifecycle**
 
 Do not run live service from a feature worktree. Verify Node/Rust provenance under the immutable release root before and after explicit cutover.
 
-- [ ] **Step 6: Perform fresh ChatGPT/KodeGPT schema acceptance**
+- [x] **Step 6: Perform fresh ChatGPT/KodeGPT schema acceptance**
 
 Verify `system.health`, `system.capabilities`, new surface version, trust schemas, and local/remote Git mutation schemas are visible after a fresh host/schema refresh.
 
-- [ ] **Step 7: Perform bounded end-to-end personal workflow acceptance**
+- [x] **Step 7: Perform bounded end-to-end personal workflow acceptance**
 
 Using a disposable repository: list trusts; trust as `trusted`; open; edit; run an available project verification/toolchain action; stage/commit/branch; fetch/pull/push against a controlled remote; inspect Git state; re-trust with a lower profile; untrust; prove future open is denied.
 
-- [ ] **Step 8: Verify audit and live provenance**
+- [x] **Step 8: Verify audit and live provenance**
 
 Confirm trust/profile/Git mutations are durably audited without credential leakage and live Node/Rust/zrok provenance remains under the immutable installed release.
 
-- [ ] **Step 9: Update tracker and release/readiness documentation from evidence**
+- [x] **Step 9: Update tracker and release/readiness documentation from evidence**
 
 Record exact head, surface version, verification results, package/release identity, host acceptance, and remaining limitations. Provider interoperability remains NOT STARTED.
 
-- [ ] **Step 10: Final diff review and merge-readiness gate**
+- [x] **Step 10: Final diff review and merge-readiness gate**
 
 Do not merge until exact-head CI and fresh-host acceptance are green. Cleanup/canonical reconciliation remains post-merge work according to existing repository lifecycle.
 
-- [ ] **Step 11: Commit final evidence/docs**
+- [x] **Step 11: Commit final evidence/docs**
 
 Commit message: `docs: close personal trusted authority readiness`
+
+### Task 5 evidence freeze
+
+- Code candidate: `908401cf3769ac2646bd22109febf66050bcee83` (`sourceDirty=false`).
+- Task 4 commit: `908401c feat(git): add trusted remote workflow`.
+- Final candidate MCP surface: `0.6`; fresh installed-release inventory: 46 public tools.
+- Immutable active release: `rel_2c9e12bd2de99faab0b1fb775af8da4f`; rollback release: `rel_f00862ed93f8e2919402fc60048ba2a7`.
+- Live service acceptance: active/running, listener ready, Node/Rust/zrok provenance under the immutable release root.
+- Fresh installed-release E2E: PASS for trust/open, inspect/read/search/context, patch/edit/write, `process.run`, verify `test`/`typecheck`/`build`, status/diff/history, stage/commit/branch lifecycle, fetch, fast-forward-only pull, push, audit evidence, profile lowering by re-trust, untrust, and denial after revocation; final disposable repository clean.
+- Verification: Rust fmt PASS; protocol 11/11; runtime serial 71/71; TypeScript/Vitest 487/487; full typecheck PASS; full build PASS; protocol/schema parity and MCP/security/isolation suites PASS.
+- Known non-blocking Rust issue: a broader Cargo workspace run can trigger existing approximately one-second dispatcher timing contention; exact reruns and required serial runtime suite pass.
+- Known non-blocking live limitation: `skill.list` is reachable and exposes the `compatibility` filter, but the current live catalog returns `skills=[]` with `SOURCE_UNAVAILABLE`.
+- Provider interoperability remains NOT STARTED. No raw Git argv, generic shell, force push, hard reset, or unrestricted rebase was added.
 
 ---
 
