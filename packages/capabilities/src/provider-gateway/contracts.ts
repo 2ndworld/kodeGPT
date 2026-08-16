@@ -164,6 +164,7 @@ export interface ProviderSemanticMappingDefinition {
   workspaceBinding: ProviderWorkspaceBinding;
   inputSchema: z.ZodType<unknown>;
   outputSchema: z.ZodType<unknown>;
+  mapOutput?: (providerValue: unknown, semanticInput: unknown) => unknown;
   maxProviderRequests: number;
   retry: "none" | "one-idempotent-read";
   auditFields: readonly string[];

@@ -127,7 +127,10 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
       }
 
       const response = await this.#request(mapping, manifest, mappingInput.data, credential, budget);
-      const semanticValue = parseProviderSemanticOutput(response.body, mapping.outputSchema);
+      const semanticValue = parseProviderSemanticOutput(response.body, mapping.outputSchema, {
+        semanticInput: mappingInput.data,
+        mapOutput: mapping.mapOutput
+      });
       const fitted = fitProviderSemanticResult(semanticValue);
       const result: ProviderSemanticExecutionResult = {
         semanticCapabilityId: mapping.semanticCapabilityId,

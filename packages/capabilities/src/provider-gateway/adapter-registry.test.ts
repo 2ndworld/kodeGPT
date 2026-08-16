@@ -119,6 +119,31 @@ describe("ProviderAdapterRegistry", () => {
     })])).toThrowError(/unknown mapping field/i);
   });
 
+  it("accepts an optional pure output mapper and preserves it on the frozen mapping", () => {
+    const mapOutput = (providerValue: unknown, semanticInput: unknown) => ({ providerValue, semanticInput });
+    const mapping = {
+      ...manifest().mappings[0]!,
+      mapOutput
+    } as unknown as ProviderAdapterManifest["mappings"][number];
+    const registry = new ProviderAdapterRegistry([manifest({ mappings: [mapping] })]);
+    const compiled = registry.requireMapping("test.fixture.record.read") as ProviderAdapterManifest["mappings"][number] & {
+      mapOutput?: typeof mapOutput;
+    };
+
+    expect(compiled.mapOutput).toBe(mapOutput);
+    expect(Object.isFrozen(compiled)).toBe(true);
+  });
+
+  it("rejects a non-function output mapper instead of accepting hidden mapping behavior", () => {
+    const mapping = {
+      ...manifest().mappings[0]!,
+      mapOutput: "not-a-function"
+    } as unknown as ProviderAdapterManifest["mappings"][number];
+
+    expect(() => new ProviderAdapterRegistry([manifest({ mappings: [mapping] })]))
+      .toThrowError(/mapOutput|output mapper/i);
+  });
+
   it("freezes authority-bearing compiled objects and arrays", () => {
     const registry = new ProviderAdapterRegistry([manifest()]);
     const compiled = registry.require("test.fixture.read.v1");

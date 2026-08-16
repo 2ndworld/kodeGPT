@@ -51,6 +51,34 @@ describe("provider output normalization", () => {
       .toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
   });
 
+  it("maps normalized provider JSON with validated semantic input before final schema validation", () => {
+    const schema = z.object({ repository: z.string(), label: z.string() }).strict();
+    const raw = Buffer.from(JSON.stringify({ nested: { label: "e\u0301\rnext" } }), "utf8");
+
+    expect(parseProviderSemanticOutput(raw, schema, {
+      semanticInput: { repository: "2ndworld/kodeGPT" },
+      mapOutput(providerValue, semanticInput) {
+        const provider = providerValue as { nested: { label: string } };
+        const input = semanticInput as { repository: string };
+        return { repository: input.repository, label: provider.nested.label };
+      }
+    })).toEqual({ repository: "2ndworld/kodeGPT", label: "é\nnext" });
+  });
+
+  it("normalizes output mapper failures without leaking mapper error text", () => {
+    const schema = z.object({ id: z.string() }).strict();
+    const run = () => parseProviderSemanticOutput(Buffer.from(JSON.stringify({ id: "provider-id" })), schema, {
+      semanticInput: { repository: "2ndworld/kodeGPT" },
+      mapOutput() {
+        throw new Error("raw-provider-secret-detail");
+      }
+    });
+
+    expect(run).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+    expect(run).toThrowError(/does not match|mapping|response/i);
+    expect(run).not.toThrowError(/raw-provider-secret-detail/i);
+  });
+
   it("returns an intact semantic result under 512 KiB and refuses unsafe generic truncation", () => {
     expect(fitProviderSemanticResult({ records: [{ id: "1" }] })).toEqual({
       value: { records: [{ id: "1" }] },

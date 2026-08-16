@@ -25,7 +25,14 @@ export function normalizeProviderValue(value: unknown): unknown {
   return normalizeValue(value, 0, new Set<object>(), state);
 }
 
-export function parseProviderSemanticOutput<T>(bytes: Uint8Array, schema: z.ZodType<T>): T {
+export function parseProviderSemanticOutput<T>(
+  bytes: Uint8Array,
+  schema: z.ZodType<T>,
+  options: {
+    semanticInput?: unknown;
+    mapOutput?: (providerValue: unknown, semanticInput: unknown) => unknown;
+  } = {}
+): T {
   const text = decodeProviderUtf8(bytes);
   let parsedJson: unknown;
   try {
@@ -34,7 +41,16 @@ export function parseProviderSemanticOutput<T>(bytes: Uint8Array, schema: z.ZodT
     throw responseInvalid("Provider response is not valid JSON");
   }
   const normalized = normalizeProviderValue(parsedJson);
-  const parsed = schema.safeParse(normalized);
+  let semanticValue = normalized;
+  if (options.mapOutput !== undefined) {
+    try {
+      semanticValue = options.mapOutput(normalized, options.semanticInput);
+    } catch {
+      throw responseInvalid("Provider response mapping failed");
+    }
+  }
+  const mapped = normalizeProviderValue(semanticValue);
+  const parsed = schema.safeParse(mapped);
   if (!parsed.success) {
     throw responseInvalid("Provider response does not match the reviewed semantic output schema");
   }
