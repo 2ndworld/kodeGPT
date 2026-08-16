@@ -162,10 +162,15 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships only the intended typed trust and bounded Git surface with no generic authority or execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.6");
+    expect(MCP_SURFACE_VERSION).toBe("0.7");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
+      "ci.repository",
+      "ci.status",
+      "ci.runs",
+      "ci.run",
+      "ci.failure",
       "code.search",
       "git.changes",
       "git.stage",

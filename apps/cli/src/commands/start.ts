@@ -385,6 +385,7 @@ export async function createProductionServiceStack(
       executionManager,
       artifactStore,
       nativeCapabilities,
+      remoteCi,
       extensionRegistry,
       skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
