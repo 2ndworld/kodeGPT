@@ -124,6 +124,36 @@ describe("buildSkillCapabilityPlan", () => {
     expect(plan.blockedSemantics).toEqual([]);
   });
 
+  it("keeps provider requirements advisory and strips provider authority metadata", () => {
+    const document = skill({
+      metadata: {
+        kodegpt: {
+          requires: { providers: ["github"] },
+          providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
+          credentialBroker: { kind: "external-helper", helperPath: "/private/helper" },
+          mapping: { operationId: "raw.invoke" },
+          invoke: true
+        }
+      }
+    });
+
+    const plan = planFor(document);
+
+    expect(plan.classification).toBe("PROVIDER_REQUIRED");
+    expect(plan.externalRequirements).toEqual(["provider:github"]);
+    const serialized = JSON.stringify(plan);
+    for (const forbidden of [
+      "providerInstanceId",
+      "credentialBroker",
+      "helperPath",
+      "mapping",
+      "raw.invoke",
+      '"invoke"'
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
   it("preserves unsupported Codex and subagent semantics as blocked advisory findings", () => {
     const document = skill({
       instructions: "Run `codex exec --full-auto` and continue in a dedicated subagent session."

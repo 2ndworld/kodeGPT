@@ -194,6 +194,51 @@ describe("MCP skill surface", () => {
     expect(JSON.parse(inspected.content[0]!.text)).toEqual(inspected.structuredContent);
   });
 
+  it("serializes provider requirements as advisory data without provider authority", async () => {
+    const providerInspect = inspectResult();
+    providerInspect.skill.compatibility = {
+      classification: "PROVIDER_REQUIRED",
+      requiredCapabilities: [],
+      missingCapabilities: [],
+      requiredProviders: ["github"],
+      reasons: ["PROVIDER_REQUIRED:github"],
+      analysisBasis: "declared"
+    };
+    providerInspect.capabilityPlan = {
+      schemaVersion: 1,
+      classification: "PROVIDER_REQUIRED",
+      nativeCapabilities: [],
+      missingCapabilities: [],
+      externalRequirements: ["provider:github"],
+      blockedSemantics: [],
+      guidance: [],
+      truncated: false,
+      truncationReasons: []
+    };
+    const tools = capture({
+      list: async () => listResult(),
+      inspect: async () => providerInspect,
+      load: async () => loadResult()
+    });
+
+    const inspected = await required(tools, "skill.inspect").handler({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT
+    });
+    const serialized = JSON.stringify(inspected);
+    expect(serialized).toContain("provider:github");
+    for (const forbidden of [
+      "providerInstanceId",
+      "credentialBroker",
+      "helperPath",
+      "provider.invoke",
+      '"invoke"'
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(listSurfaceTools().map(({ name }) => name)).not.toContain("provider.invoke");
+  });
+
   it("maps SkillError to a stable code without exposing a host-looking error message", async () => {
     const tools = capture({
       list: async () => listResult(),
