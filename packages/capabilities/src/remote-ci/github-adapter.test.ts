@@ -278,7 +278,7 @@ describe("GitHubRemoteCiAdapter", () => {
           start_column: 2,
           end_column: 8,
           annotation_level: "failure",
-          message: "assertion failed",
+          message: "assertion failed\nsecond line",
           title: "Test failure"
         }
       ]
@@ -305,7 +305,7 @@ describe("GitHubRemoteCiAdapter", () => {
         startColumn: 2,
         endColumn: 8,
         level: "FAILURE",
-        message: "assertion failed",
+        message: "assertion failed\nsecond line",
         title: "Test failure"
       }
     ]);

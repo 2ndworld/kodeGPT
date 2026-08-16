@@ -558,7 +558,7 @@ function normalizeAnnotation(raw: unknown): CiAnnotation {
     startColumn: nullablePositiveInteger(record.start_column),
     endColumn: nullablePositiveInteger(record.end_column),
     level: normalizeAnnotationLevel(record.annotation_level),
-    message: boundedString(record.message, 16 * 1024),
+    message: boundedMultilineString(record.message, 16 * 1024),
     title: nullableString(record.title, 1024)
   };
 }
@@ -586,6 +586,18 @@ function nullableString(value: unknown, max: number): string | null {
 
 function boundedString(value: unknown, max: number): string {
   if (typeof value !== "string" || value.length > max || hasControl(value)) throw invalidResponse();
+  return value;
+}
+
+function boundedMultilineString(value: unknown, max: number): string {
+  if (
+    typeof value !== "string" ||
+    value.length > max ||
+    [...value].some((character) => {
+      const code = character.charCodeAt(0);
+      return (code < 32 && code !== 10) || code === 127;
+    })
+  ) throw invalidResponse();
   return value;
 }
 
