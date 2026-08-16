@@ -11,13 +11,15 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 | Managed public exposure | current zrok implementation and its repository design/operational documentation; older ngrok/generic-tunnel drafts are historical unless explicitly marked current |
 | Stable local service + exposure lifecycle | `docs/superpowers/specs/2026-08-14-kodegpt-stable-local-service-lifecycle-design.md`, `docs/superpowers/plans/2026-08-14-kodegpt-stable-local-service-lifecycle.md`, and current `apps/cli/src/service` + service CLI tests |
 | Hybrid skill interoperability | `docs/superpowers/specs/2026-08-12-kodegpt-hybrid-skill-interoperability-reconciled-design.md` plus current `packages/skills`, `packages/mcp-server`, integration tests, and the capability-quality reconciliation plan |
+| Personal trusted authority / MCP surface `0.6` | `docs/superpowers/specs/2026-08-15-kodegpt-personal-trusted-authority-design.md`, `docs/superpowers/plans/2026-08-15-kodegpt-personal-trusted-authority.md`, current trust/Git tool source and tests, and merged PR #13 baseline `3e568ead27346d6670ecd9acca991708048431c2` |
 | ChatGPT compatibility and host evidence contract | `docs/compatibility/chatgpt.md` and `tests/host/README.md`; only observed host behavior may be recorded as observed |
 | Security/runtime invariants | Rust runtime/workspace authority, security tests, protocol tests, isolation tests, and the execution tracker; source/tests take precedence over stale historical prose |
 
 ## Locked authority boundaries
 
 - Rust remains the final OS/security authority for workspace filesystem and process effects.
-- MCP cannot establish workspace trust, add/remove skill sources, pin/unpin skills, or invoke a generic skill runtime.
+- Explicit MCP trust mutation is supported only through the typed `trust.list`, `workspace.trust`, and `workspace.untrust` control plane. Repository-controlled content cannot mutate trust state. Skill-source add/remove and pin/unpin remain local-CLI authority, and no generic `skill.run` surface exists.
+- In the `trusted` profile, structured local Git mutation plus typed `git.fetch`, `git.pull`, and `git.push` are allowed inside the trusted workspace and remain auditable. Arbitrary Git argv, force push, hard reset, and aggressive rebase remain outside the shipped authority.
 - `file.tree` and `file.search` are literal primitives. High-level repository understanding uses the internal semantic traversal scope for relevance only.
 - Local service lifecycle is operator-only CLI authority. It is not an MCP capability and does not grant workspace/process/filesystem authority.
 - `systemd --user` owns only the outer installed KodeGPT foreground service; KodeGPT's existing managed-zrok path remains the single supervisor for the loopback MCP server, Rust runtime, and zrok child.
