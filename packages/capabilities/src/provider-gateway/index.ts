@@ -5,3 +5,5 @@ export * from "./adapter-registry.js";
 export * from "./audit.js";
 export * from "./identity.js";
 export * from "./credential-broker.js";
+export * from "./network-policy.js";
+export * from "./network-transport.js";

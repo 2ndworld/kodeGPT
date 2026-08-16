@@ -180,6 +180,17 @@ export interface ProviderAdapterManifest {
   mappings: readonly ProviderSemanticMappingDefinition[];
 }
 
+export interface ProviderRequestBudget {
+  claimRequest(): void;
+}
+
+export interface ProviderRawResponse {
+  readonly statusCode: number;
+  readonly headers: Readonly<Record<string, string | readonly string[]>>;
+  readonly body: Buffer;
+  readonly finalOrigin: string;
+}
+
 export interface ProviderGatewayService {
   execute(input: ProviderSemanticExecutionInput): Promise<ProviderSemanticExecutionResult>;
 }
