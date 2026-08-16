@@ -6,8 +6,11 @@ import {
   type ProviderAdapterManifest,
   type ProviderSemanticMappingDefinition
 } from "./contracts.js";
+import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
 
-export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([]);
+export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([
+  GITHUB_READ_PROVIDER_MANIFEST
+]);
 
 export class ProviderAdapterRegistry {
   readonly #manifests: readonly ProviderAdapterManifest[];
@@ -249,7 +252,7 @@ function validateMapping(
     "maxProviderRequests",
     "retry",
     "auditFields"
-  ], "mapping");
+  ], "mapping", ["mapOutput"]);
   requireAuthorityId(mapping.semanticCapabilityId, "semantic capability id");
   if (mapping.adapterId !== manifestAdapterId) {
     throw invalid("Provider semantic mapping must belong to the same adapter manifest");
@@ -271,6 +274,9 @@ function validateMapping(
   }
   if (typeof mapping.inputSchema?.safeParse !== "function" || typeof mapping.outputSchema?.safeParse !== "function") {
     throw invalid("Provider semantic mapping must provide reviewed input and output schemas");
+  }
+  if (mapping.mapOutput !== undefined && typeof mapping.mapOutput !== "function") {
+    throw invalid("Provider semantic mapping output mapper must be a function");
   }
   if (!Array.isArray(mapping.auditFields)) {
     throw invalid("Provider semantic mapping audit fields must be a fixed compiled array");
@@ -321,6 +327,7 @@ function freezeManifest(manifest: ProviderAdapterManifest): ProviderAdapterManif
     workspaceBinding: mapping.workspaceBinding,
     inputSchema: mapping.inputSchema,
     outputSchema: mapping.outputSchema,
+    ...(mapping.mapOutput === undefined ? {} : { mapOutput: mapping.mapOutput }),
     maxProviderRequests: mapping.maxProviderRequests,
     retry: mapping.retry,
     auditFields: Object.freeze([...mapping.auditFields])
@@ -337,13 +344,18 @@ function freezeManifest(manifest: ProviderAdapterManifest): ProviderAdapterManif
   });
 }
 
-function assertExactKeys(value: unknown, allowed: readonly string[], label: string): asserts value is Record<string, unknown> {
+function assertExactKeys(
+  value: unknown,
+  required: readonly string[],
+  label: string,
+  optional: readonly string[] = []
+): asserts value is Record<string, unknown> {
   if (!isPlainRecord(value)) throw invalid(`Invalid ${label}`);
-  const allowedSet = new Set(allowed);
+  const allowedSet = new Set([...required, ...optional]);
   for (const key of Object.keys(value)) {
     if (!allowedSet.has(key)) throw invalid(`Unknown ${label} field: ${key}`);
   }
-  for (const key of allowed) {
+  for (const key of required) {
     if (!Object.hasOwn(value, key)) throw invalid(`Missing ${label} field: ${key}`);
   }
 }

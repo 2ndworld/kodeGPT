@@ -48,9 +48,17 @@ function manifest(overrides: Partial<ProviderAdapterManifest> = {}): ProviderAda
 }
 
 describe("ProviderAdapterRegistry", () => {
-  it("keeps the production manifest inventory empty", () => {
-    expect(PRODUCTION_PROVIDER_MANIFESTS).toEqual([]);
+  it("ships exactly the reviewed GitHub read adapter in the production manifest inventory", () => {
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
     expect(Object.isFrozen(PRODUCTION_PROVIDER_MANIFESTS)).toBe(true);
+    const registry = new ProviderAdapterRegistry(PRODUCTION_PROVIDER_MANIFESTS);
+    expect(registry.require("github.read.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.repository.inspect",
+      "github.pr.inspect",
+      "github.pr.list"
+    ]);
+    expect(() => registry.requireMapping("github.issue.inspect"))
+      .toThrowError(expect.objectContaining({ code: "PROVIDER_TOOL_UNAVAILABLE" }));
   });
 
   it("resolves a compiled manifest and semantic mapping", () => {
@@ -117,6 +125,31 @@ describe("ProviderAdapterRegistry", () => {
     expect(() => new ProviderAdapterRegistry([manifest({
       mappings: [{ ...manifest().mappings[0]!, description: "untrusted prose" } as ProviderAdapterManifest["mappings"][number]]
     })])).toThrowError(/unknown mapping field/i);
+  });
+
+  it("accepts an optional pure output mapper and preserves it on the frozen mapping", () => {
+    const mapOutput = (providerValue: unknown, semanticInput: unknown) => ({ providerValue, semanticInput });
+    const mapping = {
+      ...manifest().mappings[0]!,
+      mapOutput
+    } as unknown as ProviderAdapterManifest["mappings"][number];
+    const registry = new ProviderAdapterRegistry([manifest({ mappings: [mapping] })]);
+    const compiled = registry.requireMapping("test.fixture.record.read") as ProviderAdapterManifest["mappings"][number] & {
+      mapOutput?: typeof mapOutput;
+    };
+
+    expect(compiled.mapOutput).toBe(mapOutput);
+    expect(Object.isFrozen(compiled)).toBe(true);
+  });
+
+  it("rejects a non-function output mapper instead of accepting hidden mapping behavior", () => {
+    const mapping = {
+      ...manifest().mappings[0]!,
+      mapOutput: "not-a-function"
+    } as unknown as ProviderAdapterManifest["mappings"][number];
+
+    expect(() => new ProviderAdapterRegistry([manifest({ mappings: [mapping] })]))
+      .toThrowError(/mapOutput|output mapper/i);
   });
 
   it("freezes authority-bearing compiled objects and arrays", () => {

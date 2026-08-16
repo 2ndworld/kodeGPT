@@ -268,7 +268,7 @@ describe("kodegpt start orchestration", () => {
       expect(events).not.toContain("provider.audit");
       expect(Object.keys(stack)).not.toContain("providerRuntime");
       expect(Object.keys(stack.toolContext)).not.toContain("provider");
-      expect(providerInput!.manifests).toEqual([]);
+      expect(providerInput!.manifests.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
       expect(providerInput!.workspaceRoots()).toEqual(["/workspace"]);
       await expect(providerInput!.workspaceAuthority.resolve("ws_test")).resolves.toEqual({
         workspaceId: "ws_test",

@@ -173,7 +173,7 @@ describe("full security acceptance invariants", () => {
     const names = listSurfaceTools().map(({ name }) => name);
     expect(names).toHaveLength(51);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
-    expect(PRODUCTION_PROVIDER_MANIFESTS).toEqual([]);
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
     expect(PROVIDER_CREDENTIAL_TIMEOUT_MS).toBe(5_000);
     expect(PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS).toBe(10_000);
     expect(PROVIDER_OPERATION_TIMEOUT_MS).toBe(30_000);
