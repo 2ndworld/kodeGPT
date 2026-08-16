@@ -25,12 +25,14 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 - Local service lifecycle is operator-only CLI authority. It is not an MCP capability and does not grant workspace/process/filesystem authority.
 - `systemd --user` owns only the outer installed KodeGPT foreground service; KodeGPT's existing managed-zrok path remains the single supervisor for the loopback MCP server, Rust runtime, and zrok child.
 - Installed service releases live outside Git worktrees so deleting a feature worktree cannot invalidate the running executable. The general KodeGPT state root remains `~/.kodegpt`.
-- Provider interoperability is not part of the current shipped authority. A dedicated security/design gate is the next authority-bearing design phase, and production implementation remains prohibited until that design is explicitly reviewed/approved and followed by a separate implementation plan.
+- Provider interoperability is not part of the current shipped authority. The dedicated Provider Gateway design candidate now exists at `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md` and awaits explicit review/approval; production implementation remains prohibited until approval and a separate implementation plan.
 - CodexPro/Codex/Claude are not KodeGPT runtime dependencies.
 
 ## Deferred authority-bearing work
 
-### Provider interoperability — dedicated security/design gate; implementation not started
+### Provider interoperability — design candidate awaiting approval; implementation not started
+
+Current design candidate: `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`. It changes no public MCP surface and is not production implementation authority until explicitly approved.
 
 The following provider actions are **genuinely absent** from the current KodeGPT product/runtime and must not be added opportunistically inside capability, skill, or tunnel maintenance work:
 
@@ -40,7 +42,7 @@ provider.tools
 provider.invoke
 ```
 
-Before any provider code is written, the dedicated Provider Gateway design must resolve at least:
+Before any provider code is written, explicit review must confirm that the dedicated Provider Gateway design resolves at least:
 
 - provider admission, trust, and durable identity;
 - tool-inventory identity/versioning and capability mapping;
