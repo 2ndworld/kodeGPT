@@ -1,3 +1,5 @@
+import type { z } from "zod";
+
 export const PROVIDER_ERROR_CODES = Object.freeze([
   "PROVIDER_INPUT_INVALID",
   "PROVIDER_STATE_INVALID",
@@ -115,6 +117,66 @@ export interface ProviderAuditMetadata {
   inventoryChanged?: boolean;
   truncated?: boolean;
   durationMs?: number;
+}
+
+export interface ProviderEncodedRequest {
+  pathParameters?: Readonly<Record<string, string>>;
+  query?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+  body?: unknown;
+}
+
+export interface ProviderRedirectPolicy {
+  fromOrigin: string;
+  toOrigin: string;
+}
+
+export interface ProviderNetworkPolicy {
+  kind: "internet";
+  origins: readonly string[];
+  redirect: ProviderRedirectPolicy | null;
+}
+
+export type ProviderCredentialBrokerPolicy =
+  | { kind: "none" }
+  | {
+      kind: "external-helper";
+      argv: readonly string[];
+      environment: Readonly<Record<string, string>>;
+    };
+
+export interface ProviderOperationDefinition {
+  id: string;
+  method: "GET" | "POST";
+  origin: string;
+  pathTemplate: string;
+  allowedQueryKeys: readonly string[];
+  fixedHeaders: Readonly<Record<string, string>>;
+  inputSchema: z.ZodType<unknown>;
+  encodeRequest(input: unknown): ProviderEncodedRequest;
+}
+
+export interface ProviderSemanticMappingDefinition {
+  semanticCapabilityId: string;
+  adapterId: string;
+  adapterOperationId: string;
+  effect: ProviderEffectClass;
+  workspaceBinding: ProviderWorkspaceBinding;
+  inputSchema: z.ZodType<unknown>;
+  outputSchema: z.ZodType<unknown>;
+  maxProviderRequests: number;
+  retry: "none" | "one-idempotent-read";
+  auditFields: readonly string[];
+}
+
+export interface ProviderAdapterManifest {
+  adapterId: string;
+  adapterContractVersion: string;
+  implementationDigest: string;
+  inventoryMode: ProviderInventoryMode;
+  networkPolicy: ProviderNetworkPolicy;
+  credentialBroker: ProviderCredentialBrokerPolicy;
+  operations: readonly ProviderOperationDefinition[];
+  mappings: readonly ProviderSemanticMappingDefinition[];
 }
 
 export interface ProviderGatewayService {

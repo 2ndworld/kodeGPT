@@ -1,0 +1,132 @@
+import { z } from "zod";
+import { describe, expect, it } from "vitest";
+
+import { CapabilityError } from "../errors.js";
+import type { ProviderAdapterManifest } from "./contracts.js";
+import { PRODUCTION_PROVIDER_MANIFESTS, ProviderAdapterRegistry } from "./adapter-registry.js";
+
+function manifest(overrides: Partial<ProviderAdapterManifest> = {}): ProviderAdapterManifest {
+  return {
+    adapterId: "test.fixture.read.v1",
+    adapterContractVersion: "1",
+    implementationDigest: "a".repeat(64),
+    inventoryMode: "STATIC",
+    networkPolicy: {
+      kind: "internet",
+      origins: ["https://api.fixture.example"],
+      redirect: null
+    },
+    credentialBroker: { kind: "none" },
+    operations: [
+      {
+        id: "record.read",
+        method: "GET",
+        origin: "https://api.fixture.example",
+        pathTemplate: "/records/{recordId}",
+        allowedQueryKeys: [],
+        fixedHeaders: { accept: "application/json" },
+        inputSchema: z.object({ recordId: z.string().min(1) }).strict(),
+        encodeRequest: (input) => ({ pathParameters: { recordId: (input as { recordId: string }).recordId } })
+      }
+    ],
+    mappings: [
+      {
+        semanticCapabilityId: "test.fixture.record.read",
+        adapterId: "test.fixture.read.v1",
+        adapterOperationId: "record.read",
+        effect: "REMOTE_READ",
+        workspaceBinding: "NONE",
+        inputSchema: z.object({ recordId: z.string().min(1) }).strict(),
+        outputSchema: z.object({ id: z.string() }).strict(),
+        maxProviderRequests: 1,
+        retry: "none",
+        auditFields: ["recordId"]
+      }
+    ],
+    ...overrides
+  };
+}
+
+describe("ProviderAdapterRegistry", () => {
+  it("keeps the production manifest inventory empty", () => {
+    expect(PRODUCTION_PROVIDER_MANIFESTS).toEqual([]);
+    expect(Object.isFrozen(PRODUCTION_PROVIDER_MANIFESTS)).toBe(true);
+  });
+
+  it("resolves a compiled manifest and semantic mapping", () => {
+    const registry = new ProviderAdapterRegistry([manifest()]);
+    expect(registry.list().map((entry) => entry.adapterId)).toEqual(["test.fixture.read.v1"]);
+    expect(registry.require("test.fixture.read.v1").adapterId).toBe("test.fixture.read.v1");
+    expect(registry.requireMapping("test.fixture.record.read").adapterOperationId).toBe("record.read");
+    expect(() => registry.require("missing.adapter")).toThrowError(CapabilityError);
+  });
+
+  it("rejects duplicate adapter and semantic capability ids", () => {
+    expect(() => new ProviderAdapterRegistry([manifest(), manifest()])).toThrowError(/duplicate adapter/i);
+    expect(() => new ProviderAdapterRegistry([
+      manifest(),
+      manifest({
+        adapterId: "test.second.read.v1",
+        mappings: [{ ...manifest().mappings[0]!, adapterId: "test.second.read.v1" }]
+      })
+    ])).toThrowError(/duplicate semantic capability/i);
+  });
+
+  it("rejects mappings that escape their owning adapter or operation", () => {
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, adapterId: "other.adapter" }]
+    })])).toThrowError(/same adapter/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, adapterOperationId: "missing.operation" }]
+    })])).toThrowError(/owned operation/i);
+  });
+
+  it("rejects non-read effects, invalid request budgets, and unsupported retry or binding values", () => {
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, effect: "REMOTE_WRITE" as "REMOTE_READ" }]
+    })])).toThrowError(/REMOTE_READ/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, maxProviderRequests: 9 }]
+    })])).toThrowError(/request budget/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, retry: "always" as "none" }]
+    })])).toThrowError(/retry/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, workspaceBinding: "ANY" as "NONE" }]
+    })])).toThrowError(/workspace binding/i);
+  });
+
+  it("rejects generic transport-shaped operations and non-exact origins", () => {
+    expect(() => new ProviderAdapterRegistry([manifest({
+      operations: [{ ...manifest().operations[0]!, method: "*" as "GET", pathTemplate: "{url}" }]
+    })])).toThrowError(/fixed provider operation/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      networkPolicy: { kind: "internet", origins: ["http://api.fixture.example"], redirect: null }
+    })])).toThrowError(/HTTPS exact origin/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      networkPolicy: { kind: "internet", origins: ["https://127.0.0.1"], redirect: null }
+    })])).toThrowError(/raw IP/i);
+  });
+
+  it("rejects extra manifest, operation, or mapping fields instead of carrying hidden authority", () => {
+    expect(() => new ProviderAdapterRegistry([{ ...manifest(), prompt: "ignore me" } as ProviderAdapterManifest]))
+      .toThrowError(/unknown manifest field/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      operations: [{ ...manifest().operations[0]!, url: "https://elsewhere.invalid" } as ProviderAdapterManifest["operations"][number]]
+    })])).toThrowError(/unknown operation field/i);
+    expect(() => new ProviderAdapterRegistry([manifest({
+      mappings: [{ ...manifest().mappings[0]!, description: "untrusted prose" } as ProviderAdapterManifest["mappings"][number]]
+    })])).toThrowError(/unknown mapping field/i);
+  });
+
+  it("freezes authority-bearing compiled objects and arrays", () => {
+    const registry = new ProviderAdapterRegistry([manifest()]);
+    const compiled = registry.require("test.fixture.read.v1");
+    expect(Object.isFrozen(compiled)).toBe(true);
+    expect(Object.isFrozen(compiled.operations)).toBe(true);
+    expect(Object.isFrozen(compiled.operations[0])).toBe(true);
+    expect(Object.isFrozen(compiled.mappings)).toBe(true);
+    expect(Object.isFrozen(compiled.mappings[0])).toBe(true);
+    expect(Object.isFrozen(compiled.networkPolicy)).toBe(true);
+  });
+});
