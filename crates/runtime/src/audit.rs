@@ -53,6 +53,13 @@ pub enum AuditAction {
     CiRuns,
     CiRun,
     CiFailure,
+    ProviderAdd,
+    ProviderRemove,
+    ProviderEnable,
+    ProviderDisable,
+    ProviderReapprove,
+    ProviderExecute,
+    ProviderInventory,
     ProcessInspectExecutable,
     VerifyRun,
     ProcessRun,
@@ -102,6 +109,17 @@ pub struct CiAuditMetadata {
     pub run_id: Option<String>,
     pub job_id: Option<String>,
     pub error_code: Option<String>,
+    pub truncated: Option<bool>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAuditMetadata {
+    pub provider_instance_id: String,
+    pub adapter_id: String,
+    pub semantic_capability_id: Option<String>,
+    pub error_code: Option<String>,
+    pub inventory_changed: Option<bool>,
     pub truncated: Option<bool>,
     pub duration_ms: Option<u64>,
 }
@@ -196,7 +214,15 @@ struct AuditRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    provider_instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    adapter_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_capability_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inventory_changed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     truncated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,6 +353,31 @@ impl AuditSink {
         validate_ci_audit_metadata(metadata)?;
         let mut record = AuditRecord::outcome(context, outcome);
         record.set_ci_metadata(metadata);
+        self.append(record, AuditPhase::Outcome)
+    }
+
+    pub fn decision_with_provider(
+        &self,
+        context: &AuditContext,
+        decision: AuditDecision,
+        reason: AuditReason,
+        metadata: &ProviderAuditMetadata,
+    ) -> Result<(), AuditError> {
+        validate_provider_audit_metadata(metadata)?;
+        let mut record = AuditRecord::decision(context, decision, reason);
+        record.set_provider_metadata(metadata);
+        self.append(record, AuditPhase::Decision)
+    }
+
+    pub fn outcome_with_provider(
+        &self,
+        context: &AuditContext,
+        outcome: AuditOutcome,
+        metadata: &ProviderAuditMetadata,
+    ) -> Result<(), AuditError> {
+        validate_provider_audit_metadata(metadata)?;
+        let mut record = AuditRecord::outcome(context, outcome);
+        record.set_provider_metadata(metadata);
         self.append(record, AuditPhase::Outcome)
     }
 
@@ -535,7 +586,11 @@ impl AuditRecord {
             credential_source: None,
             run_id: None,
             job_id: None,
+            provider_instance_id: None,
+            adapter_id: None,
+            semantic_capability_id: None,
             error_code: None,
+            inventory_changed: None,
             truncated: None,
             duration_ms: None,
         }
@@ -548,6 +603,16 @@ impl AuditRecord {
         self.run_id = metadata.run_id.clone();
         self.job_id = metadata.job_id.clone();
         self.error_code = metadata.error_code.clone();
+        self.truncated = metadata.truncated;
+        self.duration_ms = metadata.duration_ms;
+    }
+
+    fn set_provider_metadata(&mut self, metadata: &ProviderAuditMetadata) {
+        self.provider_instance_id = Some(metadata.provider_instance_id.clone());
+        self.adapter_id = Some(metadata.adapter_id.clone());
+        self.semantic_capability_id = metadata.semantic_capability_id.clone();
+        self.error_code = metadata.error_code.clone();
+        self.inventory_changed = metadata.inventory_changed;
         self.truncated = metadata.truncated;
         self.duration_ms = metadata.duration_ms;
     }
@@ -596,6 +661,13 @@ impl AuditAction {
             Self::CiRuns => "ci_runs",
             Self::CiRun => "ci_run",
             Self::CiFailure => "ci_failure",
+            Self::ProviderAdd => "provider_add",
+            Self::ProviderRemove => "provider_remove",
+            Self::ProviderEnable => "provider_enable",
+            Self::ProviderDisable => "provider_disable",
+            Self::ProviderReapprove => "provider_reapprove",
+            Self::ProviderExecute => "provider_execute",
+            Self::ProviderInventory => "provider_inventory",
             Self::ProcessInspectExecutable => "process_inspect_executable",
             Self::VerifyRun => "verify_run",
             Self::ProcessRun => "process_run",
@@ -663,6 +735,69 @@ fn validate_ci_audit_metadata(metadata: &CiAuditMetadata) -> Result<(), AuditErr
         return Err(AuditError::unavailable("AUDIT_UNAVAILABLE"));
     }
     Ok(())
+}
+
+fn validate_provider_audit_metadata(metadata: &ProviderAuditMetadata) -> Result<(), AuditError> {
+    if !valid_provider_instance_id(&metadata.provider_instance_id)
+        || !valid_provider_authority_id(&metadata.adapter_id)
+        || metadata
+            .semantic_capability_id
+            .as_deref()
+            .is_some_and(|value| !valid_provider_authority_id(value))
+        || metadata
+            .error_code
+            .as_deref()
+            .is_some_and(|value| !valid_provider_error_code(value))
+        || metadata.duration_ms.is_some_and(|value| value > 86_400_000)
+    {
+        return Err(AuditError::unavailable("AUDIT_UNAVAILABLE"));
+    }
+    Ok(())
+}
+
+fn valid_provider_instance_id(value: &str) -> bool {
+    value.strip_prefix("prv_").is_some_and(|suffix| {
+        suffix.len() == 32
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}
+
+fn valid_provider_authority_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index == 0 {
+                byte.is_ascii_alphanumeric()
+            } else {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'+' | b'-')
+            }
+        })
+}
+
+fn valid_provider_error_code(value: &str) -> bool {
+    matches!(
+        value,
+        "PROVIDER_INPUT_INVALID"
+            | "PROVIDER_STATE_INVALID"
+            | "PROVIDER_NOT_ADMITTED"
+            | "PROVIDER_DISABLED"
+            | "PROVIDER_IDENTITY_CHANGED"
+            | "PROVIDER_CREDENTIAL_UNAVAILABLE"
+            | "PROVIDER_CREDENTIAL_REJECTED"
+            | "PROVIDER_NETWORK_DENIED"
+            | "PROVIDER_UNAVAILABLE"
+            | "PROVIDER_TIMEOUT"
+            | "PROVIDER_CANCELLED"
+            | "PROVIDER_RATE_LIMITED"
+            | "PROVIDER_RESPONSE_INVALID"
+            | "PROVIDER_OUTPUT_LIMIT_EXCEEDED"
+            | "PROVIDER_TOOL_UNAVAILABLE"
+            | "PROVIDER_INVENTORY_CHANGED"
+            | "PROVIDER_REQUEST_FAILED"
+            | "PROVIDER_AUDIT_UNAVAILABLE"
+    )
 }
 
 fn valid_ci_repository(value: &str) -> bool {

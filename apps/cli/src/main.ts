@@ -4,6 +4,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ConnectorCredentialStore } from "@kodegpt/auth";
+import {
+  CapabilityError,
+  DefaultProviderCredentialBroker,
+  PRODUCTION_PROVIDER_MANIFESTS,
+  ProviderAdapterRegistry,
+  ProviderAuditClient,
+  ProviderOperatorService,
+  ProviderRegistryStore
+} from "@kodegpt/capabilities";
 import { KernelClient } from "@kodegpt/core";
 import {
   createSkillSourceRuntimeAdapter,
@@ -33,6 +42,7 @@ import {
   uninstallService,
   type ServiceOperatorDependencies
 } from "./commands/service.js";
+import { runProviderCommand } from "./commands/provider.js";
 import { runSkillCommand, type SkillCommandDependencies } from "./commands/skill.js";
 import { formatKodegptStartStatus, runStartCommand } from "./commands/start.js";
 import { runWorkspaceCommand, type InspectedWorkspaceRoot } from "./commands/workspace.js";
@@ -54,6 +64,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "workspace":
       await workspace(rest);
+      return;
+    case "provider":
+      await provider(rest);
       return;
     case "skill":
       await skill(rest);
@@ -116,6 +129,37 @@ async function workspace(args: string[]): Promise<void> {
     }
   };
   const output = await runWorkspaceCommand(remaining, { store, inspectRoot });
+  process.stdout.write(`${output}\n`);
+}
+
+async function provider(args: string[]): Promise<void> {
+  const { stateRoot, remaining } = extractStateRoot(args);
+  const registry = new ProviderRegistryStore(stateRoot);
+  const adapters = new ProviderAdapterRegistry(PRODUCTION_PROVIDER_MANIFESTS);
+  const workspaceRoots = (await new WorkspaceTrustStore(stateRoot).list()).map((entry) => entry.canonicalRoot);
+  const service = new ProviderOperatorService({
+    store: registry,
+    adapters,
+    audit: {
+      async record(metadata) {
+        const runtimePath = await resolveRuntimePath();
+        const client = await KernelClient.start({ runtimePath, stateRoot });
+        try {
+          await new ProviderAuditClient(client).record(metadata);
+        } finally {
+          await client.stop();
+        }
+      }
+    },
+    credentials: new DefaultProviderCredentialBroker({ workspaceRoots: () => workspaceRoots }),
+    inventory: {
+      async fetch() {
+        throw new CapabilityError("PROVIDER_TOOL_UNAVAILABLE", "No production provider inventory source is registered");
+      }
+    },
+    workspaceRoots: () => workspaceRoots
+  });
+  const output = await runProviderCommand(remaining, { service });
   process.stdout.write(`${output}\n`);
 }
 
@@ -361,6 +405,13 @@ function helpText(): string {
     "  kodegpt workspace trust <path> [--ceiling observe|develop|trusted] [--state-root <path>]",
     "  kodegpt workspace untrust <trust-id> [--state-root <path>]",
     "  kodegpt workspace list [--state-root <path>]",
+    "  kodegpt provider add --adapter <adapter-id> --name <display-name> [--config <json>] [--helper-path <path> --helper-sha256 <sha256>] [--state-root <path>]",
+    "  kodegpt provider remove <provider-id> [--state-root <path>]",
+    "  kodegpt provider enable <provider-id> [--state-root <path>]",
+    "  kodegpt provider disable <provider-id> [--state-root <path>]",
+    "  kodegpt provider reapprove <provider-id> [--state-root <path>]",
+    "  kodegpt provider list [--json] [--state-root <path>]",
+    "  kodegpt provider inspect <provider-id> [--json] [--state-root <path>]",
     "  kodegpt skill source list [--state-root <path>]",
     "  kodegpt skill source add <absolute-path> [--kind agent-skills] [--state-root <path>]",
     "  kodegpt skill source remove <source-id> [--state-root <path>]",

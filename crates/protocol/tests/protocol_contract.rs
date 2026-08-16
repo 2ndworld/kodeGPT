@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use kodegpt_protocol::{
-    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, RuntimeRequest, read_frame,
-    write_frame,
+    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, ProviderAuditParams,
+    RuntimeRequest, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 
@@ -215,6 +215,60 @@ fn ci_audit_params_are_closed_and_typed() {
     ] {
         serde_json::from_value::<CiAuditParams>(invalid)
             .expect_err("unsafe CI audit params must be rejected");
+    }
+}
+
+#[test]
+fn provider_audit_params_are_closed_global_and_typed() {
+    let valid = json!({
+        "operationId": "op_test",
+        "operation": "execute",
+        "phase": "failed",
+        "providerInstanceId": "prv_0123456789abcdef0123456789abcdef",
+        "adapterId": "fixture.read",
+        "semanticCapabilityId": "test.fixture.record.read",
+        "errorCode": "PROVIDER_TIMEOUT",
+        "inventoryChanged": false,
+        "truncated": true,
+        "durationMs": 42
+    });
+    serde_json::from_value::<ProviderAuditParams>(valid).expect("valid provider audit params");
+
+    for invalid in [
+        json!({
+            "operationId": "op_test",
+            "operation": "execute",
+            "phase": "decision",
+            "providerInstanceId": "prv_0123456789abcdef0123456789abcdef",
+            "adapterId": "fixture.read",
+            "credential": "forbidden"
+        }),
+        json!({
+            "operationId": "op_test",
+            "operation": "execute",
+            "phase": "decision",
+            "providerInstanceId": "bad",
+            "adapterId": "fixture.read"
+        }),
+        json!({
+            "operationId": "op_test",
+            "operation": "execute",
+            "phase": "decision",
+            "providerInstanceId": "prv_0123456789abcdef0123456789abcdef",
+            "adapterId": "fixture.read",
+            "errorCode": "UNKNOWN_PROVIDER_ERROR"
+        }),
+        json!({
+            "operationId": "op_test",
+            "operation": "execute",
+            "phase": "decision",
+            "providerInstanceId": "prv_0123456789abcdef0123456789abcdef",
+            "adapterId": "fixture.read",
+            "capabilityId": "must-not-be-accepted"
+        }),
+    ] {
+        serde_json::from_value::<ProviderAuditParams>(invalid)
+            .expect_err("unsafe provider audit params must be rejected");
     }
 }
 

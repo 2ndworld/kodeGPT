@@ -92,6 +92,48 @@ describe("forbidden product-code patterns", () => {
       "packages/core/src/runtime.ts",
       'export const command = "gh api /repos/example/project/actions/runs";\n',
       "remote-ci-gh-api"
+    ],
+    [
+      "generic provider request surface",
+      "packages/core/src/runtime.ts",
+      'export const command = "provider.request";\n',
+      "provider-forbidden-surface"
+    ],
+    [
+      "generic provider GraphQL surface",
+      "packages/core/src/runtime.ts",
+      'export const command = "provider.graphql";\n',
+      "provider-forbidden-surface"
+    ],
+    [
+      "remote provider mutation surface",
+      "packages/core/src/runtime.ts",
+      'export const command = "provider.write";\n',
+      "provider-forbidden-surface"
+    ],
+    [
+      "raw provider URL authority",
+      "packages/core/src/runtime.ts",
+      'export const providerUrl = "https://caller.invalid";\n',
+      "provider-raw-authority"
+    ],
+    [
+      "raw provider method/header/argv authority",
+      "packages/core/src/runtime.ts",
+      'export const providerMethod = "POST", providerHeaders = {}, providerArgv = [];\n',
+      "provider-raw-authority"
+    ],
+    [
+      "generic provider request dispatcher",
+      "packages/core/src/runtime.ts",
+      'export function genericProviderRequest() { return null; }\n',
+      "provider-generic-dispatch"
+    ],
+    [
+      "provider agent/process proxy",
+      "packages/core/src/runtime.ts",
+      'export class ProviderProcessProxy {}\n',
+      "provider-process-proxy"
     ]
   ])("rejects %s", async (_label, path, contents, rule) => {
     const root = await fixtureRoot();

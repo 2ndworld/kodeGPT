@@ -10,7 +10,8 @@ use kodegpt_protocol::{
     GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
     GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
-    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
+    ProcessOperationParams, ProcessRunParams, ProfileName, ProviderAuditOperation,
+    ProviderAuditParams, ProviderAuditPhase, ProviderErrorCode, RuntimePolicy,
     SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
     SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
     TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
@@ -30,7 +31,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use crate::audit::{
-    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink, CiAuditMetadata,
+    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink,
+    CiAuditMetadata, ProviderAuditMetadata,
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
@@ -86,6 +88,29 @@ fn ci_error_code_str(value: CiErrorCode) -> &'static str {
         CiErrorCode::ResponseLimitExceeded => "CI_RESPONSE_LIMIT_EXCEEDED",
         CiErrorCode::LogUnavailable => "CI_LOG_UNAVAILABLE",
         CiErrorCode::LogLimitExceeded => "CI_LOG_LIMIT_EXCEEDED",
+    }
+}
+
+fn provider_error_code_str(value: ProviderErrorCode) -> &'static str {
+    match value {
+        ProviderErrorCode::InputInvalid => "PROVIDER_INPUT_INVALID",
+        ProviderErrorCode::StateInvalid => "PROVIDER_STATE_INVALID",
+        ProviderErrorCode::NotAdmitted => "PROVIDER_NOT_ADMITTED",
+        ProviderErrorCode::Disabled => "PROVIDER_DISABLED",
+        ProviderErrorCode::IdentityChanged => "PROVIDER_IDENTITY_CHANGED",
+        ProviderErrorCode::CredentialUnavailable => "PROVIDER_CREDENTIAL_UNAVAILABLE",
+        ProviderErrorCode::CredentialRejected => "PROVIDER_CREDENTIAL_REJECTED",
+        ProviderErrorCode::NetworkDenied => "PROVIDER_NETWORK_DENIED",
+        ProviderErrorCode::Unavailable => "PROVIDER_UNAVAILABLE",
+        ProviderErrorCode::Timeout => "PROVIDER_TIMEOUT",
+        ProviderErrorCode::Cancelled => "PROVIDER_CANCELLED",
+        ProviderErrorCode::RateLimited => "PROVIDER_RATE_LIMITED",
+        ProviderErrorCode::ResponseInvalid => "PROVIDER_RESPONSE_INVALID",
+        ProviderErrorCode::OutputLimitExceeded => "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
+        ProviderErrorCode::ToolUnavailable => "PROVIDER_TOOL_UNAVAILABLE",
+        ProviderErrorCode::InventoryChanged => "PROVIDER_INVENTORY_CHANGED",
+        ProviderErrorCode::RequestFailed => "PROVIDER_REQUEST_FAILED",
+        ProviderErrorCode::AuditUnavailable => "PROVIDER_AUDIT_UNAVAILABLE",
     }
 }
 
@@ -366,6 +391,57 @@ async fn dispatch_one(
                 }
                 CiAuditPhase::Failed => {
                     audit.outcome_with_ci(&audit_context, AuditOutcome::Failed, &metadata)
+                }
+            };
+            if recorded.is_err() {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request.id, json!({ "ok": true }))
+        }
+        "provider.audit" => {
+            let params = match serde_json::from_value::<ProviderAuditParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let action = match params.operation {
+                ProviderAuditOperation::Add => AuditAction::ProviderAdd,
+                ProviderAuditOperation::Remove => AuditAction::ProviderRemove,
+                ProviderAuditOperation::Enable => AuditAction::ProviderEnable,
+                ProviderAuditOperation::Disable => AuditAction::ProviderDisable,
+                ProviderAuditOperation::Reapprove => AuditAction::ProviderReapprove,
+                ProviderAuditOperation::Execute => AuditAction::ProviderExecute,
+                ProviderAuditOperation::Inventory => AuditAction::ProviderInventory,
+            };
+            let metadata = ProviderAuditMetadata {
+                provider_instance_id: params.provider_instance_id,
+                adapter_id: params.adapter_id,
+                semantic_capability_id: params.semantic_capability_id,
+                error_code: params
+                    .error_code
+                    .map(provider_error_code_str)
+                    .map(str::to_owned),
+                inventory_changed: params.inventory_changed,
+                truncated: params.truncated,
+                duration_ms: params.duration_ms,
+            };
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: params.operation_id,
+                capability_id: None,
+                action,
+            };
+            let recorded = match params.phase {
+                ProviderAuditPhase::Decision => audit.decision_with_provider(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                    &metadata,
+                ),
+                ProviderAuditPhase::Success => {
+                    audit.outcome_with_provider(&audit_context, AuditOutcome::Success, &metadata)
+                }
+                ProviderAuditPhase::Failed => {
+                    audit.outcome_with_provider(&audit_context, AuditOutcome::Failed, &metadata)
                 }
             };
             if recorded.is_err() {
@@ -3426,6 +3502,95 @@ mod tests {
             .expect("response channel open");
         dispatcher.await.expect("dispatcher task joins");
         response
+    }
+
+    async fn provider_audit_once(
+        audit: Arc<AuditSink>,
+        id: &str,
+        operation_id: &str,
+        phase: &str,
+    ) -> Value {
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
+        request_tx
+            .send(request(
+                id,
+                "provider.audit",
+                json!({
+                    "operationId": operation_id,
+                    "operation": "execute",
+                    "phase": phase,
+                    "providerInstanceId": "prv_0123456789abcdef0123456789abcdef",
+                    "adapterId": "fixture.read",
+                    "semanticCapabilityId": "test.fixture.record.read",
+                    "errorCode": "PROVIDER_TIMEOUT",
+                    "inventoryChanged": false,
+                    "truncated": true,
+                    "durationMs": 42
+                }),
+            ))
+            .expect("provider audit request accepted");
+        drop(request_tx);
+
+        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+            .await
+            .expect("provider audit response arrives")
+            .expect("response channel open");
+        dispatcher.await.expect("dispatcher task joins");
+        response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn provider_audit_is_global_allowlisted_and_durable() {
+        let (audit, audit_root) = audit_sink("provider-control-plane");
+        let response = provider_audit_once(
+            Arc::clone(&audit),
+            "req_provider_decision",
+            "op_provider_control_plane",
+            "decision",
+        )
+        .await;
+        assert_eq!(response["result"], json!({ "ok": true }));
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert!(audit_text.contains("provider_execute"));
+        assert!(audit_text.contains("prv_0123456789abcdef0123456789abcdef"));
+        assert!(audit_text.contains("fixture.read"));
+        assert!(audit_text.contains("test.fixture.record.read"));
+        assert!(audit_text.contains("PROVIDER_TIMEOUT"));
+        assert!(!audit_text.contains("capabilityId"));
+        assert!(!audit_text.contains("Authorization"));
+        assert!(!audit_text.contains("requestBody"));
+        assert!(!audit_text.contains("helperPath"));
+        assert!(!audit_text.contains("environment"));
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn provider_audit_fails_closed_when_durable_sink_is_unavailable() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-provider-audit-fault-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+        let response = provider_audit_once(
+            Arc::clone(&audit),
+            "req_provider_fault",
+            "op_provider_fault",
+            "decision",
+        )
+        .await;
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

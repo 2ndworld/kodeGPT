@@ -5,6 +5,7 @@ export const RUNTIME_METHODS = [
   "system.inspect_root",
   "trust.audit",
   "ci.audit",
+  "provider.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
@@ -117,6 +118,44 @@ const ciAuditParamsSchema = z
       .optional(),
     truncated: z.boolean().optional(),
     durationMs: z.number().int().nonnegative().safe().optional()
+  })
+  .strict();
+
+const providerErrorCodeSchema = z.enum([
+  "PROVIDER_INPUT_INVALID",
+  "PROVIDER_STATE_INVALID",
+  "PROVIDER_NOT_ADMITTED",
+  "PROVIDER_DISABLED",
+  "PROVIDER_IDENTITY_CHANGED",
+  "PROVIDER_CREDENTIAL_UNAVAILABLE",
+  "PROVIDER_CREDENTIAL_REJECTED",
+  "PROVIDER_NETWORK_DENIED",
+  "PROVIDER_UNAVAILABLE",
+  "PROVIDER_TIMEOUT",
+  "PROVIDER_CANCELLED",
+  "PROVIDER_RATE_LIMITED",
+  "PROVIDER_RESPONSE_INVALID",
+  "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
+  "PROVIDER_TOOL_UNAVAILABLE",
+  "PROVIDER_INVENTORY_CHANGED",
+  "PROVIDER_REQUEST_FAILED",
+  "PROVIDER_AUDIT_UNAVAILABLE"
+]);
+
+const providerAuthorityIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/);
+
+const providerAuditParamsSchema = z
+  .object({
+    operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
+    operation: z.enum(["add", "remove", "enable", "disable", "reapprove", "execute", "inventory"]),
+    phase: z.enum(["decision", "success", "failed"]),
+    providerInstanceId: z.string().regex(/^prv_[0-9a-f]{32}$/),
+    adapterId: providerAuthorityIdSchema,
+    semanticCapabilityId: providerAuthorityIdSchema.optional(),
+    errorCode: providerErrorCodeSchema.optional(),
+    inventoryChanged: z.boolean().optional(),
+    truncated: z.boolean().optional(),
+    durationMs: z.number().int().nonnegative().max(86_400_000).safe().optional()
   })
   .strict();
 
@@ -422,6 +461,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("system.inspect_root", systemInspectRootParamsSchema),
   requestSchema("trust.audit", trustAuditParamsSchema),
   requestSchema("ci.audit", ciAuditParamsSchema),
+  requestSchema("provider.audit", providerAuditParamsSchema),
   requestSchema("workspace.register", workspaceRegisterParamsSchema),
   requestSchema("workspace.read_project_profile", workspaceCapabilityParamsSchema),
   requestSchema("workspace.restrict_policy", workspaceRestrictPolicyParamsSchema),

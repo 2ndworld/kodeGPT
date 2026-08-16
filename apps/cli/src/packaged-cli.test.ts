@@ -87,6 +87,14 @@ describe("packaged CLI skill surface", () => {
     expect(result.stdout).toContain("kodegpt skill source remove <source-id>");
     expect(result.stdout).toContain("kodegpt skill pin <skill-id> [--fingerprint <sha256>]");
     expect(result.stdout).toContain("kodegpt skill unpin <skill-id> [--fingerprint <sha256>]");
+    expect(result.stdout).toContain("kodegpt provider add --adapter <adapter-id> --name <display-name>");
+    expect(result.stdout).toContain("kodegpt provider remove <provider-id>");
+    expect(result.stdout).toContain("kodegpt provider enable <provider-id>");
+    expect(result.stdout).toContain("kodegpt provider disable <provider-id>");
+    expect(result.stdout).toContain("kodegpt provider reapprove <provider-id>");
+    expect(result.stdout).toContain("kodegpt provider list [--json] [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt provider inspect <provider-id> [--json]");
+    expect(result.stdout).not.toContain("kodegpt provider invoke");
     expect(result.stdout).toContain("kodegpt service install --name <namespace:name>");
     expect(result.stdout).toContain("kodegpt service start [--state-root <path>]");
     expect(result.stdout).toContain("kodegpt service stop [--state-root <path>]");
@@ -105,6 +113,26 @@ describe("packaged CLI skill surface", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unknown service command: wat");
+  });
+
+  it("lists empty local provider state without starting or requiring the runtime", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "kodegpt-packaged-provider-state-"));
+    temporaryRoots.push(stateRoot);
+
+    const result = runStateOnlySkillCli(["provider", "list"], stateRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("no admitted providers");
+  });
+
+  it("fails closed on unknown production provider adapters without requiring the runtime", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "kodegpt-packaged-provider-state-"));
+    temporaryRoots.push(stateRoot);
+
+    const result = runStateOnlySkillCli([
+      "provider", "add", "--adapter", "test.unregistered.v1", "--name", "Unregistered"
+    ], stateRoot);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unknown compiled provider adapter: test.unregistered.v1");
   });
 
   it("lists empty local skill state without starting or requiring the runtime", async () => {

@@ -58,6 +58,7 @@ const EXPECTED_METHODS = [
   "system.inspect_root",
   "trust.audit",
   "ci.audit",
+  "provider.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
