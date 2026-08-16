@@ -1,8 +1,8 @@
 # KodeGPT Personal Trusted Authority — Design
 
 Date: 2026-08-15
-Status: implemented and accepted on `feat/personal-trusted-authority`; merge pending
-Baseline: canonical `main`, MCP surface `0.4`; accepted feature candidate, MCP surface `0.6`
+Status: implemented, accepted, and merged via PR #13 into canonical `main` at `3e568ead27346d6670ecd9acca991708048431c2`
+Baseline: design started from canonical `main`, MCP surface `0.4`; accepted and merged implementation is MCP surface `0.6`
 
 ## 1. Goal
 
@@ -258,4 +258,14 @@ Final pre-closure verification for the code candidate passed `cargo fmt --all --
 
 Known non-blocking limitation at closure: the live `skill.list` handler is reachable and its public schema includes the `compatibility` filter, but the current live skill catalog returned an empty list with `SOURCE_UNAVAILABLE`. This did not block the accepted daily development loop and is not treated as authority to begin provider interoperability.
 
-Conclusion: for normal trusted personal development, ChatGPT + KodeGPT is now the intended primary path. CodexPro/CLI remains useful for bootstrap, diagnostics, recovery, and repository administration outside the typed KodeGPT surface, not as a routine requirement for the accepted development loop. Merge remains pending explicit instruction.
+Conclusion: for normal trusted personal development, ChatGPT + KodeGPT is now the intended primary path. CodexPro/CLI remains useful for bootstrap, diagnostics, recovery, and repository administration outside the typed KodeGPT surface, not as a routine requirement for the accepted development loop. The design-time statement that merge remained pending is superseded by the post-merge reconciliation below.
+
+## 18. Post-merge reconciliation — 2026-08-16
+
+PR #13 merged the accepted Personal Trusted Authority candidate into canonical `main` at `3e568ead27346d6670ecd9acca991708048431c2`. Design-time statements above that canonical `main` remained unchanged or that merge was still pending are retained as historical phase context and are superseded by this reconciliation.
+
+The `skill.list` `SOURCE_UNAVAILABLE` limitation recorded at closure was diagnosed as host operational state rather than a missing implementation: the persisted source registry still referenced a disposable acceptance source under `/tmp` after that directory had been removed. Removing the stale source cleared `SOURCE_UNAVAILABLE`. A durable local Agent Skills source was then admitted through the existing local CLI authority; fresh live `skill.list` returned five skills with `truncated=false` and no truncation reasons, and a `NATIVE` skill completed `skill.inspect` and `skill.load` successfully.
+
+A separate host drift was also reconciled: the system-wide `kodegpt` command on `PATH` still contained an older CLI bundle and rejected the live `0.6` service status as an invalid surface version. Repacking and installing the exact canonical HEAD CLI changed the global CLI SHA-256 to `a461bf746f674a747d5e71a0b847164155864b6ff701f8a39f34bc9ebb3def3f`, matching the repository-built CLI; `kodegpt service status` then reported the running `rel_2c9e12bd2de99faab0b1fb775af8da4f` release healthy at runtime `0.1`, protocol `2026-07-28`, surface `0.6`, with rollback `rel_f00862ed93f8e2919402fc60048ba2a7`.
+
+No source-code change, MCP surface bump, provider work, or weakening of the skill-source authority boundary was required for that recovery. Skill-source add/remove and pin/unpin remain local-only control-plane operations; the public MCP skill surface remains read-only `skill.list`, `skill.inspect`, and `skill.load`.
