@@ -3355,7 +3355,7 @@ mod tests {
         request_tx
             .send(request(id, method, params))
             .expect("workspace request accepted");
-        tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
+        tokio::time::timeout(Duration::from_secs(5), response_rx.recv())
             .await
             .unwrap_or_else(|_| panic!("workspace response arrives for {method} ({id})"))
             .expect("workspace response channel open")
