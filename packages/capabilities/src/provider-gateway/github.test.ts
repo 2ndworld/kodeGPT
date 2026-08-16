@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ProviderAdapterRegistry } from "./adapter-registry.js";
 import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
+import { parseProviderSemanticOutput } from "./output.js";
 
 const REPOSITORY = "2ndworld/kodeGPT";
 const AUTHORITY_FIELDS = [
@@ -32,6 +33,40 @@ function operation(id: string) {
   const found = GITHUB_READ_PROVIDER_MANIFEST.operations.find((candidate) => candidate.id === id);
   if (found === undefined) throw new Error(`missing operation ${id}`);
   return found;
+}
+
+function parseSemanticOutput(semanticCapabilityId: string, semanticInput: unknown, providerValue: unknown): unknown {
+  const candidate = mapping(semanticCapabilityId);
+  const parsedInput = candidate.inputSchema.safeParse(semanticInput);
+  if (!parsedInput.success) throw new Error(`invalid semantic input for ${semanticCapabilityId}`);
+  return parseProviderSemanticOutput(
+    Buffer.from(JSON.stringify(providerValue), "utf8"),
+    candidate.outputSchema,
+    { semanticInput: parsedInput.data, mapOutput: candidate.mapOutput }
+  );
+}
+
+function rawPr(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    number: 16,
+    title: "Provider Gateway",
+    state: "closed",
+    user: { login: "octocat", avatar_url: "https://avatars.githubusercontent.com/u/1" },
+    base: { ref: "main", repo: { full_name: REPOSITORY, private: false } },
+    head: { ref: "feat/provider-gateway", repo: { full_name: "2ndworld/kodeGPT" } },
+    merged: true,
+    draft: false,
+    html_url: "https://github.com/2ndworld/kodeGPT/pull/16",
+    created_at: "2026-08-16T01:00:00Z",
+    updated_at: "2026-08-16T02:00:00Z",
+    closed_at: "2026-08-16T03:00:00Z",
+    merged_at: "2026-08-16T03:00:00Z",
+    body: "unreviewed body",
+    labels: [{ name: "internal" }],
+    authorization: "[REDACTED_SECRET]",
+    token: "[REDACTED_SECRET]",
+    ...overrides
+  };
 }
 
 describe("github.read.v1 provider adapter", () => {
@@ -197,6 +232,140 @@ describe("github.read.v1 provider adapter", () => {
       pathParameters: { owner: "2ndworld", repo: "kodeGPT" },
       query: { state: "closed", per_page: 17 }
     });
+  });
+
+  it("normalizes repository inspection to reviewed fields only", () => {
+    const value = parseSemanticOutput("github.repository.inspect", { repository: REPOSITORY }, {
+      full_name: REPOSITORY,
+      name: "kodeGPT",
+      owner: { login: "2ndworld", avatar_url: "https://avatars.githubusercontent.com/u/2" },
+      description: "Provider Gateway\r\nimplementation",
+      private: false,
+      default_branch: "main",
+      archived: false,
+      fork: false,
+      html_url: "https://github.com/2ndworld/kodeGPT",
+      created_at: "2026-08-01T01:00:00Z",
+      updated_at: "2026-08-16T02:00:00Z",
+      pushed_at: "2026-08-16T03:00:00Z",
+      body: "not reviewed",
+      authorization: "[REDACTED_SECRET]"
+    });
+
+    expect(value).toEqual({
+      repository: REPOSITORY,
+      name: "kodeGPT",
+      owner: "2ndworld",
+      description: "Provider Gateway\nimplementation",
+      private: false,
+      defaultBranch: "main",
+      archived: false,
+      fork: false,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT",
+      createdAt: "2026-08-01T01:00:00Z",
+      updatedAt: "2026-08-16T02:00:00Z",
+      pushedAt: "2026-08-16T03:00:00Z"
+    });
+    expect(JSON.stringify(value)).not.toContain("authorization");
+    expect(JSON.stringify(value)).not.toContain("body");
+  });
+
+  it("normalizes PR inspection and rejects provider identity mismatch", () => {
+    expect(parseSemanticOutput("github.pr.inspect", { repository: REPOSITORY, number: 16 }, rawPr())).toEqual({
+      repository: REPOSITORY,
+      number: 16,
+      title: "Provider Gateway",
+      state: "closed",
+      authorLogin: "octocat",
+      baseBranch: "main",
+      headBranch: "feat/provider-gateway",
+      merged: true,
+      draft: false,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/16",
+      createdAt: "2026-08-16T01:00:00Z",
+      updatedAt: "2026-08-16T02:00:00Z",
+      closedAt: "2026-08-16T03:00:00Z",
+      mergedAt: "2026-08-16T03:00:00Z"
+    });
+
+    expect(() => parseSemanticOutput(
+      "github.pr.inspect",
+      { repository: REPOSITORY, number: 16 },
+      rawPr({ number: 17 })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+    expect(() => parseSemanticOutput(
+      "github.pr.inspect",
+      { repository: REPOSITORY, number: 16 },
+      rawPr({ base: { ref: "main", repo: { full_name: "other/repo" } } })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+  });
+
+  it("normalizes bounded PR lists, preserves repository for empty results, and supports deleted authors", () => {
+    const item = rawPr({
+      merged: undefined,
+      merged_at: undefined,
+      closed_at: null,
+      user: null
+    });
+    const value = parseSemanticOutput(
+      "github.pr.list",
+      { repository: REPOSITORY, state: "all", limit: 10 },
+      [item]
+    );
+    expect(value).toEqual({
+      repository: REPOSITORY,
+      items: [{
+        number: 16,
+        title: "Provider Gateway",
+        state: "closed",
+        authorLogin: null,
+        baseBranch: "main",
+        headBranch: "feat/provider-gateway",
+        draft: false,
+        htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/16",
+        createdAt: "2026-08-16T01:00:00Z",
+        updatedAt: "2026-08-16T02:00:00Z"
+      }]
+    });
+    expect(JSON.stringify(value)).not.toContain("labels");
+    expect(JSON.stringify(value)).not.toContain("token");
+
+    expect(parseSemanticOutput(
+      "github.pr.list",
+      { repository: REPOSITORY, limit: 5 },
+      []
+    )).toEqual({ repository: REPOSITORY, items: [] });
+  });
+
+  it("rejects PR list repository mismatch and responses larger than the requested limit", () => {
+    expect(() => parseSemanticOutput(
+      "github.pr.list",
+      { repository: REPOSITORY, limit: 2 },
+      [rawPr({ base: { ref: "main", repo: { full_name: "other/repo" } } })]
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+
+    expect(() => parseSemanticOutput(
+      "github.pr.list",
+      { repository: REPOSITORY, limit: 1 },
+      [rawPr(), rawPr({ number: 17, html_url: "https://github.com/2ndworld/kodeGPT/pull/17" })]
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+  });
+
+  it("rejects repository inspection responses for a different repository", () => {
+    expect(() => parseSemanticOutput("github.repository.inspect", { repository: REPOSITORY }, {
+      full_name: "other/repo",
+      name: "repo",
+      owner: { login: "other" },
+      description: null,
+      private: false,
+      default_branch: "main",
+      archived: false,
+      fork: false,
+      html_url: "https://github.com/other/repo",
+      created_at: "2026-08-01T01:00:00Z",
+      updated_at: "2026-08-16T02:00:00Z",
+      pushed_at: null
+    })).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
   });
 
   it("registers the three mappings and rejects unknown GitHub semantic operations", () => {
