@@ -31,8 +31,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use crate::audit::{
-    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink, CiAuditMetadata,
-    ProviderAuditMetadata,
+    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink,
+    CiAuditMetadata, ProviderAuditMetadata,
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
@@ -416,7 +416,10 @@ async fn dispatch_one(
                 provider_instance_id: params.provider_instance_id,
                 adapter_id: params.adapter_id,
                 semantic_capability_id: params.semantic_capability_id,
-                error_code: params.error_code.map(provider_error_code_str).map(str::to_owned),
+                error_code: params
+                    .error_code
+                    .map(provider_error_code_str)
+                    .map(str::to_owned),
                 inventory_changed: params.inventory_changed,
                 truncated: params.truncated,
                 duration_ms: params.duration_ms,

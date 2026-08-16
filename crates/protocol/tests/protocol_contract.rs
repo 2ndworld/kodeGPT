@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use kodegpt_protocol::{
-    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, ProviderAuditParams, RuntimeRequest,
-    read_frame, write_frame,
+    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, ProviderAuditParams,
+    RuntimeRequest, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 

@@ -264,12 +264,18 @@ pub struct ProviderAuditParams {
     pub provider_instance_id: String,
     #[serde(deserialize_with = "deserialize_provider_authority_id")]
     pub adapter_id: String,
-    #[serde(default, deserialize_with = "deserialize_optional_provider_authority_id")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_provider_authority_id"
+    )]
     pub semantic_capability_id: Option<String>,
     pub error_code: Option<ProviderErrorCode>,
     pub inventory_changed: Option<bool>,
     pub truncated: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_optional_provider_duration_ms")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_provider_duration_ms"
+    )]
     pub duration_ms: Option<u64>,
 }
 
@@ -331,18 +337,25 @@ where
     Ok(value)
 }
 
-fn deserialize_optional_provider_authority_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+fn deserialize_optional_provider_authority_id<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let value = Option::<String>::deserialize(deserializer)?;
-    if value.as_deref().is_some_and(|candidate| !valid_provider_authority_id(candidate)) {
+    if value
+        .as_deref()
+        .is_some_and(|candidate| !valid_provider_authority_id(candidate))
+    {
         return Err(D::Error::custom("invalid provider authority id"));
     }
     Ok(value)
 }
 
-fn deserialize_optional_provider_duration_ms<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+fn deserialize_optional_provider_duration_ms<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {
