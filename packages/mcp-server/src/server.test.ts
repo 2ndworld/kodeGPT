@@ -6,6 +6,11 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const LOCKED_SURFACE = [
   { name: "artifact.read", required: ["uri"] },
+  { name: "ci.failure", required: ["runId"] },
+  { name: "ci.repository", required: [] },
+  { name: "ci.run", required: ["runId"] },
+  { name: "ci.runs", required: [] },
+  { name: "ci.status", required: [] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
@@ -60,8 +65,17 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.6");
-    expect(listSurfaceTools()).toEqual(LOCKED_SURFACE);
+    expect(MCP_SURFACE_VERSION).toBe("0.7");
+    const surface = listSurfaceTools();
+    expect(surface).toEqual(LOCKED_SURFACE);
+    expect(surface).toHaveLength(51);
+    expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
+      "ci.failure",
+      "ci.repository",
+      "ci.run",
+      "ci.runs",
+      "ci.status"
+    ]);
   });
 
   it("registers only the locked semantic tool names", () => {

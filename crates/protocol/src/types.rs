@@ -105,6 +105,136 @@ pub struct TrustAuditParams {
     pub phase: TrustAuditPhase,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CiCapability {
+    #[serde(rename = "ci.repository")]
+    Repository,
+    #[serde(rename = "ci.status")]
+    Status,
+    #[serde(rename = "ci.runs")]
+    Runs,
+    #[serde(rename = "ci.run")]
+    Run,
+    #[serde(rename = "ci.failure")]
+    Failure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CiAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CiProvider {
+    Github,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CiCredentialSource {
+    Gh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CiErrorCode {
+    #[serde(rename = "CI_WORKSPACE_AMBIGUOUS")]
+    WorkspaceAmbiguous,
+    #[serde(rename = "CI_AUDIT_UNAVAILABLE")]
+    AuditUnavailable,
+    #[serde(rename = "CI_AUTH_REQUIRED")]
+    AuthRequired,
+    #[serde(rename = "CI_AUTH_FAILED")]
+    AuthFailed,
+    #[serde(rename = "CI_REPOSITORY_UNAVAILABLE")]
+    RepositoryUnavailable,
+    #[serde(rename = "CI_REPOSITORY_MISMATCH")]
+    RepositoryMismatch,
+    #[serde(rename = "CI_REMOTE_UNSUPPORTED")]
+    RemoteUnsupported,
+    #[serde(rename = "CI_NOT_FOUND")]
+    NotFound,
+    #[serde(rename = "CI_PERMISSION_DENIED")]
+    PermissionDenied,
+    #[serde(rename = "CI_RATE_LIMITED")]
+    RateLimited,
+    #[serde(rename = "CI_PROVIDER_UNAVAILABLE")]
+    ProviderUnavailable,
+    #[serde(rename = "CI_RESPONSE_INVALID")]
+    ResponseInvalid,
+    #[serde(rename = "CI_RESPONSE_LIMIT_EXCEEDED")]
+    ResponseLimitExceeded,
+    #[serde(rename = "CI_LOG_UNAVAILABLE")]
+    LogUnavailable,
+    #[serde(rename = "CI_LOG_LIMIT_EXCEEDED")]
+    LogLimitExceeded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CiAuditParams {
+    pub capability_id: String,
+    pub operation_id: String,
+    pub ci_capability: CiCapability,
+    pub phase: CiAuditPhase,
+    pub provider: CiProvider,
+    #[serde(deserialize_with = "deserialize_ci_repository")]
+    pub repository: String,
+    pub credential_source: Option<CiCredentialSource>,
+    #[serde(default, deserialize_with = "deserialize_optional_ci_decimal_id")]
+    pub run_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_ci_decimal_id")]
+    pub job_id: Option<String>,
+    pub error_code: Option<CiErrorCode>,
+    pub truncated: Option<bool>,
+    pub duration_ms: Option<u64>,
+}
+
+fn deserialize_ci_repository<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.len() < 3 || value.len() > 201 || value.matches('/').count() != 1 {
+        return Err(D::Error::custom("invalid CI repository"));
+    }
+    let mut parts = value.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    if owner.is_empty()
+        || name.is_empty()
+        || owner.len() > 100
+        || name.len() > 100
+        || owner.bytes().any(|byte| byte.is_ascii_control())
+        || name.bytes().any(|byte| byte.is_ascii_control())
+        || owner.contains(':')
+        || name.contains(':')
+        || owner.contains('@')
+        || name.contains('@')
+    {
+        return Err(D::Error::custom("invalid CI repository"));
+    }
+    Ok(value)
+}
+
+fn deserialize_optional_ci_decimal_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    if let Some(candidate) = value.as_deref()
+        && (candidate.is_empty()
+            || candidate.len() > 32
+            || !candidate.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(D::Error::custom("invalid CI identifier"));
+    }
+    Ok(value)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceRegisterParams {
@@ -224,6 +354,12 @@ pub enum FileCommitPatchParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GitStatusParams {
+    pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitRepositoryIdentityParams {
     pub capability_id: String,
 }
 
@@ -452,6 +588,12 @@ pub enum RuntimeRequest {
         id: String,
         params: TrustAuditParams,
     },
+    #[serde(rename = "ci.audit")]
+    CiAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: CiAuditParams,
+    },
     #[serde(rename = "workspace.register")]
     WorkspaceRegister {
         jsonrpc: JsonRpcVersion,
@@ -541,6 +683,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitStatusParams,
+    },
+    #[serde(rename = "git.repository_identity")]
+    GitRepositoryIdentity {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitRepositoryIdentityParams,
     },
     #[serde(rename = "git.checkpoint")]
     GitCheckpoint {

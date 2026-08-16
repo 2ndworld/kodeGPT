@@ -71,6 +71,27 @@ describe("buildSkillCapabilityPlan", () => {
     expect(plan.guidance.map((step) => step.capability)).toEqual(plan.nativeCapabilities);
   });
 
+  it("maps Remote-CI semantics to advisory native capabilities without execution authority", () => {
+    const document = skill({
+      instructions: "Resolve the ci repository, check ci status, list ci runs, inspect a ci run, then explain the ci failure."
+    });
+
+    const plan = planFor(document);
+
+    expect(plan.classification).toBe("NATIVE");
+    expect(plan.nativeCapabilities.filter((capability) => capability.startsWith("ci."))).toEqual([
+      "ci.failure",
+      "ci.repository",
+      "ci.run",
+      "ci.runs",
+      "ci.status"
+    ]);
+    const serializedGuidance = JSON.stringify(plan.guidance);
+    for (const forbidden of ["gh api", "provider.invoke", "skill.run"]) {
+      expect(serializedGuidance).not.toContain(forbidden);
+    }
+  });
+
   it("preserves PARTIAL missing-capability findings", () => {
     const document = skill({
       metadata: { kodegpt: { requires: { capabilities: ["example.missing"] } } }

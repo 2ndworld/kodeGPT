@@ -1,4 +1,14 @@
 import {
+  CiFailureInputSchema,
+  CiFailureResultSchema,
+  CiRepositoryInputSchema,
+  CiRepositoryResultSchema,
+  CiRunInputSchema,
+  CiRunResultSchema,
+  CiRunsInputSchema,
+  CiRunsResultSchema,
+  CiStatusInputSchema,
+  CiStatusResultSchema,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
   ContextBuildInputSchema,
@@ -46,6 +56,7 @@ import {
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
   REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
@@ -56,6 +67,11 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
+  { name: "ci.failure", required: ["runId"] },
+  { name: "ci.repository", required: [] },
+  { name: "ci.run", required: ["runId"] },
+  { name: "ci.runs", required: [] },
+  { name: "ci.status", required: [] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
@@ -170,6 +186,68 @@ export function registerKodegptTools(
     },
     async ({ uri, offset, maxBytes }) =>
       structuredToolResult(await context.artifact.read({ uri, offset, maxBytes }))
+  );
+
+  server.registerTool(
+    "ci.repository",
+    {
+      description: "Resolve the trusted workspace GitHub repository and report bounded read-only CI availability.",
+      inputSchema: CiRepositoryInputSchema,
+      outputSchema: CiRepositoryResultSchema,
+      annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        CiRepositoryResultSchema.parse(await context.ci.repository(input))
+      )
+  );
+
+  server.registerTool(
+    "ci.status",
+    {
+      description: "Observe bounded GitHub CI status evidence for a trusted workspace revision without polling.",
+      inputSchema: CiStatusInputSchema,
+      outputSchema: CiStatusResultSchema,
+      annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiStatusResultSchema.parse(await context.ci.status(input)))
+  );
+
+  server.registerTool(
+    "ci.runs",
+    {
+      description: "List one bounded page of normalized GitHub CI runs for the trusted workspace repository.",
+      inputSchema: CiRunsInputSchema,
+      outputSchema: CiRunsResultSchema,
+      annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiRunsResultSchema.parse(await context.ci.runs(input)))
+  );
+
+  server.registerTool(
+    "ci.run",
+    {
+      description: "Inspect one bounded normalized GitHub CI run with jobs, steps, and annotations.",
+      inputSchema: CiRunInputSchema,
+      outputSchema: CiRunResultSchema,
+      annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiRunResultSchema.parse(await context.ci.run(input)))
+  );
+
+  server.registerTool(
+    "ci.failure",
+    {
+      description: "Extract bounded redacted failure evidence for one GitHub CI run without exposing raw log URLs.",
+      inputSchema: CiFailureInputSchema,
+      outputSchema: CiFailureResultSchema,
+      annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiFailureResultSchema.parse(await context.ci.failure(input)))
   );
 
   server.registerTool(

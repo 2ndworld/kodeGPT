@@ -25,6 +25,24 @@ describe("native capability semantic metadata", () => {
     expect(Object.isFrozen(registry)).toBe(true);
   });
 
+  it("describes exactly the five Remote-CI capabilities as bounded read-only semantics", () => {
+    const registry = capabilities.NATIVE_CAPABILITY_SEMANTICS;
+    const ciEntries = Object.values(registry).filter(({ id }) => id.startsWith("ci."));
+
+    expect(ciEntries.map(({ id }) => id)).toEqual([
+      "ci.repository",
+      "ci.status",
+      "ci.runs",
+      "ci.run",
+      "ci.failure"
+    ]);
+    for (const metadata of ciEntries) {
+      expect(metadata.purpose.toLowerCase()).toContain("bounded");
+      expect(metadata.purpose.toLowerCase()).toContain("read-only");
+      expect(metadata.semanticAliases.some((alias) => alias.startsWith("ci "))).toBe(true);
+    }
+  });
+
   it("contains descriptions only and no authority-bearing runtime state", () => {
     const registry = (capabilities as Record<string, unknown>).NATIVE_CAPABILITY_SEMANTICS;
     expect(registry).toBeDefined();

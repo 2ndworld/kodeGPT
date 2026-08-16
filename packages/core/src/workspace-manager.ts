@@ -225,6 +225,54 @@ export interface WorkspaceGitInspectionResult {
   artifact: ArtifactMetadata;
 }
 
+export interface WorkspaceGitRepositoryIdentity {
+  headOid: string;
+  branch: string | null;
+  remotes: Array<{
+    name: string;
+    fetchUrl: string;
+  }>;
+}
+
+export type WorkspaceRemoteCiCapability =
+  | "ci.repository"
+  | "ci.status"
+  | "ci.runs"
+  | "ci.run"
+  | "ci.failure";
+
+export type WorkspaceRemoteCiErrorCode =
+  | "CI_WORKSPACE_AMBIGUOUS"
+  | "CI_AUDIT_UNAVAILABLE"
+  | "CI_AUTH_REQUIRED"
+  | "CI_AUTH_FAILED"
+  | "CI_REPOSITORY_UNAVAILABLE"
+  | "CI_REPOSITORY_MISMATCH"
+  | "CI_REMOTE_UNSUPPORTED"
+  | "CI_NOT_FOUND"
+  | "CI_PERMISSION_DENIED"
+  | "CI_RATE_LIMITED"
+  | "CI_PROVIDER_UNAVAILABLE"
+  | "CI_RESPONSE_INVALID"
+  | "CI_RESPONSE_LIMIT_EXCEEDED"
+  | "CI_LOG_UNAVAILABLE"
+  | "CI_LOG_LIMIT_EXCEEDED";
+
+export interface WorkspaceRemoteCiAuditInput {
+  workspaceId: string;
+  operationId: string;
+  capability: WorkspaceRemoteCiCapability;
+  phase: "decision" | "success" | "failed";
+  provider: "github";
+  repository: string;
+  credentialSource?: "gh";
+  runId?: string;
+  jobId?: string;
+  errorCode?: WorkspaceRemoteCiErrorCode;
+  truncated?: boolean;
+  durationMs?: number;
+}
+
 export type WorkspaceGitMutationOperation =
   | "stage"
   | "commit"
@@ -864,6 +912,51 @@ export class WorkspaceManager {
       }
       throw error;
     }
+  }
+
+  async auditRemoteCi(input: WorkspaceRemoteCiAuditInput): Promise<void> {
+    const state = this.#requireReadyState(input.workspaceId);
+    const params: Record<string, unknown> = {
+      capabilityId: state.capabilityId,
+      operationId: input.operationId,
+      ciCapability: input.capability,
+      phase: input.phase,
+      provider: input.provider,
+      repository: input.repository,
+      ...(input.credentialSource === undefined ? {} : { credentialSource: input.credentialSource }),
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+      ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+      ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+      ...(input.truncated === undefined ? {} : { truncated: input.truncated }),
+      ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs })
+    };
+    try {
+      const result = await this.#kernel.request<unknown>("ci.audit", params);
+      if (!isRecord(result) || result.ok !== true || Object.keys(result).length !== 1) {
+        throw new WorkspaceManagerError(
+          "RUNTIME_PROTOCOL_INVALID",
+          "ci.audit returned an invalid acknowledgement"
+        );
+      }
+    } catch (error) {
+      if (error instanceof WorkspaceManagerError) throw error;
+      if (error instanceof KernelRpcError && error.message === "AUDIT_UNAVAILABLE") {
+        throw new WorkspaceManagerError(
+          "CI_AUDIT_UNAVAILABLE",
+          "Remote-CI durable audit is unavailable",
+          { cause: error }
+        );
+      }
+      throw error;
+    }
+  }
+
+  async inspectGitRepositoryIdentity(workspaceId: string): Promise<WorkspaceGitRepositoryIdentity> {
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("git.repository_identity", {
+      capabilityId: state.capabilityId
+    });
+    return validateGitRepositoryIdentity(result);
   }
 
   async gitStatus(workspaceId: string): Promise<WorkspaceGitInspectionResult> {
@@ -1581,6 +1674,72 @@ function validateSearchMatch(value: unknown): WorkspaceSearchMatch {
     line: value.line as number,
     lineText: value.lineText
   };
+}
+
+function validateGitRepositoryIdentity(value: unknown): WorkspaceGitRepositoryIdentity {
+  const invalid = (): never => {
+    throw new WorkspaceManagerError(
+      "RUNTIME_PROTOCOL_INVALID",
+      "git.repository_identity returned an invalid payload"
+    );
+  };
+  if (!isRecord(value)) invalid();
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1) invalid();
+  if (Object.keys(record).sort().join(",") !== "branch,headOid,remotes,schemaVersion") invalid();
+  if (typeof record.headOid !== "string" || !isGitOid(record.headOid)) invalid();
+  if (record.branch !== null && (typeof record.branch !== "string" || !isSafePrivateGitRef(record.branch))) invalid();
+  if (!Array.isArray(record.remotes) || record.remotes.length > 32) invalid();
+
+  const remoteValues = record.remotes as unknown[];
+  const names = new Set<string>();
+  const remotes: WorkspaceGitRepositoryIdentity["remotes"] = remoteValues.map((candidate) => {
+    if (!isRecord(candidate)) invalid();
+    const remote = candidate as Record<string, unknown>;
+    if (Object.keys(remote).sort().join(",") !== "fetchUrl,name") invalid();
+    if (typeof remote.name !== "string" || !isSafePrivateRemoteName(remote.name) || names.has(remote.name)) invalid();
+    if (typeof remote.fetchUrl !== "string" || !isSafePrivateRemoteUrl(remote.fetchUrl)) invalid();
+    const name = remote.name as string;
+    const fetchUrl = remote.fetchUrl as string;
+    names.add(name);
+    return { name, fetchUrl };
+  });
+  const sortedNames = remotes.map((remote) => remote.name).sort((a, b) => Buffer.from(a).compare(Buffer.from(b)));
+  if (remotes.some((remote, index) => remote.name !== sortedNames[index])) invalid();
+
+  return {
+    headOid: record.headOid as string,
+    branch: record.branch as string | null,
+    remotes
+  };
+}
+
+function isGitOid(value: string): boolean {
+  return (value.length === 40 || value.length === 64) && [...value].every((char) => "0123456789abcdef".includes(char));
+}
+
+function hasAsciiControl(value: string): boolean {
+  return [...value].some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+}
+
+function isSafePrivateRemoteName(value: string): boolean {
+  return value.length > 0 && value.length <= 128 && !hasAsciiControl(value);
+}
+
+function isSafePrivateRemoteUrl(value: string): boolean {
+  return value.length > 0 && Buffer.byteLength(value, "utf8") <= 8192 && !hasAsciiControl(value);
+}
+
+function isSafePrivateGitRef(value: string): boolean {
+  if (value.length === 0 || value.length > 128 || value.includes("..") || value.includes("@{")) return false;
+  return value.split("/").every((part) => {
+    if (part.length === 0 || part.endsWith(".lock") || part.endsWith(".")) return false;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part)) return false;
+    return true;
+  });
 }
 
 function validateProcessOperation(

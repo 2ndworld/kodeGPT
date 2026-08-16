@@ -145,6 +145,58 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "ci.audit" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "operationId", "ciCapability", "phase", "provider", "repository"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operationId": { "type": "string", "pattern": "^op_[A-Za-z0-9_-]{1,93}$" },
+            "ciCapability": { "enum": ["ci.repository", "ci.status", "ci.runs", "ci.run", "ci.failure"] },
+            "phase": { "enum": ["decision", "success", "failed"] },
+            "provider": { "const": "github" },
+            "repository": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 201,
+              "pattern": "^[^/:@\\u0000-\\u001F\\u007F]{1,100}/[^/:@\\u0000-\\u001F\\u007F]{1,100}$"
+            },
+            "credentialSource": { "const": "gh" },
+            "runId": { "type": "string", "pattern": "^[0-9]{1,32}$" },
+            "jobId": { "type": "string", "pattern": "^[0-9]{1,32}$" },
+            "errorCode": {
+              "enum": [
+                "CI_WORKSPACE_AMBIGUOUS",
+                "CI_AUDIT_UNAVAILABLE",
+                "CI_AUTH_REQUIRED",
+                "CI_AUTH_FAILED",
+                "CI_REPOSITORY_UNAVAILABLE",
+                "CI_REPOSITORY_MISMATCH",
+                "CI_REMOTE_UNSUPPORTED",
+                "CI_NOT_FOUND",
+                "CI_PERMISSION_DENIED",
+                "CI_RATE_LIMITED",
+                "CI_PROVIDER_UNAVAILABLE",
+                "CI_RESPONSE_INVALID",
+                "CI_RESPONSE_LIMIT_EXCEEDED",
+                "CI_LOG_UNAVAILABLE",
+                "CI_LOG_LIMIT_EXCEEDED"
+              ]
+            },
+            "truncated": { "type": "boolean" },
+            "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "workspace.register" },
         "params": {
           "type": "object",
@@ -440,6 +492,24 @@
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.repository_identity" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId"],
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

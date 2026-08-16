@@ -20,6 +20,13 @@ const readOnlyAnnotations = {
   openWorldHint: false
 };
 
+const remoteCiReadOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+
 const lifecycleAnnotations = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -247,6 +254,8 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel") {
           expect(tool.annotations).toEqual(processCancelAnnotations);
+        } else if (tool.name.startsWith("ci.")) {
+          expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
         } else {
           expect(tool.annotations).toEqual(readOnlyAnnotations);
         }

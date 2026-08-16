@@ -1,6 +1,7 @@
 export {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
 } from "./annotations.js";
 export {
@@ -27,6 +28,7 @@ export {
 export type {
   ArtifactStoreToolAdapter,
   ArtifactToolContext,
+  CiToolContext,
   CodeToolContext,
   ContextToolContext,
   ExecutionManagerToolAdapter,

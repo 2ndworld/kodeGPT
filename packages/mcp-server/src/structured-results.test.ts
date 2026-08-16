@@ -1,5 +1,15 @@
 import {
   CapabilityError,
+  CiFailureInputSchema,
+  CiFailureResultSchema,
+  CiRepositoryInputSchema,
+  CiRepositoryResultSchema,
+  CiRunInputSchema,
+  CiRunResultSchema,
+  CiRunsInputSchema,
+  CiRunsResultSchema,
+  CiStatusInputSchema,
+  CiStatusResultSchema,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
   ContextBuildInputSchema,
@@ -47,6 +57,7 @@ import {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
   REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
@@ -304,6 +315,13 @@ function makeContext(): KodegptToolContext {
     context: {
       build: async () => typedContextBuildResult
     },
+    ci: {
+      repository: async () => ({} as never),
+      status: async () => ({} as never),
+      runs: async () => ({} as never),
+      run: async () => ({} as never),
+      failure: async () => ({} as never)
+    },
     skill: {
       list: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
       inspect: async () => ({} as never),
@@ -313,6 +331,66 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("registers exactly five bounded Remote-CI tools with strict open-world read-only schemas", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const repositoryResult = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      provider: "github" as const,
+      repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" },
+      selectedRemote: "origin",
+      defaultBranch: "main",
+      currentRevision: { oid: "1".repeat(40), branch: "main" },
+      available: true,
+      authState: "AVAILABLE" as const,
+      credentialSource: "gh" as const,
+      truncated: false,
+      truncationReasons: []
+    };
+    context.ci.repository = async () => repositoryResult;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+
+    const specs = [
+      ["ci.repository", CiRepositoryInputSchema, CiRepositoryResultSchema],
+      ["ci.status", CiStatusInputSchema, CiStatusResultSchema],
+      ["ci.runs", CiRunsInputSchema, CiRunsResultSchema],
+      ["ci.run", CiRunInputSchema, CiRunResultSchema],
+      ["ci.failure", CiFailureInputSchema, CiFailureResultSchema]
+    ] as const;
+    for (const [name, inputSchema, outputSchema] of specs) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(outputSchema);
+      expect(definition?.annotations).toEqual(REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS);
+      const required = name === "ci.run" || name === "ci.failure" ? { runId: "123" } : {};
+      for (const [field, value] of [
+        ["repository", "other/repo"],
+        ["provider", "github"],
+        ["url", "https://example.invalid"],
+        ["endpoint", "https://example.invalid"],
+        ["host", "example.invalid"],
+        ["token", "secret"],
+        ["credential", "secret"],
+        ["headers", { authorization: "secret" }],
+        ["method", "POST"]
+      ] as const) {
+        expect(inputSchema.safeParse({ ...required, [field]: value }).success).toBe(false);
+      }
+    }
+
+    const result = (await handlers.get("ci.repository")!({} as never)) as { structuredContent?: unknown };
+    expect(result.structuredContent).toEqual(repositoryResult);
+  });
+
   it("registers the small trust control plane without caller-supplied filesystem identity", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();

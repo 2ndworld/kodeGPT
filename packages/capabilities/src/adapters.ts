@@ -11,6 +11,26 @@ import type {
   GitLocalMutationResult,
   GitRemoteMutationResult
 } from "./contracts.js";
+import type { CapabilityErrorCode } from "./errors.js";
+import type {
+  CiAnnotation,
+  CiCheckSummary,
+  CiConclusion,
+  CiFailureInput,
+  CiFailureResult,
+  CiJobSummary,
+  CiRepositoryIdentity,
+  CiRepositoryInput,
+  CiRepositoryResult,
+  CiRunInput,
+  CiRunResult,
+  CiRunsInput,
+  CiRunsResult,
+  CiRunStatus,
+  CiRunSummary,
+  CiStatusInput,
+  CiStatusResult
+} from "./remote-ci/contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
@@ -98,6 +118,143 @@ export interface CodeSearchAdapter {
 export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface RemoteCiReadyWorkspace {
+  id: string;
+}
+
+export interface RemoteCiWorkspaceSelectionAdapter {
+  listReady(): Promise<RemoteCiReadyWorkspace[]>;
+}
+
+export interface RemoteCiRepositoryInspection {
+  headOid: string;
+  branch: string | null;
+  remotes: Array<{ name: string; fetchUrl: string }>;
+}
+
+export interface RemoteCiRepositoryInspectionAdapter {
+  inspect(workspaceId: string): Promise<RemoteCiRepositoryInspection>;
+}
+
+export interface RemoteCiCredentialCommandInput {
+  executable: string;
+  argv: readonly string[];
+  env: Readonly<Record<string, string>>;
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  maxStderrBytes: number;
+}
+
+export interface RemoteCiCredentialCommandResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutOverflow: boolean;
+  stderrOverflow: boolean;
+  timedOut: boolean;
+}
+
+export interface RemoteCiCredentialCommandRunner {
+  run(input: RemoteCiCredentialCommandInput): Promise<RemoteCiCredentialCommandResult>;
+}
+
+export interface RemoteCiWorkspaceRootAdapter {
+  rootFor(workspaceId: string): Promise<string>;
+}
+
+export interface RemoteCiRevisionAdapter {
+  resolve(workspaceId: string, revision: GitRevision): Promise<{
+    oid: string;
+    branch: string | null;
+  }>;
+}
+
+export type RemoteCiErrorCode = Extract<CapabilityErrorCode, `CI_${string}`>;
+
+export interface RemoteCiAuditInput {
+  workspaceId: string;
+  operationId: string;
+  capability: "ci.repository" | "ci.status" | "ci.runs" | "ci.run" | "ci.failure";
+  phase: "decision" | "success" | "failed";
+  provider: "github";
+  repository: string;
+  credentialSource?: "gh";
+  runId?: string;
+  jobId?: string;
+  errorCode?: RemoteCiErrorCode;
+  truncated?: boolean;
+  durationMs?: number;
+}
+
+export interface RemoteCiAuditAdapter {
+  record(input: RemoteCiAuditInput): Promise<void>;
+}
+
+export interface RemoteCiProviderList<T> {
+  items: T[];
+  providerPageLimited: boolean;
+  limitReached: boolean;
+  providerRequests: number;
+}
+
+export interface RemoteCiStatusEvidence {
+  checks: CiCheckSummary[];
+  runs: CiRunSummary[];
+  providerPageLimited: boolean;
+  summaryLimitReached: boolean;
+  providerRequests: number;
+}
+
+export interface RemoteCiRunDetail {
+  run: CiRunSummary;
+  jobs: CiJobSummary[];
+  annotations: CiAnnotation[];
+  providerPageLimited: boolean;
+  jobLimitReached: boolean;
+  stepLimitReached: boolean;
+  providerRequests: number;
+}
+
+export interface RemoteCiFailureMetadata extends RemoteCiRunDetail {
+  selectedJobId: string;
+  annotationLimitReached: boolean;
+}
+
+export interface RemoteCiAdapter {
+  repository(input: { repository: CiRepositoryIdentity }): Promise<{
+    defaultBranch: string | null;
+    providerRequests: number;
+  }>;
+  statusEvidence(input: { repository: CiRepositoryIdentity; oid: string }): Promise<RemoteCiStatusEvidence>;
+  runs(input: {
+    repository: CiRepositoryIdentity;
+    workflow?: string;
+    ref?: string;
+    status?: CiRunStatus;
+    conclusion?: CiConclusion;
+    limit: number;
+  }): Promise<RemoteCiProviderList<CiRunSummary>>;
+  run(input: { repository: CiRepositoryIdentity; runId: string }): Promise<RemoteCiRunDetail>;
+  failureMetadata(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+    selectJob(jobs: readonly CiJobSummary[]): string;
+  }): Promise<RemoteCiFailureMetadata>;
+  failureLog(input: {
+    repository: CiRepositoryIdentity;
+    jobId: string;
+    scanMaxBytes: number;
+  }): Promise<{ bytes: Uint8Array; truncated: boolean; providerRequests: number }>;
+}
+
+export interface RemoteCiToolAdapter {
+  repository(input: CiRepositoryInput): Promise<CiRepositoryResult>;
+  status(input: CiStatusInput): Promise<CiStatusResult>;
+  runs(input: CiRunsInput): Promise<CiRunsResult>;
+  run(input: CiRunInput): Promise<CiRunResult>;
+  failure(input: CiFailureInput): Promise<CiFailureResult>;
 }
 
 export interface GitLocalAuthorityAdapter {

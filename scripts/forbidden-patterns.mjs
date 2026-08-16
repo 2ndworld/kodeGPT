@@ -57,6 +57,13 @@ function scanFile(path, source) {
     ) {
       add("node-exec-fallback", path, "user process execution must remain behind the Rust kernel");
     }
+    forbid(
+      path,
+      source,
+      "remote-ci-forbidden-surface",
+      /["'](?:github\.request|github\.graphql|github\.rest|gh\.run|ci\.logs\.raw|ci\.jobs\.list|ci\.steps\.list|ci\.rerun|ci\.cancel|ci\.dispatch|provider\.list|provider\.tools|provider\.invoke|skill\.run)["']/
+    );
+    forbid(path, source, "remote-ci-gh-api", /\bgh\s+api\b/i);
   }
 
   if (path === "crates/sandbox/src/bubblewrap.rs") {

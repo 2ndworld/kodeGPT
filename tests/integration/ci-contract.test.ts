@@ -3,9 +3,36 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { GitHubHttp } from "../../packages/capabilities/src/remote-ci/github-http.js";
+
 const CI_PATH = fileURLToPath(new URL("../../.github/workflows/ci.yml", import.meta.url));
 const PACKAGE_PATH = fileURLToPath(new URL("../../package.json", import.meta.url));
 const VITEST_CONFIG_PATH = fileURLToPath(new URL("../../vitest.config.ts", import.meta.url));
+
+describe("Remote-CI transport contract", () => {
+  it("uses only GET for fixed semantic GitHub metadata and log reads", async () => {
+    const requests: Array<{ url: string; method: string | undefined; authorization: string | null }> = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      requests.push({
+        url: String(input),
+        method: init?.method,
+        authorization: headers.get("authorization")
+      });
+      return new Response(input.toString().includes("/logs") ? "fixture log\n" : "{}", { status: 200 });
+    };
+    const http = new GitHubHttp({ credential: "fixture-secret", fetchImpl });
+
+    await http.getJson("/repos/2ndworld/kodeGPT");
+    await http.getJobLog("/repos/2ndworld/kodeGPT/actions/jobs/20/logs", 1024);
+
+    expect(requests).toHaveLength(2);
+    expect(requests.map(({ method }) => method)).toEqual(["GET", "GET"]);
+    expect(requests.every(({ url }) => url.startsWith("https://api.github.com/"))).toBe(true);
+    expect(requests.every(({ authorization }) => authorization === "Bearer fixture-secret")).toBe(true);
+    expect(requests.some(({ method }) => ["POST", "PUT", "PATCH", "DELETE"].includes(method ?? ""))).toBe(false);
+  });
+});
 
 describe("release CI contract", () => {
   it("pins modern Node-24 actions and the exact toolchain floors", async () => {

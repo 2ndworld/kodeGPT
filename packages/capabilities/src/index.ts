@@ -99,6 +99,7 @@ export type {
   GitLocalMutationAdapter,
   GitRemoteAuthorityAdapter,
   GitRemoteMutationAdapter,
+  RemoteCiToolAdapter,
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,
@@ -109,6 +110,7 @@ export type {
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
+export * from "./remote-ci/index.js";
 export { gitLog, gitShow, gitRange, gitDiffHistory } from "./git-history.js";
 export { gitStage, gitCommit, gitBranchCreate, gitBranchSwitch, gitBranchDelete } from "./git-local.js";
 export { gitFetch, gitPull, gitPush } from "./git-remote.js";
@@ -136,6 +138,7 @@ export {
   GitRemoteInputSchema,
   GitRemoteMutationResultSchema,
   GitRevisionSchema,
+  GitSafeRefNameSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,

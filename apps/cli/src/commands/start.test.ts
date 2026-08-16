@@ -5,6 +5,7 @@ import { MCP_SURFACE_VERSION } from "@kodegpt/mcp-server";
 import { describe, expect, it } from "vitest";
 
 import {
+  createProductionServiceStack,
   formatKodegptStartStatus,
   runStartCommand,
   startKodegpt,
@@ -118,6 +119,12 @@ function dependencies(
     }),
     gitRange: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
     gitDiffHistory: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: "", truncated: false, truncationReasons: [] }),
+    inspectGitRepositoryIdentity: async () => ({
+      headOid: "a".repeat(40),
+      branch: "main",
+      remotes: [{ name: "origin", fetchUrl: "https://github.com/2ndworld/kodeGPT.git" }]
+    }),
+    auditRemoteCi: async () => undefined,
     gitDiff: async () => gitInspection,
     gitStage: async () => { throw new Error("unexpected gitStage"); },
     gitCommit: async () => { throw new Error("unexpected gitCommit"); },
@@ -192,6 +199,13 @@ function dependencies(
       events.push("managers");
       return { workspaceManager };
     },
+    createRemoteCi: () => ({
+      repository: async () => { throw new Error("not used"); },
+      status: async () => { throw new Error("not used"); },
+      runs: async () => { throw new Error("not used"); },
+      run: async () => { throw new Error("not used"); },
+      failure: async () => { throw new Error("not used"); }
+    }),
     createMcp: () => {
       events.push("mcp");
       return {
@@ -215,6 +229,53 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
+  it("production-wires Remote-CI without invoking provider work during startup", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    let remoteInvocations = 0;
+    Object.assign(deps, {
+      createRemoteCi: () => ({
+        repository: async () => {
+          remoteInvocations += 1;
+          return {
+            schemaVersion: 1 as const,
+            workspaceId: "ws_test",
+            provider: "github" as const,
+            repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" },
+            selectedRemote: "origin",
+            defaultBranch: "main",
+            currentRevision: { oid: "a".repeat(40), branch: "main" },
+            available: true,
+            authState: "AVAILABLE" as const,
+            credentialSource: "gh" as const,
+            truncated: false,
+            truncationReasons: []
+          };
+        },
+        status: async () => { throw new Error("not used"); },
+        runs: async () => { throw new Error("not used"); },
+        run: async () => { throw new Error("not used"); },
+        failure: async () => { throw new Error("not used"); }
+      })
+    });
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      deps
+    );
+    try {
+      expect(remoteInvocations).toBe(0);
+      const remoteCi = (stack as unknown as {
+        remoteCi?: { repository(input: unknown): Promise<unknown> };
+      }).remoteCi;
+      expect(remoteCi).toBeDefined();
+      await remoteCi!.repository({ workspaceId: "ws_test" });
+      expect(remoteInvocations).toBe(1);
+    } finally {
+      await stack.close();
+    }
+  });
+
   it("starts in the locked fail-closed order and reports only safe status", async () => {
     const events: string[] = [];
     const started = await startKodegpt(

@@ -8,10 +8,15 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ConnectorCredentialStore } from "../../packages/auth/src/index.js";
+import {
+  RemoteCiRepositoryResolver,
+  RemoteCiService,
+  type RemoteCiAdapter
+} from "../../packages/capabilities/src/index.js";
 import { KernelClient } from "../../packages/core/src/kernel-client.js";
 import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/index.js";
 import { WorkspaceTrustStore } from "../../packages/trust/src/index.js";
-import { startKodegpt } from "../../apps/cli/src/commands/start.js";
+import { defaultStartDependencies, startKodegpt } from "../../apps/cli/src/commands/start.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const TARGET = join(REPOSITORY_ROOT, "target", "task23-full-stack");
@@ -713,6 +718,217 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(port, credential.token, "workspace.list", {}, "req_full_list_after_close")
       );
       expect(remaining).toEqual([]);
+    } finally {
+      await started.close();
+    }
+  }, 45_000);
+
+  it("exercises all five Remote-CI tools through a fake provider with durable bounded audit and redaction", async () => {
+    const stateRoot = await tempRoot("kodegpt-ci-full-state-");
+    const workspace = await tempRoot("kodegpt-ci-full-workspace-");
+    const fakeCredential = "fixture-ci-credential-value";
+    const providerCalls: string[] = [];
+    const oid = "a".repeat(40);
+    const run = {
+      id: "10",
+      name: "Build commit",
+      workflow: "CI",
+      status: "COMPLETED" as const,
+      conclusion: "SUCCESS" as const,
+      headOid: oid,
+      ref: "main",
+      event: "push",
+      url: "https://github.com/2ndworld/kodeGPT/actions/runs/10",
+      createdAt: "2026-08-16T01:00:00.000Z",
+      startedAt: "2026-08-16T01:00:01.000Z",
+      updatedAt: "2026-08-16T01:01:00.000Z"
+    };
+    const failedJob = {
+      id: "20",
+      name: "test",
+      status: "COMPLETED" as const,
+      conclusion: "FAILURE" as const,
+      startedAt: "2026-08-16T01:00:02.000Z",
+      completedAt: "2026-08-16T01:00:50.000Z",
+      url: "https://github.com/2ndworld/kodeGPT/runs/10/jobs/20",
+      steps: [{
+        number: 2,
+        name: "Run tests",
+        status: "COMPLETED" as const,
+        conclusion: "FAILURE" as const,
+        startedAt: "2026-08-16T01:00:10.000Z",
+        completedAt: "2026-08-16T01:00:20.000Z"
+      }]
+    };
+    const fakeProvider: RemoteCiAdapter = {
+      repository: async () => {
+        providerCalls.push("repository");
+        return { defaultBranch: "main", providerRequests: 1 };
+      },
+      statusEvidence: async () => {
+        providerCalls.push("status");
+        return {
+          checks: [],
+          runs: [run],
+          providerPageLimited: false,
+          summaryLimitReached: false,
+          providerRequests: 1
+        };
+      },
+      runs: async () => {
+        providerCalls.push("runs");
+        return { items: [run], providerPageLimited: false, limitReached: false, providerRequests: 1 };
+      },
+      run: async () => {
+        providerCalls.push("run");
+        return {
+          run,
+          jobs: [],
+          annotations: [],
+          providerPageLimited: false,
+          jobLimitReached: false,
+          stepLimitReached: false,
+          providerRequests: 2
+        };
+      },
+      failureMetadata: async ({ selectJob }) => {
+        providerCalls.push("failure-metadata");
+        return {
+          run: { ...run, conclusion: "FAILURE" as const },
+          jobs: [failedJob],
+          selectedJobId: selectJob([failedJob]),
+          annotations: [{
+            path: "src/index.ts",
+            startLine: 10,
+            endLine: 10,
+            startColumn: null,
+            endColumn: null,
+            level: "FAILURE" as const,
+            message: `failure mentions ${fakeCredential}`,
+            title: "Failure"
+          }],
+          providerPageLimited: false,
+          jobLimitReached: false,
+          stepLimitReached: false,
+          annotationLimitReached: false,
+          providerRequests: 2
+        };
+      },
+      failureLog: async () => {
+        providerCalls.push("failure-log");
+        return {
+          bytes: new TextEncoder().encode(
+            `Authorization: Bearer ${fakeCredential}\nGH_TOKEN=${fakeCredential}\nerror: assertion failed\n`
+          ),
+          truncated: false,
+          providerRequests: 1
+        };
+      }
+    };
+
+    await writeFile(join(workspace, "tracked.txt"), "remote-ci\n");
+    runGit(workspace, ["init", "-q"]);
+    runGit(workspace, ["config", "user.name", "KodeGPT Test"]);
+    runGit(workspace, ["config", "user.email", "kodegpt@example.invalid"]);
+    runGit(workspace, ["add", "tracked.txt"]);
+    runGit(workspace, ["commit", "-qm", "fixture"]);
+    runGit(workspace, ["branch", "-M", "main"]);
+    runGit(workspace, ["remote", "add", "origin", "https://github.com/2ndworld/kodeGPT.git"]);
+
+    const trust = new WorkspaceTrustStore(stateRoot);
+    const inspector = await KernelClient.start({ runtimePath: RUNTIME, stateRoot });
+    try {
+      const inspected = await inspector.request<InspectRootResult>("system.inspect_root", { path: workspace });
+      await trust.trust({
+        canonicalRoot: inspected.canonicalRoot,
+        identity: inspected.identity,
+        profileCeiling: "trusted"
+      });
+    } finally {
+      await inspector.stop();
+    }
+
+    const credential = await new ConnectorCredentialStore(stateRoot).rotate();
+    let operation = 0;
+    const started = await startKodegpt(
+      { runtimePath: RUNTIME, stateRoot, port: 43_130 },
+      {
+        ...defaultStartDependencies,
+        createRemoteCi: (dependencies) => {
+          const service = new RemoteCiService({
+            resolver: new RemoteCiRepositoryResolver({
+              selections: dependencies.selections,
+              repository: dependencies.repository
+            }),
+            roots: dependencies.roots,
+            revisions: dependencies.revisions,
+            credentialProvider: {
+              getCredential: async () => ({ source: "gh", token: fakeCredential })
+            },
+            adapterFactory: { create: () => fakeProvider },
+            audit: dependencies.audit,
+            operationIdFactory: () => `op_ci_full_${++operation}`
+          });
+          return {
+            repository: (input) => service.repository(input),
+            status: (input) => service.status(input),
+            runs: (input) => service.runs(input),
+            run: (input) => service.run(input),
+            failure: (input) => service.failure(input)
+          };
+        }
+      }
+    );
+    try {
+      const port = started.status.port;
+      const opened = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: workspace }, "req_ci_open")
+      );
+      const repository = textJson(
+        await callTool(port, credential.token, "ci.repository", { workspaceId: opened.id }, "req_ci_repository")
+      );
+      const status = textJson(await callTool(port, credential.token, "ci.status", {}, "req_ci_status"));
+      const runs = textJson(
+        await callTool(port, credential.token, "ci.runs", { workspaceId: opened.id }, "req_ci_runs")
+      );
+      const runDetail = textJson(
+        await callTool(port, credential.token, "ci.run", { workspaceId: opened.id, runId: "10" }, "req_ci_run")
+      );
+      const failureResult = await callTool(
+        port,
+        credential.token,
+        "ci.failure",
+        { workspaceId: opened.id, runId: "10" },
+        "req_ci_failure"
+      );
+      const failure = textJson(failureResult);
+
+      expect(repository).toMatchObject({ provider: "github", repository: { fullName: "2ndworld/kodeGPT" } });
+      expect(status).toMatchObject({ provider: "github", state: "PASS" });
+      expect(runs.runs).toHaveLength(1);
+      expect(runDetail).toMatchObject({ run: { id: "10" } });
+      expect(failureResult.structuredContent).toEqual(failure);
+      expect(JSON.stringify(failure)).not.toContain(fakeCredential);
+      expect(JSON.stringify(failure)).not.toContain("Authorization: Bearer");
+      expect(JSON.stringify(failure)).toContain("[REDACTED]");
+      expect(providerCalls).toEqual([
+        "repository",
+        "status",
+        "runs",
+        "run",
+        "failure-metadata",
+        "failure-log"
+      ]);
+
+      const auditSource = await readFile(join(stateRoot, "logs/security/audit.jsonl"), "utf8");
+      for (const action of ["ci_repository", "ci_status", "ci_runs", "ci_run", "ci_failure"]) {
+        expect(auditSource).toContain(action);
+      }
+      expect(auditSource).toContain("2ndworld/kodeGPT");
+      expect(auditSource).toContain("github");
+      expect(auditSource).not.toContain(fakeCredential);
+      expect(auditSource).not.toContain("Authorization: Bearer");
+      expect(auditSource).not.toContain("assertion failed");
     } finally {
       await started.close();
     }

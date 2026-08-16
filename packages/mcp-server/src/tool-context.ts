@@ -1,5 +1,15 @@
 import type { ArtifactReadResult, ArtifactStore } from "../../artifacts/src/index.js";
 import type {
+  CiFailureInput,
+  CiFailureResult,
+  CiRepositoryInput,
+  CiRepositoryResult,
+  CiRunInput,
+  CiRunResult,
+  CiRunsInput,
+  CiRunsResult,
+  CiStatusInput,
+  CiStatusResult,
   CodeSearchInput,
   CodeSearchResult,
   ContextBuildInput,
@@ -183,6 +193,14 @@ export interface ContextToolContext {
   build(input: ContextBuildInput): Promise<ContextBuildResult>;
 }
 
+export interface CiToolContext {
+  repository(input: CiRepositoryInput): Promise<CiRepositoryResult>;
+  status(input: CiStatusInput): Promise<CiStatusResult>;
+  runs(input: CiRunsInput): Promise<CiRunsResult>;
+  run(input: CiRunInput): Promise<CiRunResult>;
+  failure(input: CiFailureInput): Promise<CiFailureResult>;
+}
+
 export interface SkillToolContext {
   list(input: {
     limit?: number;
@@ -212,6 +230,7 @@ export interface KodegptToolContext {
   file: FileCapabilityToolContext;
   verify: VerifyToolContext;
   context: ContextToolContext;
+  ci: CiToolContext;
   skill: SkillToolContext;
 }
 
@@ -281,12 +300,14 @@ export function createKodegptToolContext(options: {
   artifactStore: ArtifactStoreToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
+  remoteCi?: CiToolContext;
   skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
   health(): MaybePromise<unknown>;
 }): KodegptToolContext {
   const native = options.nativeCapabilities ?? unavailableNativeCapabilities();
+  const remoteCi = options.remoteCi ?? unavailableRemoteCi();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -376,6 +397,13 @@ export function createKodegptToolContext(options: {
     context: {
       build: (input) => native.buildContext(input)
     },
+    ci: {
+      repository: (input) => remoteCi.repository(input),
+      status: (input) => remoteCi.status(input),
+      runs: (input) => remoteCi.runs(input),
+      run: (input) => remoteCi.run(input),
+      failure: (input) => remoteCi.failure(input)
+    },
     skill: {
       list: (input) => skill.list(input),
       inspect: (input) => skill.inspect(input),
@@ -389,6 +417,16 @@ function requireJsonObject(value: unknown, source: string): JsonObject {
     throw new TypeError(`${source} must return an object`);
   }
   return value as JsonObject;
+}
+
+function unavailableRemoteCi(): CiToolContext {
+  return {
+    repository: () => unavailable("ci.repository"),
+    status: () => unavailable("ci.status"),
+    runs: () => unavailable("ci.runs"),
+    run: () => unavailable("ci.run"),
+    failure: () => unavailable("ci.failure")
+  };
 }
 
 function unavailableSkillCatalog(): SkillCatalogToolAdapter {

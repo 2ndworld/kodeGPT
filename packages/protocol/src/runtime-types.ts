@@ -4,6 +4,7 @@ export const RUNTIME_METHODS = [
   "runtime.hello",
   "system.inspect_root",
   "trust.audit",
+  "ci.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
@@ -18,6 +19,7 @@ export const RUNTIME_METHODS = [
   "file.write",
   "file.edit",
   "file.commit_patch_file",
+  "git.repository_identity",
   "git.status",
   "git.checkpoint",
   "git.checkpoint_patch",
@@ -76,6 +78,45 @@ const trustAuditParamsSchema = z
     operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
     action: z.enum(["trust", "profile_update", "untrust"]),
     phase: z.enum(["decision", "success", "failed"])
+  })
+  .strict();
+
+const ciAuditParamsSchema = z
+  .object({
+    capabilityId: z.string().min(1),
+    operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
+    ciCapability: z.enum(["ci.repository", "ci.status", "ci.runs", "ci.run", "ci.failure"]),
+    phase: z.enum(["decision", "success", "failed"]),
+    provider: z.literal("github"),
+    repository: z
+      .string()
+      .min(3)
+      .max(201)
+      .refine((value) => value.split("/").length === 2 && value.split("/").every((part) => part.length >= 1 && part.length <= 100 && !/[\u0000-\u001f\u007f:@]/.test(part))),
+    credentialSource: z.literal("gh").optional(),
+    runId: z.string().regex(/^[0-9]{1,32}$/).optional(),
+    jobId: z.string().regex(/^[0-9]{1,32}$/).optional(),
+    errorCode: z
+      .enum([
+        "CI_WORKSPACE_AMBIGUOUS",
+        "CI_AUDIT_UNAVAILABLE",
+        "CI_AUTH_REQUIRED",
+        "CI_AUTH_FAILED",
+        "CI_REPOSITORY_UNAVAILABLE",
+        "CI_REPOSITORY_MISMATCH",
+        "CI_REMOTE_UNSUPPORTED",
+        "CI_NOT_FOUND",
+        "CI_PERMISSION_DENIED",
+        "CI_RATE_LIMITED",
+        "CI_PROVIDER_UNAVAILABLE",
+        "CI_RESPONSE_INVALID",
+        "CI_RESPONSE_LIMIT_EXCEEDED",
+        "CI_LOG_UNAVAILABLE",
+        "CI_LOG_LIMIT_EXCEEDED"
+      ])
+      .optional(),
+    truncated: z.boolean().optional(),
+    durationMs: z.number().int().nonnegative().safe().optional()
   })
   .strict();
 
@@ -380,6 +421,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("runtime.hello", runtimeHelloParamsSchema),
   requestSchema("system.inspect_root", systemInspectRootParamsSchema),
   requestSchema("trust.audit", trustAuditParamsSchema),
+  requestSchema("ci.audit", ciAuditParamsSchema),
   requestSchema("workspace.register", workspaceRegisterParamsSchema),
   requestSchema("workspace.read_project_profile", workspaceCapabilityParamsSchema),
   requestSchema("workspace.restrict_policy", workspaceRestrictPolicyParamsSchema),
@@ -394,6 +436,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("file.write", fileWriteParamsSchema),
   requestSchema("file.edit", fileEditParamsSchema),
   requestSchema("file.commit_patch_file", fileCommitPatchParamsSchema),
+  requestSchema("git.repository_identity", gitInspectionParamsSchema),
   requestSchema("git.status", gitInspectionParamsSchema),
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
