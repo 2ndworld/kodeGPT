@@ -157,8 +157,13 @@ function validateCredentialPolicy(policy: ProviderAdapterManifest["credentialBro
     assertExactKeys(policy, ["kind"], "credential broker policy");
     return;
   }
-  assertExactKeys(policy, ["kind", "argv", "environment"], "credential broker policy");
-  if (policy.kind !== "external-helper" || !Array.isArray(policy.argv) || policy.argv.length === 0) {
+  assertExactKeys(policy, ["kind", "credentialKind", "argv", "environment"], "credential broker policy");
+  if (
+    policy.kind !== "external-helper" ||
+    (policy.credentialKind !== "bearer" && policy.credentialKind !== "opaque") ||
+    !Array.isArray(policy.argv) ||
+    policy.argv.length === 0
+  ) {
     throw invalid("Provider credential broker policy is invalid");
   }
   for (const argument of policy.argv) {
@@ -294,6 +299,7 @@ function freezeManifest(manifest: ProviderAdapterManifest): ProviderAdapterManif
     ? Object.freeze({ kind: "none" as const })
     : Object.freeze({
         kind: "external-helper" as const,
+        credentialKind: manifest.credentialBroker.credentialKind,
         argv: Object.freeze([...manifest.credentialBroker.argv]),
         environment: Object.freeze({ ...manifest.credentialBroker.environment })
       });

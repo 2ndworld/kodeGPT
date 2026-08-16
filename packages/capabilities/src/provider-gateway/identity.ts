@@ -57,7 +57,18 @@ export async function revalidateProviderHelperIdentity(input: {
   expectedSha256: string;
   workspaceRoots: readonly string[];
 }): Promise<{ canonicalPath: string; sha256: string }> {
-  return resolveHelperIdentity(input.canonicalPath, input.expectedSha256, input.workspaceRoots);
+  const identity = await resolveHelperIdentity(
+    input.canonicalPath,
+    input.expectedSha256,
+    input.workspaceRoots
+  );
+  if (identity.canonicalPath !== input.canonicalPath) {
+    throw new CapabilityError(
+      "PROVIDER_IDENTITY_CHANGED",
+      "Provider credential helper canonical path changed"
+    );
+  }
+  return identity;
 }
 
 async function resolveHelperIdentity(

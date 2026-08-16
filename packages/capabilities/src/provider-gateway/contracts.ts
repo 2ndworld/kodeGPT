@@ -140,6 +140,7 @@ export type ProviderCredentialBrokerPolicy =
   | { kind: "none" }
   | {
       kind: "external-helper";
+      credentialKind: "bearer" | "opaque";
       argv: readonly string[];
       environment: Readonly<Record<string, string>>;
     };
