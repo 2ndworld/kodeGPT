@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ProviderAdapterRegistry } from "./adapter-registry.js";
+import type { ProviderRequestBudget } from "./contracts.js";
 import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
+import { DefaultProviderNetworkTransport, type ProviderHttpsRequestInput } from "./network-transport.js";
 import { parseProviderSemanticOutput } from "./output.js";
 
 const REPOSITORY = "2ndworld/kodeGPT";
@@ -67,6 +69,10 @@ function rawPr(overrides: Record<string, unknown> = {}): Record<string, unknown>
     token: "[REDACTED_SECRET]",
     ...overrides
   };
+}
+
+function requestBudget(): ProviderRequestBudget & { claimRequest: ReturnType<typeof vi.fn> } {
+  return { claimRequest: vi.fn() };
 }
 
 describe("github.read.v1 provider adapter", () => {
@@ -232,6 +238,58 @@ describe("github.read.v1 provider adapter", () => {
       pathParameters: { owner: "2ndworld", repo: "kodeGPT" },
       query: { state: "closed", per_page: 17 }
     });
+  });
+
+  it("uses the existing transport for fixed GitHub GET authority and internal bearer injection", async () => {
+    const calls: ProviderHttpsRequestInput[] = [];
+    const transport = new DefaultProviderNetworkTransport({
+      resolver: { lookup: async () => [{ address: "203.0.113.10", family: 4 as const }] },
+      requester: { request: async (input: ProviderHttpsRequestInput) => {
+        calls.push(input);
+        return { statusCode: 200, headers: {}, body: Buffer.from("{}", "utf8") };
+      } }
+    });
+    const credential = { kind: "bearer" as const, value: "canary" };
+
+    await transport.request({
+      manifest: GITHUB_READ_PROVIDER_MANIFEST,
+      operationId: "repository.inspect",
+      operationInput: { repository: REPOSITORY },
+      credential,
+      signal: new AbortController().signal,
+      budget: requestBudget()
+    });
+    await transport.request({
+      manifest: GITHUB_READ_PROVIDER_MANIFEST,
+      operationId: "pr.inspect",
+      operationInput: { repository: REPOSITORY, number: 16 },
+      credential,
+      signal: new AbortController().signal,
+      budget: requestBudget()
+    });
+    await transport.request({
+      manifest: GITHUB_READ_PROVIDER_MANIFEST,
+      operationId: "pr.list",
+      operationInput: { repository: REPOSITORY, state: "closed", limit: 17 },
+      credential,
+      signal: new AbortController().signal,
+      budget: requestBudget()
+    });
+
+    expect(calls.map(({ method, hostname, port, path }) => ({ method, hostname, port, path }))).toEqual([
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT" },
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/pulls/16" },
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/pulls?state=closed&per_page=17" }
+    ]);
+    for (const call of calls) {
+      expect(call.headers).toMatchObject({
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2026-03-10",
+        "user-agent": "KodeGPT/0.1 Provider-GitHub-Read",
+        authorization: "Bearer canary"
+      });
+      expect(call.body).toBeNull();
+    }
   });
 
   it("normalizes repository inspection to reviewed fields only", () => {
