@@ -193,6 +193,166 @@ pub struct CiAuditParams {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderAuditOperation {
+    Add,
+    Remove,
+    Enable,
+    Disable,
+    Reapprove,
+    Execute,
+    Inventory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderErrorCode {
+    #[serde(rename = "PROVIDER_INPUT_INVALID")]
+    InputInvalid,
+    #[serde(rename = "PROVIDER_STATE_INVALID")]
+    StateInvalid,
+    #[serde(rename = "PROVIDER_NOT_ADMITTED")]
+    NotAdmitted,
+    #[serde(rename = "PROVIDER_DISABLED")]
+    Disabled,
+    #[serde(rename = "PROVIDER_IDENTITY_CHANGED")]
+    IdentityChanged,
+    #[serde(rename = "PROVIDER_CREDENTIAL_UNAVAILABLE")]
+    CredentialUnavailable,
+    #[serde(rename = "PROVIDER_CREDENTIAL_REJECTED")]
+    CredentialRejected,
+    #[serde(rename = "PROVIDER_NETWORK_DENIED")]
+    NetworkDenied,
+    #[serde(rename = "PROVIDER_UNAVAILABLE")]
+    Unavailable,
+    #[serde(rename = "PROVIDER_TIMEOUT")]
+    Timeout,
+    #[serde(rename = "PROVIDER_CANCELLED")]
+    Cancelled,
+    #[serde(rename = "PROVIDER_RATE_LIMITED")]
+    RateLimited,
+    #[serde(rename = "PROVIDER_RESPONSE_INVALID")]
+    ResponseInvalid,
+    #[serde(rename = "PROVIDER_OUTPUT_LIMIT_EXCEEDED")]
+    OutputLimitExceeded,
+    #[serde(rename = "PROVIDER_TOOL_UNAVAILABLE")]
+    ToolUnavailable,
+    #[serde(rename = "PROVIDER_INVENTORY_CHANGED")]
+    InventoryChanged,
+    #[serde(rename = "PROVIDER_REQUEST_FAILED")]
+    RequestFailed,
+    #[serde(rename = "PROVIDER_AUDIT_UNAVAILABLE")]
+    AuditUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProviderAuditParams {
+    #[serde(deserialize_with = "deserialize_provider_operation_id")]
+    pub operation_id: String,
+    pub operation: ProviderAuditOperation,
+    pub phase: ProviderAuditPhase,
+    #[serde(deserialize_with = "deserialize_provider_instance_id")]
+    pub provider_instance_id: String,
+    #[serde(deserialize_with = "deserialize_provider_authority_id")]
+    pub adapter_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_provider_authority_id")]
+    pub semantic_capability_id: Option<String>,
+    pub error_code: Option<ProviderErrorCode>,
+    pub inventory_changed: Option<bool>,
+    pub truncated: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_optional_provider_duration_ms")]
+    pub duration_ms: Option<u64>,
+}
+
+fn deserialize_provider_operation_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let valid = value.strip_prefix("op_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.len() <= 93
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    });
+    if !valid {
+        return Err(D::Error::custom("invalid provider operation id"));
+    }
+    Ok(value)
+}
+
+fn deserialize_provider_instance_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let valid = value.strip_prefix("prv_").is_some_and(|suffix| {
+        suffix.len() == 32
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    });
+    if !valid {
+        return Err(D::Error::custom("invalid provider instance id"));
+    }
+    Ok(value)
+}
+
+fn valid_provider_authority_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index == 0 {
+                byte.is_ascii_alphanumeric()
+            } else {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'+' | b'-')
+            }
+        })
+}
+
+fn deserialize_provider_authority_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if !valid_provider_authority_id(&value) {
+        return Err(D::Error::custom("invalid provider authority id"));
+    }
+    Ok(value)
+}
+
+fn deserialize_optional_provider_authority_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    if value.as_deref().is_some_and(|candidate| !valid_provider_authority_id(candidate)) {
+        return Err(D::Error::custom("invalid provider authority id"));
+    }
+    Ok(value)
+}
+
+fn deserialize_optional_provider_duration_ms<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<u64>::deserialize(deserializer)?;
+    if value.is_some_and(|duration_ms| duration_ms > 86_400_000) {
+        return Err(D::Error::custom("invalid provider audit duration"));
+    }
+    Ok(value)
+}
+
 fn deserialize_ci_repository<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -593,6 +753,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: CiAuditParams,
+    },
+    #[serde(rename = "provider.audit")]
+    ProviderAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: ProviderAuditParams,
     },
     #[serde(rename = "workspace.register")]
     WorkspaceRegister {

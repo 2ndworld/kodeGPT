@@ -197,6 +197,54 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "provider.audit" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operationId", "operation", "phase", "providerInstanceId", "adapterId"],
+          "properties": {
+            "operationId": { "type": "string", "pattern": "^op_[A-Za-z0-9_-]{1,93}$" },
+            "operation": { "enum": ["add", "remove", "enable", "disable", "reapprove", "execute", "inventory"] },
+            "phase": { "enum": ["decision", "success", "failed"] },
+            "providerInstanceId": { "type": "string", "pattern": "^prv_[0-9a-f]{32}$" },
+            "adapterId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$" },
+            "semanticCapabilityId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$" },
+            "errorCode": {
+              "enum": [
+                "PROVIDER_INPUT_INVALID",
+                "PROVIDER_STATE_INVALID",
+                "PROVIDER_NOT_ADMITTED",
+                "PROVIDER_DISABLED",
+                "PROVIDER_IDENTITY_CHANGED",
+                "PROVIDER_CREDENTIAL_UNAVAILABLE",
+                "PROVIDER_CREDENTIAL_REJECTED",
+                "PROVIDER_NETWORK_DENIED",
+                "PROVIDER_UNAVAILABLE",
+                "PROVIDER_TIMEOUT",
+                "PROVIDER_CANCELLED",
+                "PROVIDER_RATE_LIMITED",
+                "PROVIDER_RESPONSE_INVALID",
+                "PROVIDER_OUTPUT_LIMIT_EXCEEDED",
+                "PROVIDER_TOOL_UNAVAILABLE",
+                "PROVIDER_INVENTORY_CHANGED",
+                "PROVIDER_REQUEST_FAILED",
+                "PROVIDER_AUDIT_UNAVAILABLE"
+              ]
+            },
+            "inventoryChanged": { "type": "boolean" },
+            "truncated": { "type": "boolean" },
+            "durationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "workspace.register" },
         "params": {
           "type": "object",

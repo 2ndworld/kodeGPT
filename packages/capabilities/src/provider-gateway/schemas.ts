@@ -14,13 +14,13 @@ import {
   type ProviderStructuralInventory
 } from "./contracts.js";
 
-const boundedAuthorityIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const boundedAuthorityIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/);
 const boundedVersionSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/);
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 const timestampSchema = z.string().datetime({ offset: true });
 
 export const ProviderInstanceIdSchema = z.string().regex(/^prv_[0-9a-f]{32}$/);
-export const ProviderOperationIdSchema = z.string().regex(/^op_[0-9a-f]{32}$/);
+export const ProviderOperationIdSchema = z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/);
 export const ProviderAdapterIdSchema = boundedAuthorityIdSchema;
 export const ProviderSemanticCapabilityIdSchema = boundedAuthorityIdSchema;
 export const ProviderFingerprintSchema = sha256Schema;

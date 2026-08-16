@@ -12,6 +12,7 @@ pub use types::{
     GitRepositoryIdentityParams, GitRevisionSpec, GitShowParams, GitStatusParams,
     InheritEnvDisabled, JsonRpcVersion, NetworkMode, PersistentFilesystemIdentity,
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
+    ProviderAuditOperation, ProviderAuditParams, ProviderAuditPhase, ProviderErrorCode,
     RuntimeErrorResponse, RuntimeHelloParams, RuntimePolicy, RuntimeRequest, RuntimeResponse,
     RuntimeRpcError, RuntimeSuccessResponse, SkillSourceCapabilityParams,
     SkillSourceInspectRootParams, SkillSourceReadEncoding, SkillSourceReadParams,
