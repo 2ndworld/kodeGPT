@@ -7,3 +7,4 @@ export * from "./identity.js";
 export * from "./credential-broker.js";
 export * from "./network-policy.js";
 export * from "./network-transport.js";
+export * from "./inventory.js";
