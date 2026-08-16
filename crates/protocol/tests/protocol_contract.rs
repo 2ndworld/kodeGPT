@@ -211,7 +211,7 @@ fn ci_audit_params_are_closed_and_typed() {
             "provider": "github",
             "repository": "2ndworld/kodeGPT",
             "secretMaterial": "forbidden"
-        })
+        }),
     ] {
         serde_json::from_value::<CiAuditParams>(invalid)
             .expect_err("unsafe CI audit params must be rejected");

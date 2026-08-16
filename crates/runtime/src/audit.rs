@@ -643,10 +643,22 @@ impl AuditOutcome {
 fn validate_ci_audit_metadata(metadata: &CiAuditMetadata) -> Result<(), AuditError> {
     if metadata.provider != "github"
         || !valid_ci_repository(&metadata.repository)
-        || metadata.credential_source.as_deref().is_some_and(|value| value != "gh")
-        || metadata.run_id.as_deref().is_some_and(|value| !valid_ci_decimal_id(value))
-        || metadata.job_id.as_deref().is_some_and(|value| !valid_ci_decimal_id(value))
-        || metadata.error_code.as_deref().is_some_and(|value| !valid_ci_error_code(value))
+        || metadata
+            .credential_source
+            .as_deref()
+            .is_some_and(|value| value != "gh")
+        || metadata
+            .run_id
+            .as_deref()
+            .is_some_and(|value| !valid_ci_decimal_id(value))
+        || metadata
+            .job_id
+            .as_deref()
+            .is_some_and(|value| !valid_ci_decimal_id(value))
+        || metadata
+            .error_code
+            .as_deref()
+            .is_some_and(|value| !valid_ci_error_code(value))
     {
         return Err(AuditError::unavailable("AUDIT_UNAVAILABLE"));
     }
@@ -671,9 +683,7 @@ fn valid_ci_repository(value: &str) -> bool {
 }
 
 fn valid_ci_decimal_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 32
-        && value.bytes().all(|byte| byte.is_ascii_digit())
+    !value.is_empty() && value.len() <= 32 && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn valid_ci_error_code(value: &str) -> bool {

@@ -9,13 +9,13 @@ use kodegpt_protocol::{
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
     GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
     GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
-    ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
-    RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
-    SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
-    SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
+    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
+    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
+    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
+    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -320,7 +320,10 @@ async fn dispatch_one(
             let params = match serde_json::from_value::<CiAuditParams>(request.params) {
                 Ok(params)
                     if !params.capability_id.is_empty()
-                        && valid_audit_operation_id(&params.operation_id) => params,
+                        && valid_audit_operation_id(&params.operation_id) =>
+                {
+                    params
+                }
                 _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
             };
             let action = match params.ci_capability {
@@ -331,7 +334,10 @@ async fn dispatch_one(
                 CiCapability::Failure => AuditAction::CiFailure,
             };
             let metadata = CiAuditMetadata {
-                provider: match params.provider { CiProvider::Github => "github" }.into(),
+                provider: match params.provider {
+                    CiProvider::Github => "github",
+                }
+                .into(),
                 repository: params.repository,
                 credential_source: params.credential_source.map(|value| match value {
                     CiCredentialSource::Gh => "gh".to_owned(),
@@ -927,7 +933,8 @@ async fn dispatch_one(
             )
         }
         "git.repository_identity" => {
-            let params = match serde_json::from_value::<GitRepositoryIdentityParams>(request.params) {
+            let params = match serde_json::from_value::<GitRepositoryIdentityParams>(request.params)
+            {
                 Ok(params) if !params.capability_id.is_empty() => params,
                 Ok(_) | Err(_) => {
                     return error_response(Some(request.id), -32602, "INVALID_PARAMS");

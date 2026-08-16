@@ -362,7 +362,10 @@ fn parse_repository_branch(bytes: &[u8]) -> Result<String, GitInspectionError> {
 
 fn parse_repository_remotes(bytes: &[u8]) -> Result<Vec<GitRemoteIdentity>, GitInspectionError> {
     let mut remotes = BTreeMap::<String, String>::new();
-    for record in bytes.split(|byte| *byte == 0).filter(|record| !record.is_empty()) {
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
         let separator = record
             .iter()
             .position(|byte| *byte == b'\n')
@@ -381,7 +384,9 @@ fn parse_repository_remotes(bytes: &[u8]) -> Result<Vec<GitRemoteIdentity>, GitI
             || fetch_url.is_empty()
             || fetch_url.len() > 8192
             || fetch_url.bytes().any(|byte| byte.is_ascii_control())
-            || remotes.insert(name.to_owned(), fetch_url.to_owned()).is_some()
+            || remotes
+                .insert(name.to_owned(), fetch_url.to_owned())
+                .is_some()
         {
             return Err(GitInspectionError::RepositoryIdentityInvalid);
         }
@@ -2024,20 +2029,40 @@ mod tests {
         let workspace = temporary_root("repository-identity");
         let state = temporary_root("repository-identity-state");
         git(&workspace, &["init"]);
-        git(&workspace, &["config", "user.email", "test@example.invalid"]);
+        git(
+            &workspace,
+            &["config", "user.email", "test@example.invalid"],
+        );
         git(&workspace, &["config", "user.name", "KodeGPT Test"]);
         fs::write(workspace.join("tracked.txt"), b"base\n").expect("tracked file");
         git(&workspace, &["add", "tracked.txt"]);
         git(&workspace, &["commit", "-m", "base"]);
-        git(&workspace, &["remote", "add", "upstream", "https://github.com/example/upstream.git"]);
-        git(&workspace, &["remote", "add", "origin", "git@github.com:example/repository.git"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/example/upstream.git",
+            ],
+        );
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:example/repository.git",
+            ],
+        );
 
         let expected_head = git_stdout(&workspace, &["rev-parse", "--verify", "HEAD"])
             .trim()
             .to_owned();
-        let expected_branch = git_stdout(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .trim()
-            .to_owned();
+        let expected_branch =
+            git_stdout(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+                .trim()
+                .to_owned();
         let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
         let audit = Arc::new(AuditSink::open(&state));
         let spool = RawSpoolStore::open(&state, audit).expect("spool store");
@@ -2075,7 +2100,10 @@ mod tests {
         let workspace = temporary_root("repository-identity-limit");
         let state = temporary_root("repository-identity-limit-state");
         git(&workspace, &["init"]);
-        git(&workspace, &["config", "user.email", "test@example.invalid"]);
+        git(
+            &workspace,
+            &["config", "user.email", "test@example.invalid"],
+        );
         git(&workspace, &["config", "user.name", "KodeGPT Test"]);
         fs::write(workspace.join("tracked.txt"), b"base\n").expect("tracked file");
         git(&workspace, &["add", "tracked.txt"]);
@@ -2099,7 +2127,10 @@ mod tests {
             &executions,
         )
         .expect_err("remote observation limit must fail closed");
-        assert!(matches!(error, GitInspectionError::RepositoryIdentityLimitExceeded));
+        assert!(matches!(
+            error,
+            GitInspectionError::RepositoryIdentityLimitExceeded
+        ));
         let _ = fs::remove_dir_all(workspace);
         let _ = fs::remove_dir_all(state);
     }
