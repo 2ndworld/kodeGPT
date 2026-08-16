@@ -1,4 +1,5 @@
 export * from "./contracts.js";
+export * from "./repository-resolver.js";
 export {
   CiConclusionSchema,
   CiFailureInputSchema,

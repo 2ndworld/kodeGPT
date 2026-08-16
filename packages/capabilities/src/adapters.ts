@@ -100,6 +100,24 @@ export interface GitInspectionAdapter {
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
 }
 
+export interface RemoteCiReadyWorkspace {
+  id: string;
+}
+
+export interface RemoteCiWorkspaceSelectionAdapter {
+  listReady(): Promise<RemoteCiReadyWorkspace[]>;
+}
+
+export interface RemoteCiRepositoryInspection {
+  headOid: string;
+  branch: string | null;
+  remotes: Array<{ name: string; fetchUrl: string }>;
+}
+
+export interface RemoteCiRepositoryInspectionAdapter {
+  inspect(workspaceId: string): Promise<RemoteCiRepositoryInspection>;
+}
+
 export interface GitLocalAuthorityAdapter {
   effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean };
 }
