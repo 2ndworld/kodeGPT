@@ -55,10 +55,12 @@ describe("ProviderAdapterRegistry", () => {
     expect(registry.require("github.read.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.repository.inspect",
       "github.pr.inspect",
-      "github.pr.list"
+      "github.pr.list",
+      "github.issue.inspect",
+      "github.issue.list"
     ]);
-    expect(() => registry.requireMapping("github.issue.inspect"))
-      .toThrowError(expect.objectContaining({ code: "PROVIDER_TOOL_UNAVAILABLE" }));
+    expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
+    expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
   });
 
   it("resolves a compiled manifest and semantic mapping", () => {

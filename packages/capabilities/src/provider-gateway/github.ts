@@ -12,6 +12,11 @@ const GITHUB_ACCEPT = "application/vnd.github+json";
 const GITHUB_USER_AGENT = "KodeGPT/0.1 Provider-GitHub-Read";
 const GITHUB_PR_NUMBER_MAX = 2_147_483_647;
 const GITHUB_PR_LIST_LIMIT_MAX = 50;
+const GITHUB_ISSUE_NUMBER_MAX = GITHUB_PR_NUMBER_MAX;
+const GITHUB_ISSUE_LIST_LIMIT_MAX = GITHUB_PR_LIST_LIMIT_MAX;
+const GITHUB_ISSUE_LABELS_MAX = 20;
+const GITHUB_ISSUE_ASSIGNEES_MAX = 20;
+const GITHUB_ISSUE_LABEL_NAME_MAX = 255;
 const REPOSITORY_COMPONENT = /^[A-Za-z0-9._-]{1,100}$/;
 
 const FIXED_HEADERS = Object.freeze({
@@ -42,6 +47,17 @@ const PrListInputSchema = z.object({
   repository: RepositorySchema,
   state: z.enum(["open", "closed", "all"]).default("open"),
   limit: z.number().int().min(1).max(GITHUB_PR_LIST_LIMIT_MAX).default(30)
+}).strict();
+
+const IssueInspectInputSchema = z.object({
+  repository: RepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_ISSUE_NUMBER_MAX)
+}).strict();
+
+const IssueListInputSchema = z.object({
+  repository: RepositorySchema,
+  state: z.enum(["open", "closed", "all"]).default("open"),
+  limit: z.number().int().min(1).max(GITHUB_ISSUE_LIST_LIMIT_MAX).default(30)
 }).strict();
 
 const GitHubUrlSchema = z.string().url().max(2048);
@@ -88,6 +104,23 @@ const RawPrInspectSchema = RawPrSummarySchema.extend({
 });
 
 const RawPrListSchema = z.array(RawPrSummarySchema).max(GITHUB_PR_LIST_LIMIT_MAX);
+
+const RawIssueSchema = z.object({
+  number: z.number().int().min(1).max(GITHUB_ISSUE_NUMBER_MAX),
+  title: GitHubTitleSchema,
+  state: z.enum(["open", "closed"]),
+  user: z.object({ login: GitHubLoginSchema }).nullable(),
+  html_url: GitHubUrlSchema,
+  created_at: GitHubTimestampSchema,
+  updated_at: GitHubTimestampSchema,
+  closed_at: GitHubTimestampSchema.nullable(),
+  comments: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  labels: z.array(z.object({ name: z.string().max(GITHUB_ISSUE_LABEL_NAME_MAX) })).max(GITHUB_ISSUE_LABELS_MAX),
+  assignees: z.array(z.object({ login: GitHubLoginSchema })).max(GITHUB_ISSUE_ASSIGNEES_MAX),
+  pull_request: z.unknown().optional()
+});
+
+const RawIssueListSchema = z.array(RawIssueSchema).max(GITHUB_ISSUE_LIST_LIMIT_MAX);
 
 const RepositoryInspectOutputSchema = z.object({
   repository: RepositorySchema,
@@ -139,11 +172,34 @@ const PrListOutputSchema = z.object({
   items: z.array(PrListItemOutputSchema).max(GITHUB_PR_LIST_LIMIT_MAX)
 }).strict();
 
+const IssueItemOutputSchema = z.object({
+  number: z.number().int().min(1).max(GITHUB_ISSUE_NUMBER_MAX),
+  title: GitHubTitleSchema,
+  state: z.enum(["open", "closed"]),
+  authorLogin: GitHubLoginSchema.nullable(),
+  htmlUrl: GitHubUrlSchema,
+  createdAt: GitHubTimestampSchema,
+  updatedAt: GitHubTimestampSchema,
+  closedAt: GitHubTimestampSchema.nullable(),
+  commentsCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  labels: z.array(z.string().max(GITHUB_ISSUE_LABEL_NAME_MAX)).max(GITHUB_ISSUE_LABELS_MAX),
+  assigneeLogins: z.array(GitHubLoginSchema).max(GITHUB_ISSUE_ASSIGNEES_MAX)
+}).strict();
+
+const IssueInspectOutputSchema = IssueItemOutputSchema.extend({
+  repository: RepositorySchema
+}).strict();
+
+const IssueListOutputSchema = z.object({
+  repository: RepositorySchema,
+  items: z.array(IssueItemOutputSchema).max(GITHUB_ISSUE_LIST_LIMIT_MAX)
+}).strict();
+
 const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   adapterId: GITHUB_ADAPTER_ID,
   adapterContractVersion: GITHUB_ADAPTER_CONTRACT_VERSION,
-  schemaRevision: 1,
-  normalizerRevision: 1,
+  schemaRevision: 2,
+  normalizerRevision: 2,
   origin: GITHUB_API_ORIGIN,
   apiVersion: GITHUB_API_VERSION,
   accept: GITHUB_ACCEPT,
@@ -152,9 +208,17 @@ const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   operations: [
     ["repository.inspect", "GET", "/repos/{owner}/{repo}"],
     ["pr.inspect", "GET", "/repos/{owner}/{repo}/pulls/{number}"],
-    ["pr.list", "GET", "/repos/{owner}/{repo}/pulls", ["state", "per_page"]]
+    ["pr.list", "GET", "/repos/{owner}/{repo}/pulls", ["state", "per_page"]],
+    ["issue.inspect", "GET", "/repos/{owner}/{repo}/issues/{number}"],
+    ["issue.list", "GET", "/repos/{owner}/{repo}/issues", ["state", "per_page"]]
   ],
-  semantics: ["github.repository.inspect", "github.pr.inspect", "github.pr.list"]
+  semantics: [
+    "github.repository.inspect",
+    "github.pr.inspect",
+    "github.pr.list",
+    "github.issue.inspect",
+    "github.issue.list"
+  ]
 });
 
 const IMPLEMENTATION_DIGEST = createHash("sha256")
@@ -185,6 +249,27 @@ function encodePrInspect(input: unknown): ProviderEncodedRequest {
 
 function encodePrList(input: unknown): ProviderEncodedRequest {
   const parsed = PrListInputSchema.parse(input);
+  return {
+    pathParameters: repositoryParts(parsed.repository),
+    query: {
+      state: parsed.state,
+      per_page: parsed.limit
+    }
+  };
+}
+
+function encodeIssueInspect(input: unknown): ProviderEncodedRequest {
+  const parsed = IssueInspectInputSchema.parse(input);
+  return {
+    pathParameters: {
+      ...repositoryParts(parsed.repository),
+      number: String(parsed.number)
+    }
+  };
+}
+
+function encodeIssueList(input: unknown): ProviderEncodedRequest {
+  const parsed = IssueListInputSchema.parse(input);
   return {
     pathParameters: repositoryParts(parsed.repository),
     query: {
@@ -266,6 +351,40 @@ function mapPrList(providerValue: unknown, semanticInput: unknown): unknown {
   return { repository: input.repository, items };
 }
 
+function mapIssueItem(raw: z.infer<typeof RawIssueSchema>) {
+  return {
+    number: raw.number,
+    title: raw.title,
+    state: raw.state,
+    authorLogin: raw.user?.login ?? null,
+    htmlUrl: raw.html_url,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    closedAt: raw.closed_at,
+    commentsCount: raw.comments,
+    labels: raw.labels.map(({ name }) => name),
+    assigneeLogins: raw.assignees.map(({ login }) => login)
+  };
+}
+
+function mapIssueInspect(providerValue: unknown, semanticInput: unknown): unknown {
+  const input = IssueInspectInputSchema.parse(semanticInput);
+  const raw = RawIssueSchema.parse(providerValue);
+  if (raw.number !== input.number) throw new Error("GitHub issue identity mismatch");
+  if (raw.pull_request !== undefined) throw new Error("GitHub issue semantic resolved to pull request");
+  return { repository: input.repository, ...mapIssueItem(raw) };
+}
+
+function mapIssueList(providerValue: unknown, semanticInput: unknown): unknown {
+  const input = IssueListInputSchema.parse(semanticInput);
+  const raw = RawIssueListSchema.parse(providerValue);
+  if (raw.length > input.limit) throw new Error("GitHub issue list exceeded requested limit");
+  return {
+    repository: input.repository,
+    items: raw.filter((item) => item.pull_request === undefined).map(mapIssueItem)
+  };
+}
+
 export const GITHUB_READ_PROVIDER_MANIFEST: ProviderAdapterManifest = {
   adapterId: GITHUB_ADAPTER_ID,
   adapterContractVersion: GITHUB_ADAPTER_CONTRACT_VERSION,
@@ -312,6 +431,26 @@ export const GITHUB_READ_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       fixedHeaders: FIXED_HEADERS,
       inputSchema: PrListInputSchema,
       encodeRequest: encodePrList
+    },
+    {
+      id: "issue.inspect",
+      method: "GET",
+      origin: GITHUB_API_ORIGIN,
+      pathTemplate: "/repos/{owner}/{repo}/issues/{number}",
+      allowedQueryKeys: [],
+      fixedHeaders: FIXED_HEADERS,
+      inputSchema: IssueInspectInputSchema,
+      encodeRequest: encodeIssueInspect
+    },
+    {
+      id: "issue.list",
+      method: "GET",
+      origin: GITHUB_API_ORIGIN,
+      pathTemplate: "/repos/{owner}/{repo}/issues",
+      allowedQueryKeys: ["state", "per_page"],
+      fixedHeaders: FIXED_HEADERS,
+      inputSchema: IssueListInputSchema,
+      encodeRequest: encodeIssueList
     }
   ],
   mappings: [
@@ -350,6 +489,32 @@ export const GITHUB_READ_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       inputSchema: PrListInputSchema,
       outputSchema: PrListOutputSchema,
       mapOutput: mapPrList,
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["repository", "state", "limit"]
+    },
+    {
+      semanticCapabilityId: "github.issue.inspect",
+      adapterId: GITHUB_ADAPTER_ID,
+      adapterOperationId: "issue.inspect",
+      effect: "REMOTE_READ",
+      workspaceBinding: "NONE",
+      inputSchema: IssueInspectInputSchema,
+      outputSchema: IssueInspectOutputSchema,
+      mapOutput: mapIssueInspect,
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["repository", "number"]
+    },
+    {
+      semanticCapabilityId: "github.issue.list",
+      adapterId: GITHUB_ADAPTER_ID,
+      adapterOperationId: "issue.list",
+      effect: "REMOTE_READ",
+      workspaceBinding: "NONE",
+      inputSchema: IssueListInputSchema,
+      outputSchema: IssueListOutputSchema,
+      mapOutput: mapIssueList,
       maxProviderRequests: 1,
       retry: "none",
       auditFields: ["repository", "state", "limit"]
