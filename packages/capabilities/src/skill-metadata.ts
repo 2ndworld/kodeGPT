@@ -132,6 +132,31 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "git history diff",
     "compare commits"
   ]),
+  "ci.repository": entry("ci.repository", "Resolve bounded read-only Remote-CI repository context from a trusted workspace.", [
+    "ci repository",
+    "remote ci repository",
+    "github ci context"
+  ]),
+  "ci.status": entry("ci.status", "Summarize bounded read-only Remote-CI status for a trusted workspace revision.", [
+    "ci status",
+    "check ci",
+    "github actions status"
+  ]),
+  "ci.runs": entry("ci.runs", "List bounded recent read-only Remote-CI workflow runs.", [
+    "ci runs",
+    "workflow runs",
+    "github actions runs"
+  ]),
+  "ci.run": entry("ci.run", "Inspect one bounded read-only Remote-CI workflow run.", [
+    "ci run",
+    "workflow run details",
+    "github actions run"
+  ]),
+  "ci.failure": entry("ci.failure", "Inspect bounded redacted failure evidence from one Remote-CI workflow run.", [
+    "ci failure",
+    "why ci failed",
+    "github actions failure"
+  ]),
   "process.run": entry("process.run", "Run a policy-approved process through native process controls.", [
     "run process",
     "native process",

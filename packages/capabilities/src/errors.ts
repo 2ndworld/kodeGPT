@@ -23,6 +23,21 @@ export type CapabilityErrorCode =
   | "GIT_REMOTE_INPUT_INVALID"
   | "GIT_REMOTE_UNAVAILABLE"
   | "GIT_REMOTE_FAILED"
+  | "CI_WORKSPACE_AMBIGUOUS"
+  | "CI_AUDIT_UNAVAILABLE"
+  | "CI_AUTH_REQUIRED"
+  | "CI_AUTH_FAILED"
+  | "CI_REPOSITORY_UNAVAILABLE"
+  | "CI_REPOSITORY_MISMATCH"
+  | "CI_REMOTE_UNSUPPORTED"
+  | "CI_NOT_FOUND"
+  | "CI_PERMISSION_DENIED"
+  | "CI_RATE_LIMITED"
+  | "CI_PROVIDER_UNAVAILABLE"
+  | "CI_RESPONSE_INVALID"
+  | "CI_RESPONSE_LIMIT_EXCEEDED"
+  | "CI_LOG_UNAVAILABLE"
+  | "CI_LOG_LIMIT_EXCEEDED"
   | "VERIFICATION_NOT_FOUND"
   | "VERIFICATION_NOT_ALLOWED"
   | "VERIFICATION_DISCOVERY_INVALID"
@@ -35,6 +50,8 @@ export type CapabilityErrorCode =
 export interface CapabilityErrorDetails {
   committedPaths?: string[];
   failedPath?: string;
+  retryAfter?: number;
+  resetAt?: string;
 }
 
 export class CapabilityError extends Error {
@@ -68,17 +85,33 @@ function sanitizeDetails(details: CapabilityErrorDetails | undefined): Capabilit
   if (details === undefined) return undefined;
   const committedPaths = details.committedPaths;
   const failedPath = details.failedPath;
+  const retryAfter = details.retryAfter;
+  const resetAt = details.resetAt;
   if (
     (committedPaths !== undefined &&
       (!Array.isArray(committedPaths) || !committedPaths.every(isSafeRelativePath))) ||
-    (failedPath !== undefined && !isSafeRelativePath(failedPath))
+    (failedPath !== undefined && !isSafeRelativePath(failedPath)) ||
+    (retryAfter !== undefined && (!Number.isSafeInteger(retryAfter) || retryAfter < 0)) ||
+    (resetAt !== undefined && !isSafeIsoTimestamp(resetAt))
   ) {
     return undefined;
   }
   return {
     ...(committedPaths === undefined ? {} : { committedPaths: [...committedPaths] }),
-    ...(failedPath === undefined ? {} : { failedPath })
+    ...(failedPath === undefined ? {} : { failedPath }),
+    ...(retryAfter === undefined ? {} : { retryAfter }),
+    ...(resetAt === undefined ? {} : { resetAt })
   };
+}
+
+function isSafeIsoTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length >= 20 &&
+    value.length <= 64 &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
 }
 
 function isSafeRelativePath(value: unknown): value is string {

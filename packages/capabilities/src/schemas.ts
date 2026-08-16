@@ -176,15 +176,15 @@ export const FilePatchResultSchema: z.ZodType<FilePatchResult> = z
   .strict();
 
 const gitOidSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
-const gitSafeRefNameSchema = z.string().min(1).max(128).refine((value) =>
+export const GitSafeRefNameSchema = z.string().min(1).max(128).refine((value) =>
   !value.includes("..") && !value.includes("@{") &&
   value.split("/").every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) && !part.endsWith(".lock") && !part.endsWith("."))
 );
 export const GitRevisionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("head") }).strict(),
   z.object({ kind: z.literal("oid"), oid: gitOidSchema }).strict(),
-  z.object({ kind: z.literal("branch"), name: gitSafeRefNameSchema }).strict(),
-  z.object({ kind: z.literal("tag"), name: gitSafeRefNameSchema }).strict()
+  z.object({ kind: z.literal("branch"), name: GitSafeRefNameSchema }).strict(),
+  z.object({ kind: z.literal("tag"), name: GitSafeRefNameSchema }).strict()
 ]);
 const gitPathSchema = z.string().min(1).refine((value) =>
   Buffer.byteLength(value, "utf8") <= 4096 &&
