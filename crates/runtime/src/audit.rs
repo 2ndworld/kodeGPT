@@ -14,6 +14,9 @@ pub const DEFAULT_AUDIT_ROTATIONS: usize = 5;
 #[derive(Debug, Clone, Copy)]
 pub enum AuditAction {
     InspectRoot,
+    WorkspaceTrust,
+    WorkspaceTrustProfileUpdate,
+    WorkspaceUntrust,
     WorkspaceRegister,
     WorkspaceReadProjectProfile,
     WorkspaceRestrictPolicy,
@@ -32,6 +35,14 @@ pub enum AuditAction {
     GitCheckpoint,
     GitCheckpointPatch,
     GitDiff,
+    GitStage,
+    GitCommit,
+    GitBranchCreate,
+    GitBranchSwitch,
+    GitBranchDelete,
+    GitFetch,
+    GitPull,
+    GitPush,
     GitHistoryList,
     GitCommitInspect,
     GitHistoryRange,
@@ -147,6 +158,10 @@ struct AuditRecord {
     capability_id: Option<String>,
     action: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    remote: Option<String>,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    ref_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     decision: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'static str>,
@@ -227,8 +242,32 @@ impl AuditSink {
         self.append(record, AuditPhase::Decision)
     }
 
+    pub fn decision_with_git_remote(
+        &self,
+        context: &AuditContext,
+        decision: AuditDecision,
+        reason: AuditReason,
+        remote: &str,
+        ref_name: &str,
+    ) -> Result<(), AuditError> {
+        let record =
+            AuditRecord::decision_with_git_remote(context, decision, reason, remote, ref_name);
+        self.append(record, AuditPhase::Decision)
+    }
+
     pub fn outcome(&self, context: &AuditContext, outcome: AuditOutcome) -> Result<(), AuditError> {
         let record = AuditRecord::outcome(context, outcome);
+        self.append(record, AuditPhase::Outcome)
+    }
+
+    pub fn outcome_with_git_remote(
+        &self,
+        context: &AuditContext,
+        outcome: AuditOutcome,
+        remote: &str,
+        ref_name: &str,
+    ) -> Result<(), AuditError> {
+        let record = AuditRecord::outcome_with_git_remote(context, outcome, remote, ref_name);
         self.append(record, AuditPhase::Outcome)
     }
 
@@ -352,6 +391,26 @@ impl AuditRecord {
         Self::base(
             context,
             "decision",
+            None,
+            None,
+            Some(decision.as_str()),
+            Some(reason.as_str()),
+            None,
+        )
+    }
+
+    fn decision_with_git_remote(
+        context: &AuditContext,
+        decision: AuditDecision,
+        reason: AuditReason,
+        remote: &str,
+        ref_name: &str,
+    ) -> Self {
+        Self::base(
+            context,
+            "decision",
+            Some(remote),
+            Some(ref_name),
             Some(decision.as_str()),
             Some(reason.as_str()),
             None,
@@ -359,12 +418,39 @@ impl AuditRecord {
     }
 
     fn outcome(context: &AuditContext, outcome: AuditOutcome) -> Self {
-        Self::base(context, "outcome", None, None, Some(outcome.as_str()))
+        Self::base(
+            context,
+            "outcome",
+            None,
+            None,
+            None,
+            None,
+            Some(outcome.as_str()),
+        )
+    }
+
+    fn outcome_with_git_remote(
+        context: &AuditContext,
+        outcome: AuditOutcome,
+        remote: &str,
+        ref_name: &str,
+    ) -> Self {
+        Self::base(
+            context,
+            "outcome",
+            Some(remote),
+            Some(ref_name),
+            None,
+            None,
+            Some(outcome.as_str()),
+        )
     }
 
     fn base(
         context: &AuditContext,
         phase: &'static str,
+        remote: Option<&str>,
+        ref_name: Option<&str>,
         decision: Option<&'static str>,
         reason: Option<&'static str>,
         outcome: Option<&'static str>,
@@ -380,6 +466,8 @@ impl AuditRecord {
             operation_id: sanitize_id(&context.operation_id, "op_"),
             capability_id: context.capability_id.as_deref().map(sanitize_capability_id),
             action: context.action.as_str(),
+            remote: remote.map(str::to_owned),
+            ref_name: ref_name.map(str::to_owned),
             decision,
             reason,
             outcome,
@@ -391,6 +479,9 @@ impl AuditAction {
     fn as_str(self) -> &'static str {
         match self {
             Self::InspectRoot => "inspect_root",
+            Self::WorkspaceTrust => "workspace_trust",
+            Self::WorkspaceTrustProfileUpdate => "workspace_trust_profile_update",
+            Self::WorkspaceUntrust => "workspace_untrust",
             Self::WorkspaceRegister => "workspace_register",
             Self::WorkspaceReadProjectProfile => "workspace_read_project_profile",
             Self::WorkspaceRestrictPolicy => "workspace_restrict_policy",
@@ -409,6 +500,14 @@ impl AuditAction {
             Self::GitCheckpoint => "git_checkpoint",
             Self::GitCheckpointPatch => "git_checkpoint_patch",
             Self::GitDiff => "git_diff",
+            Self::GitStage => "git_stage",
+            Self::GitCommit => "git_commit",
+            Self::GitBranchCreate => "git_branch_create",
+            Self::GitBranchSwitch => "git_branch_switch",
+            Self::GitBranchDelete => "git_branch_delete",
+            Self::GitFetch => "git_fetch",
+            Self::GitPull => "git_pull",
+            Self::GitPush => "git_push",
             Self::GitHistoryList => "git_history_list",
             Self::GitCommitInspect => "git_commit_inspect",
             Self::GitHistoryRange => "git_history_range",

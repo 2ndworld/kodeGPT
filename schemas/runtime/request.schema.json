@@ -122,6 +122,29 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "trust.audit" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operationId", "action", "phase"],
+          "properties": {
+            "operationId": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{1,93}$"
+            },
+            "action": { "enum": ["trust", "profile_update", "untrust"] },
+            "phase": { "enum": ["decision", "success", "failed"] }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "workspace.register" },
         "params": {
           "type": "object",
@@ -489,6 +512,146 @@
           "properties": {
             "capabilityId": { "type": "string", "minLength": 1 }
           }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.local_mutation" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operation": {
+              "enum": ["stage", "commit", "branch_create", "branch_switch", "branch_delete"]
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+            },
+            "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "paths"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "stage" },
+                "paths": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 128,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "message"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "commit" },
+                "message": { "type": "string", "minLength": 1, "maxLength": 4096 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "name"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "branch_create" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "name"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "branch_switch" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "name"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "branch_delete" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.remote_mutation" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilityId": { "type": "string", "minLength": 1 },
+            "operation": { "enum": ["fetch", "pull", "push"] },
+            "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+          },
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "fetch" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "pull" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "remote", "ref"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "push" },
+                "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            }
+          ]
         }
       }
     },

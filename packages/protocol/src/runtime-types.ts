@@ -3,6 +3,7 @@ import { z } from "zod";
 export const RUNTIME_METHODS = [
   "runtime.hello",
   "system.inspect_root",
+  "trust.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
@@ -21,6 +22,8 @@ export const RUNTIME_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "git.local_mutation",
+  "git.remote_mutation",
   "git.log",
   "git.show",
   "git.range",
@@ -65,6 +68,14 @@ const runtimeHelloParamsSchema = z.object({}).strict();
 const systemInspectRootParamsSchema = z
   .object({
     path: z.string().min(1)
+  })
+  .strict();
+
+const trustAuditParamsSchema = z
+  .object({
+    operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
+    action: z.enum(["trust", "profile_update", "untrust"]),
+    phase: z.enum(["decision", "success", "failed"])
   })
   .strict();
 
@@ -188,6 +199,44 @@ const gitInspectionParamsSchema = z
     capabilityId: z.string().min(1)
   })
   .strict();
+
+const gitLocalMutationParamsSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("stage"),
+      paths: z.array(z.string().min(1).max(4096)).min(1).max(128)
+    })
+    .strict(),
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("commit"),
+      message: z.string().min(1).max(4096).refine((value) => !value.includes("\0"))
+    })
+    .strict(),
+  ...(["branch_create", "branch_switch", "branch_delete"] as const).map((operation) =>
+    z
+      .object({
+        capabilityId: z.string().min(1),
+        operation: z.literal(operation),
+        name: z.string().min(1).max(255).refine((value) => !value.includes("\0"))
+      })
+      .strict()
+  )
+]);
+
+const gitRemoteMutationBase = {
+  capabilityId: z.string().min(1),
+  remote: z.string().min(1).max(128).refine((value) => !value.includes("\0")),
+  ref: z.string().min(1).max(255).refine((value) => !value.includes("\0"))
+};
+
+const gitRemoteMutationParamsSchema = z.discriminatedUnion("operation", [
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("fetch") }).strict(),
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("pull") }).strict(),
+  z.object({ ...gitRemoteMutationBase, operation: z.literal("push") }).strict()
+]);
 
 const gitRevisionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("head") }).strict(),
@@ -330,6 +379,7 @@ function requestSchema<M extends RuntimeMethod, P extends z.ZodType>(method: M, 
 export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("runtime.hello", runtimeHelloParamsSchema),
   requestSchema("system.inspect_root", systemInspectRootParamsSchema),
+  requestSchema("trust.audit", trustAuditParamsSchema),
   requestSchema("workspace.register", workspaceRegisterParamsSchema),
   requestSchema("workspace.read_project_profile", workspaceCapabilityParamsSchema),
   requestSchema("workspace.restrict_policy", workspaceRestrictPolicyParamsSchema),
@@ -348,6 +398,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint", gitInspectionParamsSchema),
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
+  requestSchema("git.local_mutation", gitLocalMutationParamsSchema),
+  requestSchema("git.remote_mutation", gitRemoteMutationParamsSchema),
   requestSchema("git.log", gitLogParamsSchema),
   requestSchema("git.show", gitShowParamsSchema),
   requestSchema("git.range", gitRangeParamsSchema),

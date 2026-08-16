@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_local_mutation_fixture",
+  "method": "git.local_mutation",
+  "params": {
+    "capabilityId": "kc_fixture",
+    "operation": "stage",
+    "paths": ["src/main.ts"]
+  }
+}

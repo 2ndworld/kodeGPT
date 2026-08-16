@@ -34,6 +34,27 @@ const mutatingFileAnnotations = {
   openWorldHint: false
 };
 
+const localGitMutationAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false
+};
+
+const remoteGitFetchAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+
+const remoteGitMutationAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+};
+
 const processRunAnnotations = {
   readOnlyHint: false,
   destructiveHint: true,
@@ -190,10 +211,19 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       expect(payload.result.resultType).toBe("complete");
       const tools = payload.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
-      expect(tools.some((tool) => tool.name.includes("trust"))).toBe(false);
+      expect(tools.filter((tool) => tool.name.includes("trust")).map((tool) => tool.name)).toEqual([
+        "trust.list",
+        "workspace.trust",
+        "workspace.untrust"
+      ]);
 
       for (const tool of tools) {
-        if (tool.name === "workspace.open" || tool.name === "workspace.close") {
+        if (
+          tool.name === "workspace.open" ||
+          tool.name === "workspace.close" ||
+          tool.name === "workspace.trust" ||
+          tool.name === "workspace.untrust"
+        ) {
           expect(tool.annotations).toEqual(lifecycleAnnotations);
         } else if (
           tool.name === "file.write" ||
@@ -201,6 +231,18 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           tool.name === "file.patch"
         ) {
           expect(tool.annotations).toEqual(mutatingFileAnnotations);
+        } else if (
+          tool.name === "git.stage" ||
+          tool.name === "git.commit" ||
+          tool.name === "git.branchCreate" ||
+          tool.name === "git.branchSwitch" ||
+          tool.name === "git.branchDelete"
+        ) {
+          expect(tool.annotations).toEqual(localGitMutationAnnotations);
+        } else if (tool.name === "git.fetch") {
+          expect(tool.annotations).toEqual(remoteGitFetchAnnotations);
+        } else if (tool.name === "git.pull" || tool.name === "git.push") {
+          expect(tool.annotations).toEqual(remoteGitMutationAnnotations);
         } else if (tool.name === "process.run" || tool.name === "verify.run") {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel") {

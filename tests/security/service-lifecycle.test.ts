@@ -34,7 +34,6 @@ describe("stable local service security boundaries", () => {
       "service.restart",
       "service.status",
       "service.uninstall",
-      "workspace.trust",
       "skill.run",
       "provider.list",
       "provider.tools",

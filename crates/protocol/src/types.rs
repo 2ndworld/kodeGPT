@@ -81,6 +81,30 @@ pub struct SystemInspectRootParams {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustAuditAction {
+    Trust,
+    ProfileUpdate,
+    Untrust,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrustAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrustAuditParams {
+    pub operation_id: String,
+    pub action: TrustAuditAction,
+    pub phase: TrustAuditPhase,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceRegisterParams {
@@ -207,6 +231,61 @@ pub struct GitStatusParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GitDiffParams {
     pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum GitLocalMutationParams {
+    Stage {
+        capability_id: String,
+        paths: Vec<String>,
+    },
+    Commit {
+        capability_id: String,
+        message: String,
+    },
+    BranchCreate {
+        capability_id: String,
+        name: String,
+    },
+    BranchSwitch {
+        capability_id: String,
+        name: String,
+    },
+    BranchDelete {
+        capability_id: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum GitRemoteMutationParams {
+    Fetch {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
+    Pull {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
+    Push {
+        capability_id: String,
+        remote: String,
+        r#ref: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +446,12 @@ pub enum RuntimeRequest {
         id: String,
         params: SystemInspectRootParams,
     },
+    #[serde(rename = "trust.audit")]
+    TrustAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: TrustAuditParams,
+    },
     #[serde(rename = "workspace.register")]
     WorkspaceRegister {
         jsonrpc: JsonRpcVersion,
@@ -474,6 +559,18 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitDiffParams,
+    },
+    #[serde(rename = "git.local_mutation")]
+    GitLocalMutation {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitLocalMutationParams,
+    },
+    #[serde(rename = "git.remote_mutation")]
+    GitRemoteMutation {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitRemoteMutationParams,
     },
     #[serde(rename = "git.log")]
     GitLog {

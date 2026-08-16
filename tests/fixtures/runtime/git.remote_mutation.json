@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_remote_mutation_fixture",
+  "method": "git.remote_mutation",
+  "params": {
+    "capabilityId": "kc_fixture",
+    "operation": "fetch",
+    "remote": "origin",
+    "ref": "main"
+  }
+}

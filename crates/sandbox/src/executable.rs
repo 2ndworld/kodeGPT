@@ -1,5 +1,6 @@
 use std::fmt;
-use std::fs;
+use std::fs::{self, File};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,6 +34,37 @@ pub struct ExecutableIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedExecutable {
     identity: ExecutableIdentity,
+    trust: ExecutableTrust,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExecutableTrust {
+    System,
+    ExplicitRoot {
+        root: ExecutableRootIdentity,
+        toolchain: ExplicitToolchain,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplicitToolchain {
+    Node,
+    Rust,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExecutableRootIdentity {
+    canonical_path: PathBuf,
+    device: u64,
+    inode: u64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+}
+
+pub(crate) struct ExplicitExecutableMount {
+    pub(crate) root_fd: OwnedFd,
+    pub(crate) relative_program: PathBuf,
 }
 
 #[derive(Debug)]
@@ -42,6 +74,7 @@ pub enum TrustedExecutableError {
     UntrustedLocation,
     NotRegularFile,
     OwnerNotRoot,
+    OwnerMismatch,
     SetIdForbidden,
     WritableByGroupOrWorld,
     VersionUnavailable,
@@ -61,6 +94,9 @@ impl fmt::Display for TrustedExecutableError {
             }
             Self::NotRegularFile => formatter.write_str("trusted executable is not a regular file"),
             Self::OwnerNotRoot => formatter.write_str("trusted executable is not owned by uid 0"),
+            Self::OwnerMismatch => {
+                formatter.write_str("trusted executable owner does not match its explicit root")
+            }
             Self::SetIdForbidden => {
                 formatter.write_str("trusted executable must not be setuid or setgid")
             }
@@ -101,16 +137,101 @@ impl TrustedExecutable {
         &self.identity.canonical_path
     }
 
-    pub fn revalidate(&self) -> Result<(), TrustedExecutableError> {
-        if !canonical_location_is_trusted(&self.identity.canonical_path) {
+    pub(crate) fn uses_node_toolchain(&self) -> bool {
+        matches!(
+            self.trust,
+            ExecutableTrust::ExplicitRoot {
+                toolchain: ExplicitToolchain::Node,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn open_explicit_mount(
+        &self,
+    ) -> Result<Option<ExplicitExecutableMount>, TrustedExecutableError> {
+        let ExecutableTrust::ExplicitRoot { root, .. } = &self.trust else {
+            return Ok(None);
+        };
+        let root_file = File::open(&root.canonical_path)?;
+        let metadata = root_file.metadata()?;
+        if !metadata.is_dir()
+            || metadata.dev() != root.device
+            || metadata.ino() != root.inode
+            || metadata.mode() != root.mode
+            || metadata.uid() != root.uid
+            || metadata.gid() != root.gid
+        {
             return Err(TrustedExecutableError::IdentityChanged);
         }
-        let current = inspect_trusted_path(&self.identity.canonical_path)?;
+        let relative_program = self
+            .identity
+            .canonical_path
+            .strip_prefix(&root.canonical_path)
+            .map_err(|_| TrustedExecutableError::IdentityChanged)?
+            .to_path_buf();
+        if relative_program.as_os_str().is_empty() {
+            return Err(TrustedExecutableError::IdentityChanged);
+        }
+        Ok(Some(ExplicitExecutableMount {
+            root_fd: OwnedFd::from(root_file),
+            relative_program,
+        }))
+    }
+
+    pub fn revalidate(&self) -> Result<(), TrustedExecutableError> {
+        let current = match &self.trust {
+            ExecutableTrust::System => {
+                if !canonical_location_is_trusted(&self.identity.canonical_path) {
+                    return Err(TrustedExecutableError::IdentityChanged);
+                }
+                inspect_trusted_path(&self.identity.canonical_path)?
+            }
+            ExecutableTrust::ExplicitRoot { root, .. } => {
+                let current_root = inspect_explicit_root(&root.canonical_path)?;
+                if &current_root != root
+                    || !self
+                        .identity
+                        .canonical_path
+                        .starts_with(&root.canonical_path)
+                {
+                    return Err(TrustedExecutableError::IdentityChanged);
+                }
+                inspect_explicit_executable(&self.identity.canonical_path, root.uid)?
+            }
+        };
         if current != self.identity {
             return Err(TrustedExecutableError::IdentityChanged);
         }
         Ok(())
     }
+}
+
+pub(crate) fn open_explicit_directory_from_env(
+    name: &str,
+) -> Result<Option<OwnedFd>, TrustedExecutableError> {
+    let Some(path) = std::env::var_os(name) else {
+        return Ok(None);
+    };
+    let root = match inspect_explicit_root(Path::new(&path)) {
+        Ok(root) => root,
+        Err(TrustedExecutableError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let root_file = File::open(&root.canonical_path)?;
+    let metadata = root_file.metadata()?;
+    if !metadata.is_dir()
+        || metadata.dev() != root.device
+        || metadata.ino() != root.inode
+        || metadata.mode() != root.mode
+        || metadata.uid() != root.uid
+        || metadata.gid() != root.gid
+    {
+        return Err(TrustedExecutableError::IdentityChanged);
+    }
+    Ok(Some(OwnedFd::from(root_file)))
 }
 
 pub fn resolve_bubblewrap() -> Result<TrustedExecutable, TrustedExecutableError> {
@@ -166,10 +287,64 @@ pub fn resolve_trusted_executable(name: &str) -> Result<TrustedExecutable, Trust
             }
         };
 
-        return Ok(TrustedExecutable { identity });
+        return Ok(TrustedExecutable {
+            identity,
+            trust: ExecutableTrust::System,
+        });
+    }
+
+    if matches!(name, "node" | "npm" | "npx" | "pnpm")
+        && let Some(root) = std::env::var_os("KODEGPT_HOST_NODE_ROOT")
+    {
+        let relative_executable = format!("bin/{name}");
+        return resolve_explicit_root_executable(
+            Path::new(&root),
+            &relative_executable,
+            ExplicitToolchain::Node,
+        );
+    }
+
+    if matches!(name, "cargo" | "rustc")
+        && let Some(root) = std::env::var_os("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT")
+    {
+        let relative_executable = format!("bin/{name}");
+        return resolve_explicit_root_executable(
+            Path::new(&root),
+            &relative_executable,
+            ExplicitToolchain::Rust,
+        );
     }
 
     Err(last_error)
+}
+
+fn resolve_explicit_root_executable(
+    root: &Path,
+    relative_executable: &str,
+    toolchain: ExplicitToolchain,
+) -> Result<TrustedExecutable, TrustedExecutableError> {
+    let root_identity = inspect_explicit_root(root)?;
+    let candidate = root_identity.canonical_path.join(relative_executable);
+    let canonical = fs::canonicalize(&candidate).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            TrustedExecutableError::NotFound
+        } else {
+            TrustedExecutableError::Io(error)
+        }
+    })?;
+    if canonical == root_identity.canonical_path
+        || !canonical.starts_with(&root_identity.canonical_path)
+    {
+        return Err(TrustedExecutableError::UntrustedLocation);
+    }
+    let identity = inspect_explicit_executable(&canonical, root_identity.uid)?;
+    Ok(TrustedExecutable {
+        identity,
+        trust: ExecutableTrust::ExplicitRoot {
+            root: root_identity,
+            toolchain,
+        },
+    })
 }
 
 fn canonical_location_is_trusted(canonical: &Path) -> bool {
@@ -221,6 +396,57 @@ fn inspect_trusted_path(path: &Path) -> Result<ExecutableIdentity, TrustedExecut
     })
 }
 
+fn inspect_explicit_root(path: &Path) -> Result<ExecutableRootIdentity, TrustedExecutableError> {
+    let canonical_path = fs::canonicalize(path)?;
+    let metadata = fs::metadata(&canonical_path)?;
+    if !metadata.is_dir() {
+        return Err(TrustedExecutableError::UntrustedLocation);
+    }
+    let mode = metadata.mode();
+    if mode & 0o6000 != 0 {
+        return Err(TrustedExecutableError::SetIdForbidden);
+    }
+    if mode & 0o002 != 0 || (mode & 0o020 != 0 && metadata.gid() != metadata.uid()) {
+        return Err(TrustedExecutableError::WritableByGroupOrWorld);
+    }
+    Ok(ExecutableRootIdentity {
+        canonical_path,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode,
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+    })
+}
+
+fn inspect_explicit_executable(
+    path: &Path,
+    root_uid: u32,
+) -> Result<ExecutableIdentity, TrustedExecutableError> {
+    let metadata = fs::metadata(path)?;
+    let file_type = metadata.file_type();
+    if !file_type.is_file() || file_type.is_dir() || file_type.is_symlink() {
+        return Err(TrustedExecutableError::NotRegularFile);
+    }
+    if metadata.uid() != root_uid && metadata.uid() != 0 {
+        return Err(TrustedExecutableError::OwnerMismatch);
+    }
+    let mode = metadata.mode();
+    if mode & 0o6000 != 0 {
+        return Err(TrustedExecutableError::SetIdForbidden);
+    }
+    if mode & 0o022 != 0 {
+        return Err(TrustedExecutableError::WritableByGroupOrWorld);
+    }
+    Ok(ExecutableIdentity {
+        canonical_path: fs::canonicalize(path)?,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode,
+        uid: metadata.uid(),
+    })
+}
+
 fn read_version(path: &Path) -> Result<ExecutableVersion, TrustedExecutableError> {
     let _spawn_guard = PROCESS_SPAWN_LOCK
         .lock()
@@ -256,10 +482,29 @@ fn parse_bubblewrap_version(value: &str) -> Option<ExecutableVersion> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::{
-        BUBBLEWRAP_MINIMUM_VERSION, ExecutableVersion, parse_bubblewrap_version, read_version,
-        resolve_bubblewrap, resolve_trusted_executable,
+        BUBBLEWRAP_MINIMUM_VERSION, ExecutableVersion, ExplicitToolchain, TrustedExecutableError,
+        parse_bubblewrap_version, read_version, resolve_bubblewrap,
+        resolve_explicit_root_executable, resolve_trusted_executable,
     };
+
+    fn temporary_root(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "kodegpt-sandbox-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("temporary root");
+        root
+    }
 
     #[test]
     fn parses_bubblewrap_version_triplet() {
@@ -296,6 +541,93 @@ mod tests {
         executable
             .revalidate()
             .expect("trusted logical executable remains stable");
+    }
+
+    #[test]
+    fn explicit_node_root_resolves_one_user_managed_toolchain_without_inheriting_path() {
+        let root = temporary_root("node-root");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("node bin");
+        let node = bin.join("node");
+        fs::write(&node, b"#!/bin/sh\nexit 0\n").expect("node fixture");
+        let mut permissions = fs::metadata(&node).expect("node metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&node, permissions).expect("node executable mode");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "executable::tests::explicit_node_root_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_NODE_ROOT", &root)
+            .output()
+            .expect("nested resolver test runs");
+
+        assert!(
+            output.status.success(),
+            "nested resolver failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(root).expect("temporary root cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by explicit_node_root_resolves_one_user_managed_toolchain_without_inheriting_path"]
+    fn explicit_node_root_subprocess_helper() {
+        let root = std::env::var_os("KODEGPT_HOST_NODE_ROOT").expect("explicit node root env");
+        let node = std::path::PathBuf::from(root).join("bin/node");
+        let executable = resolve_trusted_executable("node").expect("explicit node root resolves");
+        assert_eq!(
+            executable.canonical_path(),
+            fs::canonicalize(&node).expect("canonical node").as_path()
+        );
+        executable
+            .revalidate()
+            .expect("explicit node identity remains stable");
+    }
+
+    #[test]
+    fn explicit_toolchain_root_rejects_world_writable_directory() {
+        let root = temporary_root("world-writable-root");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("tool bin");
+        let node = bin.join("node");
+        fs::write(&node, b"#!/bin/sh\nexit 0\n").expect("node fixture");
+        let mut node_permissions = fs::metadata(&node).expect("node metadata").permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node, node_permissions).expect("node executable mode");
+        let mut root_permissions = fs::metadata(&root).expect("root metadata").permissions();
+        root_permissions.set_mode(0o777);
+        fs::set_permissions(&root, root_permissions).expect("world-writable root mode");
+
+        assert!(matches!(
+            resolve_explicit_root_executable(&root, "bin/node", ExplicitToolchain::Node),
+            Err(TrustedExecutableError::WritableByGroupOrWorld)
+        ));
+        fs::remove_dir_all(root).expect("temporary root cleanup");
+    }
+
+    #[test]
+    fn explicit_toolchain_root_rejects_symlink_escape() {
+        let root = temporary_root("symlink-root");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("tool bin");
+        let outside = temporary_root("symlink-outside");
+        let node = outside.join("node");
+        fs::write(&node, b"#!/bin/sh\nexit 0\n").expect("outside node fixture");
+        let mut permissions = fs::metadata(&node).expect("node metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&node, permissions).expect("node executable mode");
+        std::os::unix::fs::symlink(&node, bin.join("node")).expect("escaping node symlink");
+
+        assert!(matches!(
+            resolve_explicit_root_executable(&root, "bin/node", ExplicitToolchain::Node),
+            Err(TrustedExecutableError::UntrustedLocation)
+        ));
+        fs::remove_dir_all(root).expect("temporary root cleanup");
+        fs::remove_dir_all(outside).expect("outside cleanup");
     }
 
     #[test]

@@ -11,6 +11,7 @@ import {
 import type { RuntimeMethod } from "@kodegpt/protocol";
 import type {
   PersistentFilesystemIdentity,
+  ProfileCeiling,
   TrustedWorkspaceEntry
 } from "@kodegpt/trust";
 
@@ -21,6 +22,13 @@ export interface KernelTransport {
 }
 
 export interface TrustResolver {
+  list(): TrustedWorkspaceEntry[] | Promise<TrustedWorkspaceEntry[]>;
+  trust(input: {
+    canonicalRoot: string;
+    identity: PersistentFilesystemIdentity;
+    profileCeiling: ProfileCeiling;
+  }): TrustedWorkspaceEntry | Promise<TrustedWorkspaceEntry>;
+  untrust(id: string): boolean | Promise<boolean>;
   requireTrusted(
     canonicalRoot: string,
     actualIdentity: PersistentFilesystemIdentity
@@ -32,6 +40,16 @@ export interface OpenWorkspace {
   canonicalRoot: string;
   effectivePolicy: ProfilePolicy;
 }
+
+export interface TrustedWorkspaceSummary {
+  id: string;
+  canonicalRoot: string;
+  profileCeiling: ProfileCeiling;
+  trustedAt: string;
+}
+
+type TrustAuditAction = "trust" | "profile_update" | "untrust";
+type TrustAuditPhase = "decision" | "success" | "failed";
 
 export interface WorkspaceFileReadResult {
   contents: string;
@@ -207,6 +225,23 @@ export interface WorkspaceGitInspectionResult {
   artifact: ArtifactMetadata;
 }
 
+export type WorkspaceGitMutationOperation =
+  | "stage"
+  | "commit"
+  | "branch_create"
+  | "branch_switch"
+  | "branch_delete";
+
+export interface WorkspaceGitMutationResult extends WorkspaceGitInspectionResult {
+  operation: WorkspaceGitMutationOperation;
+}
+
+export type WorkspaceGitRemoteMutationOperation = "fetch" | "pull" | "push";
+
+export interface WorkspaceGitRemoteMutationResult extends WorkspaceGitInspectionResult {
+  operation: WorkspaceGitRemoteMutationOperation;
+}
+
 export interface WorkspaceGitCheckpointRecord {
   recordType: "ordinary" | "rename" | "unmerged" | "untracked";
   path: string;
@@ -309,6 +344,7 @@ type WorkspaceState = {
   phase: WorkspacePhase;
   closeInFlight: boolean;
   canonicalRoot?: string;
+  trustId?: string;
   capabilityId?: string;
   effectivePolicy?: ProfilePolicy;
 };
@@ -372,6 +408,7 @@ export class WorkspaceManager {
   readonly #kernel: KernelTransport;
   readonly #trust: TrustResolver;
   readonly #idFactory: () => string;
+  readonly #auditOperationIdFactory: () => string;
   readonly #closeTimeoutMs: number;
   readonly #workspaces = new Map<string, WorkspaceState>();
 
@@ -379,12 +416,16 @@ export class WorkspaceManager {
     kernel: KernelTransport;
     trust: TrustResolver;
     idFactory?: () => string;
+    auditOperationIdFactory?: () => string;
     closeTimeoutMs?: number;
   }) {
     this.#kernel = options.kernel;
     this.#trust = options.trust;
     this.#idFactory =
       options.idFactory ?? (() => `ws_${randomUUID().replaceAll("-", "")}`);
+    this.#auditOperationIdFactory =
+      options.auditOperationIdFactory ??
+      (() => `op_trust_${randomUUID().replaceAll("-", "")}`);
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 5_000;
     if (
       !Number.isSafeInteger(this.#closeTimeoutMs) ||
@@ -403,6 +444,14 @@ export class WorkspaceManager {
         `${method} returned an invalid acknowledgement`
       );
     }
+  }
+
+  async #auditTrust(
+    operationId: string,
+    action: TrustAuditAction,
+    phase: TrustAuditPhase
+  ): Promise<void> {
+    await this.#requestOk("trust.audit", { operationId, action, phase });
   }
 
   async openWorkspace(rootPath: string): Promise<OpenWorkspace> {
@@ -428,6 +477,7 @@ export class WorkspaceManager {
       state.canonicalRoot = inspected.canonicalRoot;
 
       const trusted = await this.#trust.requireTrusted(inspected.canonicalRoot, inspected.identity);
+      state.trustId = trusted.id;
       const ceiling = getProfilePreset(trusted.profileCeiling);
 
       const registered = await this.#kernel.request<RegisterResult>("workspace.register", {
@@ -486,6 +536,83 @@ export class WorkspaceManager {
       .filter((state) => state.phase === "READY" && state.capabilityId !== undefined)
       .map(publicWorkspace)
       .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async trustWorkspace(
+    rootPath: string,
+    profileCeiling: ProfileCeiling = "observe"
+  ): Promise<TrustedWorkspaceSummary> {
+    if (rootPath.length === 0) {
+      throw new TypeError("Workspace root path must not be empty");
+    }
+    const inspected = await this.#kernel.request<InspectRootResult>("system.inspect_root", {
+      path: rootPath
+    });
+    validateInspectResult(inspected);
+    const existing = (await this.#trust.list()).find(
+      (entry) => entry.canonicalRoot === inspected.canonicalRoot
+    );
+    const action: TrustAuditAction = existing === undefined ? "trust" : "profile_update";
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditTrust(operationId, action, "decision");
+    let trusted: TrustedWorkspaceEntry;
+    try {
+      trusted = await this.#trust.trust({
+        canonicalRoot: inspected.canonicalRoot,
+        identity: inspected.identity,
+        profileCeiling
+      });
+    } catch (error) {
+      try {
+        await this.#auditTrust(operationId, action, "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+    await this.#auditTrust(operationId, action, "success");
+    return publicTrustedWorkspace(trusted);
+  }
+
+  async listTrustedWorkspaces(): Promise<TrustedWorkspaceSummary[]> {
+    const entries = await this.#trust.list();
+    return entries
+      .map(publicTrustedWorkspace)
+      .sort((left, right) => left.canonicalRoot.localeCompare(right.canonicalRoot));
+  }
+
+  async untrustWorkspace(trustId: string): Promise<boolean> {
+    if (trustId.length === 0) {
+      throw new TypeError("Workspace trust ID must not be empty");
+    }
+    const trusted = (await this.#trust.list()).find((entry) => entry.id === trustId);
+    const bound = [...this.#workspaces.values()].filter(
+      (state) =>
+        state.trustId === trustId ||
+        (trusted !== undefined && state.canonicalRoot === trusted.canonicalRoot)
+    );
+    const transitioning = bound.find((state) => state.phase !== "READY");
+    if (transitioning !== undefined) {
+      throw new WorkspaceNotReadyError(transitioning.id);
+    }
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditTrust(operationId, "untrust", "decision");
+    let removed: boolean;
+    try {
+      for (const state of bound) {
+        await this.closeWorkspace(state.id);
+      }
+      removed = await this.#trust.untrust(trustId);
+    } catch (error) {
+      try {
+        await this.#auditTrust(operationId, "untrust", "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+    await this.#auditTrust(operationId, "untrust", "success");
+    return removed;
   }
 
   requireReady(workspaceId: string): OpenWorkspace {
@@ -769,6 +896,50 @@ export class WorkspaceManager {
     return this.#gitInspection(workspaceId, "git.diff");
   }
 
+  async gitStage(workspaceId: string, paths: string[]): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "stage", { paths });
+  }
+
+  async gitCommit(workspaceId: string, message: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "commit", { message });
+  }
+
+  async gitBranchCreate(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_create", { name });
+  }
+
+  async gitBranchSwitch(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_switch", { name });
+  }
+
+  async gitBranchDelete(workspaceId: string, name: string): Promise<WorkspaceGitMutationResult> {
+    return this.#gitLocalMutation(workspaceId, "branch_delete", { name });
+  }
+
+  async gitFetch(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "fetch", remote, ref);
+  }
+
+  async gitPull(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "pull", remote, ref);
+  }
+
+  async gitPush(
+    workspaceId: string,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    return this.#gitRemoteMutation(workspaceId, "push", remote, ref);
+  }
+
   async runProcess(input: WorkspaceProcessRunInput): Promise<WorkspaceProcessOperationResult> {
     if (input.logicalExecutable.length === 0) {
       throw new TypeError("Process logical executable must not be empty");
@@ -1001,6 +1172,118 @@ export class WorkspaceManager {
     };
   }
 
+  async #gitLocalMutation(
+    workspaceId: string,
+    operation: WorkspaceGitMutationOperation,
+    params: Record<string, unknown>
+  ): Promise<WorkspaceGitMutationResult> {
+    const state = this.#requireReadyState(workspaceId);
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("git.local_mutation", {
+        capabilityId: state.capabilityId,
+        operation,
+        ...params
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_MUTATION_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, "git.local_mutation failed");
+      }
+      throw error;
+    }
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.operation !== operation ||
+      !Number.isSafeInteger(result.exitCode) ||
+      typeof result.stdoutPreview !== "string" ||
+      typeof result.stderrPreview !== "string" ||
+      typeof result.stdoutTruncated !== "boolean" ||
+      typeof result.stderrTruncated !== "boolean" ||
+      typeof result.sourceTruncated !== "boolean" ||
+      !Number.isSafeInteger(result.bytesSpooled) ||
+      (result.bytesSpooled as number) < 0 ||
+      !isRecord(result.artifact) ||
+      "artifactId" in result ||
+      "processGroup" in result ||
+      "pid" in result
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.local_mutation returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      operation,
+      exitCode: result.exitCode as number,
+      stdoutPreview: result.stdoutPreview,
+      stderrPreview: result.stderrPreview,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
+      sourceTruncated: result.sourceTruncated,
+      bytesSpooled: result.bytesSpooled as number,
+      artifact: validateArtifactMetadata(result.artifact, "git.local_mutation")
+    };
+  }
+
+  async #gitRemoteMutation(
+    workspaceId: string,
+    operation: WorkspaceGitRemoteMutationOperation,
+    remote: string,
+    ref: string
+  ): Promise<WorkspaceGitRemoteMutationResult> {
+    const state = this.#requireReadyState(workspaceId);
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("git.remote_mutation", {
+        capabilityId: state.capabilityId,
+        operation,
+        remote,
+        ref
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_REMOTE_MUTATION_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, "git.remote_mutation failed");
+      }
+      throw error;
+    }
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.operation !== operation ||
+      !Number.isSafeInteger(result.exitCode) ||
+      typeof result.stdoutPreview !== "string" ||
+      typeof result.stderrPreview !== "string" ||
+      typeof result.stdoutTruncated !== "boolean" ||
+      typeof result.stderrTruncated !== "boolean" ||
+      typeof result.sourceTruncated !== "boolean" ||
+      !Number.isSafeInteger(result.bytesSpooled) ||
+      (result.bytesSpooled as number) < 0 ||
+      !isRecord(result.artifact) ||
+      "artifactId" in result ||
+      "processGroup" in result ||
+      "pid" in result
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.remote_mutation returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      operation,
+      exitCode: result.exitCode as number,
+      stdoutPreview: result.stdoutPreview,
+      stderrPreview: result.stderrPreview,
+      stdoutTruncated: result.stdoutTruncated,
+      stderrTruncated: result.stderrTruncated,
+      sourceTruncated: result.sourceTruncated,
+      bytesSpooled: result.bytesSpooled as number,
+      artifact: validateArtifactMetadata(result.artifact, "git.remote_mutation")
+    };
+  }
+
   #requireReadyState(workspaceId: string): WorkspaceState {
     const state = this.#workspaces.get(workspaceId);
     if (state === undefined) {
@@ -1086,6 +1369,15 @@ function publicWorkspace(state: WorkspaceState): OpenWorkspace {
       allowedExecutableNames: [...state.effectivePolicy.allowedExecutableNames],
       envAllowlist: [...state.effectivePolicy.envAllowlist]
     }
+  };
+}
+
+function publicTrustedWorkspace(entry: TrustedWorkspaceEntry): TrustedWorkspaceSummary {
+  return {
+    id: entry.id,
+    canonicalRoot: entry.canonicalRoot,
+    profileCeiling: entry.profileCeiling,
+    trustedAt: entry.trustedAt
   };
 }
 
@@ -1371,6 +1663,20 @@ function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
     );
   });
 }
+
+const GIT_MUTATION_ERROR_CODES = new Set([
+  "GIT_POLICY_DENIED",
+  "GIT_MUTATION_INPUT_INVALID",
+  "GIT_MUTATION_UNAVAILABLE",
+  "GIT_MUTATION_FAILED"
+]);
+
+const GIT_REMOTE_MUTATION_ERROR_CODES = new Set([
+  "GIT_REMOTE_POLICY_DENIED",
+  "GIT_REMOTE_INPUT_INVALID",
+  "GIT_REMOTE_UNAVAILABLE",
+  "GIT_REMOTE_FAILED"
+]);
 
 const GIT_HISTORY_ERROR_CODES = new Set([
   "NOT_A_GIT_REPOSITORY",

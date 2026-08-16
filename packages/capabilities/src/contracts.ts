@@ -16,6 +16,10 @@ export const DEFAULT_GIT_PATCH_BYTES = 64 * 1024;
 export const MAX_GIT_PATCH_BYTES = 256 * 1024;
 export const MAX_GIT_HISTORY_RESPONSE_BYTES = 512 * 1024;
 export const MAX_GIT_HISTORY_PATHS = 500;
+export const MAX_GIT_STAGE_PATHS = 128;
+export const MAX_GIT_MUTATION_TEXT = 4096;
+export const MAX_GIT_BRANCH_NAME = 255;
+export const MAX_GIT_REMOTE_NAME = 128;
 export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "workspace.inspect",
   "code.search",
@@ -26,6 +30,14 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "git.status",
   "git.diff",
   "git.changes",
+  "git.stage",
+  "git.commit",
+  "git.branchCreate",
+  "git.branchSwitch",
+  "git.branchDelete",
+  "git.fetch",
+  "git.pull",
+  "git.push",
   "git.log",
   "git.show",
   "git.range",
@@ -296,6 +308,62 @@ export interface GitChangesResult {
   patchCoverage?: GitPatchCoverage;
   truncated: boolean;
   fingerprint: string;
+}
+
+export type GitLocalMutationOperation =
+  | "stage"
+  | "commit"
+  | "branch_create"
+  | "branch_switch"
+  | "branch_delete";
+
+export interface GitStageInput {
+  workspaceId: string;
+  paths: string[];
+}
+
+export interface GitCommitInput {
+  workspaceId: string;
+  message: string;
+}
+
+export interface GitBranchInput {
+  workspaceId: string;
+  name: string;
+}
+
+export interface GitLocalMutationResult {
+  schemaVersion: 1;
+  operation: GitLocalMutationOperation;
+  exitCode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  sourceTruncated: boolean;
+  bytesSpooled: number;
+  artifact: CapabilityArtifactMetadata;
+}
+
+export type GitRemoteMutationOperation = "fetch" | "pull" | "push";
+
+export interface GitRemoteInput {
+  workspaceId: string;
+  remote?: string;
+  ref: string;
+}
+
+export interface GitRemoteMutationResult {
+  schemaVersion: 1;
+  operation: GitRemoteMutationOperation;
+  exitCode: number;
+  stdoutPreview: string;
+  stderrPreview: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  sourceTruncated: boolean;
+  bytesSpooled: number;
+  artifact: CapabilityArtifactMetadata;
 }
 
 export interface VerificationRecipe {

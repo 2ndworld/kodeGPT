@@ -21,6 +21,11 @@ function baseDependencies(events: string[]) {
 
   const workspaceManager = {
     listWorkspaces: () => [],
+    listTrustedWorkspaces: async () => [],
+    trustWorkspace: async () => {
+      throw new Error("not used");
+    },
+    untrustWorkspace: async () => false,
     openWorkspace: async () => {
       throw new Error("not used");
     },
@@ -35,6 +40,30 @@ function baseDependencies(events: string[]) {
       throw new Error("not used");
     },
     gitDiff: async () => {
+      throw new Error("not used");
+    },
+    gitStage: async () => {
+      throw new Error("not used");
+    },
+    gitCommit: async () => {
+      throw new Error("not used");
+    },
+    gitBranchCreate: async () => {
+      throw new Error("not used");
+    },
+    gitBranchSwitch: async () => {
+      throw new Error("not used");
+    },
+    gitBranchDelete: async () => {
+      throw new Error("not used");
+    },
+    gitFetch: async () => {
+      throw new Error("not used");
+    },
+    gitPull: async () => {
+      throw new Error("not used");
+    },
+    gitPush: async () => {
       throw new Error("not used");
     },
     search: async () => [],

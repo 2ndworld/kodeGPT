@@ -18,6 +18,7 @@ export {
 } from "./workspace-manager.js";
 export type {
   OpenWorkspace,
+  TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
   WorkspaceSearchMatch,
   WorkspaceSearchResult,

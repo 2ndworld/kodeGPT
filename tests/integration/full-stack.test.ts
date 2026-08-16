@@ -173,7 +173,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       JSON.stringify({
         name: "workspace-a",
         private: true,
-        packageManager: "pnpm@10.0.0",
+        packageManager: "pnpm@10.15.0",
         scripts: { test: "node -e \"console.log('verify-ok')\"" }
       }) + "\n"
     );
@@ -389,8 +389,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         argv: ["run", "test"],
         cwd: ".",
         source: "package-script",
-        allowed: false,
-        blockedReason: "EXECUTABLE_UNAVAILABLE"
+        allowed: true
       });
       expect(verifyList.recipes).toContainEqual({
         id: "package:frontend:test",
@@ -400,14 +399,30 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         argv: ["run", "test"],
         cwd: "frontend",
         source: "package-script",
-        allowed: false,
-        blockedReason: "EXECUTABLE_UNAVAILABLE"
+        allowed: true
       });
       expect(JSON.stringify(verifyList)).not.toContain("node_modules");
       expect(JSON.stringify(verifyList)).not.toContain(".worktrees");
       expect(JSON.stringify(verifyList)).not.toContain("target/generated");
       expect(JSON.stringify(verifyList)).not.toContain("/home/");
       expect(JSON.stringify(verifyList)).not.toContain("/usr/");
+
+      const verifyRun = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "verify.run",
+          { workspaceId: openedA.id, recipeId: "package:test", background: false },
+          "req_full_verify_run"
+        )
+      );
+      expect(verifyRun, JSON.stringify(verifyRun)).toMatchObject({
+        schemaVersion: 1,
+        workspaceId: openedA.id,
+        recipe: { id: "package:test", allowed: true },
+        operation: { state: "completed", exitCode: 0 }
+      });
+      expect(verifyRun.operation.stdoutPreview).toContain("verify-ok");
 
       const contextBuildResult = await callTool(
         port,
@@ -578,6 +593,34 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(foreground.exitCode).toBe(0);
       expect(foreground.stdoutPreview).toContain("foreground-ok");
       expect(foreground.artifact.uri).toMatch(/^artifact:\/\/ka_/);
+
+      for (const smoke of [
+        {
+          logicalExecutable: "node",
+          argv: ["-e", "console.log('kodegpt-node-smoke')"],
+          marker: "kodegpt-node-smoke"
+        },
+        { logicalExecutable: "cargo", argv: ["--version"], marker: "cargo " },
+        { logicalExecutable: "rustc", argv: ["--version"], marker: "rustc " }
+      ]) {
+        const result = textJson(
+          await callTool(
+            port,
+            credential.token,
+            "process.run",
+            {
+              workspaceId: openedA.id,
+              logicalExecutable: smoke.logicalExecutable,
+              argv: smoke.argv,
+              background: false
+            },
+            `req_full_process_${smoke.logicalExecutable}`
+          )
+        );
+        expect(result.state, JSON.stringify(result)).toBe("completed");
+        expect(result.exitCode, JSON.stringify(result)).toBe(0);
+        expect(result.stdoutPreview).toContain(smoke.marker);
+      }
 
       const artifact = textJson(
         await callTool(

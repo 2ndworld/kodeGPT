@@ -8,6 +8,12 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitStageInputSchema,
+  GitCommitInputSchema,
+  GitBranchInputSchema,
+  GitLocalMutationResultSchema,
+  GitRemoteInputSchema,
+  GitRemoteMutationResultSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,
@@ -26,6 +32,8 @@ import {
   type ContextBuildResult,
   type FilePatchResult,
   type GitChangesResult,
+  type GitLocalMutationResult,
+  type GitRemoteMutationResult,
   type VerifyListResult,
   type VerifyRunResult,
   type WorkspaceInspectResult
@@ -35,9 +43,13 @@ import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { describe, expect, it } from "vitest";
 import type { OpenWorkspace } from "../../core/src/index.js";
 import {
+  LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
-  READ_ONLY_TOOL_ANNOTATIONS
+  READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
+  REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
+  WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
 } from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
 import { registerKodegptTools } from "./tools.js";
@@ -109,6 +121,34 @@ const typedGitChangesResult: GitChangesResult = {
   patchCoverage: { staged: true, worktree: true, untracked: false },
   truncated: false,
   fingerprint: "a".repeat(64)
+};
+
+const typedGitMutationResult: GitLocalMutationResult = {
+  schemaVersion: 1,
+  operation: "stage",
+  exitCode: 0,
+  stdoutPreview: "",
+  stderrPreview: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  sourceTruncated: false,
+  bytesSpooled: 0,
+  artifact: {
+    schemaVersion: 1,
+    uri: "artifact://ka_git_mutation_fixture",
+    mediaType: "application/vnd.kodegpt.execution-stream",
+    sizeBytes: 0,
+    sourceTruncated: false
+  }
+};
+
+const typedGitRemoteMutationResult: GitRemoteMutationResult = {
+  ...typedGitMutationResult,
+  operation: "fetch",
+  artifact: {
+    ...typedGitMutationResult.artifact,
+    uri: "artifact://ka_git_remote_fixture"
+  }
 };
 
 const typedVerifyListResult: VerifyListResult = {
@@ -196,6 +236,13 @@ function makeContext(): KodegptToolContext {
     workspace: {
       list: async () => typedWorkspaceListResult,
       open: async () => typedWorkspaceListResult[0],
+      trust: async () => ({
+        id: "trust_fixture",
+        canonicalRoot: "/workspace",
+        profileCeiling: "trusted",
+        trustedAt: "2026-08-15T00:00:00.000Z"
+      }),
+      untrust: async ({ trustId }) => ({ trustId, removed: true }),
       close: async () => ({ ok: true }),
       info: async () => typedWorkspaceListResult[0],
       inspect: async () => typedWorkspaceInspectResult,
@@ -205,10 +252,21 @@ function makeContext(): KodegptToolContext {
       search: async () => [],
       tree: async () => []
     },
+    trust: {
+      list: async () => []
+    },
     git: {
       status: async () => ({} as never),
       diff: async () => ({} as never),
       changes: async () => typedGitChangesResult,
+      stage: async () => typedGitMutationResult,
+      commit: async () => ({ ...typedGitMutationResult, operation: "commit" as const }),
+      branchCreate: async () => ({ ...typedGitMutationResult, operation: "branch_create" as const }),
+      branchSwitch: async () => ({ ...typedGitMutationResult, operation: "branch_switch" as const }),
+      branchDelete: async () => ({ ...typedGitMutationResult, operation: "branch_delete" as const }),
+      fetch: async () => typedGitRemoteMutationResult,
+      pull: async () => ({ ...typedGitRemoteMutationResult, operation: "pull" as const }),
+      push: async () => ({ ...typedGitRemoteMutationResult, operation: "push" as const }),
       log: async () => ({ schemaVersion: 1, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
       show: async () => ({ schemaVersion: 1, commit: { oid: "1".repeat(40), shortOid: "1".repeat(12), parents: [], authorName: "A", authorTime: 1, committerTime: 1, subject: "s", body: "", messageTruncated: false, encodingLossy: false }, changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: null, truncated: false, truncationReasons: [] }),
       range: async () => ({ schemaVersion: 1, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
@@ -255,6 +313,143 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("registers the small trust control plane without caller-supplied filesystem identity", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const trusted = {
+      id: "trust_fixture",
+      canonicalRoot: "/workspace",
+      profileCeiling: "trusted" as const,
+      trustedAt: "2026-08-15T00:00:00.000Z"
+    };
+    type TrustAwareContext = KodegptToolContext & {
+      trust: { list(): Promise<Array<typeof trusted>> };
+      workspace: KodegptToolContext["workspace"] & {
+        trust(input: { rootPath: string; profile?: "observe" | "develop" | "trusted" }): Promise<typeof trusted>;
+        untrust(input: { trustId: string }): Promise<{ trustId: string; removed: boolean }>;
+      };
+    };
+    const context = makeContext() as TrustAwareContext;
+    context.trust = { list: async () => [trusted] };
+    context.workspace.trust = async ({ rootPath, profile }) => {
+      expect({ rootPath, profile }).toEqual({ rootPath: "/workspace", profile: "trusted" });
+      return trusted;
+    };
+    context.workspace.untrust = async ({ trustId }) => ({ trustId, removed: true });
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+
+    expect(Object.keys((definitions.get("trust.list")?.inputSchema ?? {}) as object)).toEqual([]);
+    expect(definitions.get("trust.list")?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    expect(Object.keys((definitions.get("workspace.trust")?.inputSchema ?? {}) as object).sort()).toEqual([
+      "profile",
+      "rootPath"
+    ]);
+    expect(definitions.get("workspace.trust")?.annotations).toEqual(
+      WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    );
+    expect(Object.keys((definitions.get("workspace.untrust")?.inputSchema ?? {}) as object)).toEqual([
+      "trustId"
+    ]);
+    expect(definitions.get("workspace.untrust")?.annotations).toEqual(
+      WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    );
+    const schemaText = JSON.stringify([
+      definitions.get("trust.list")?.inputSchema,
+      definitions.get("workspace.trust")?.inputSchema,
+      definitions.get("workspace.untrust")?.inputSchema
+    ]);
+    for (const forbidden of ["deviceMajor", "deviceMinor", "inode", "identity", "policy", "grant"]) {
+      expect(schemaText).not.toContain(forbidden);
+    }
+
+    const listResult = (await handlers.get("trust.list")!()) as { structuredContent?: unknown };
+    expect(listResult.structuredContent).toEqual([trusted]);
+    const trustResult = (await handlers.get("workspace.trust")!({
+      rootPath: "/workspace",
+      profile: "trusted"
+    } as never)) as { structuredContent?: unknown };
+    expect(trustResult.structuredContent).toEqual(trusted);
+    const untrustResult = (await handlers.get("workspace.untrust")!({
+      trustId: "trust_fixture"
+    } as never)) as { structuredContent?: unknown };
+    expect(untrustResult.structuredContent).toEqual({ trustId: "trust_fixture", removed: true });
+  });
+
+  it("registers trusted local Git mutations with closed schemas, mutating annotations, and structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const expected = [
+      ["git.stage", GitStageInputSchema, "stage", { workspaceId: "ws_1", paths: ["src/main.ts"] }],
+      ["git.commit", GitCommitInputSchema, "commit", { workspaceId: "ws_1", message: "bounded" }],
+      ["git.branchCreate", GitBranchInputSchema, "branch_create", { workspaceId: "ws_1", name: "feature/a" }],
+      ["git.branchSwitch", GitBranchInputSchema, "branch_switch", { workspaceId: "ws_1", name: "feature/a" }],
+      ["git.branchDelete", GitBranchInputSchema, "branch_delete", { workspaceId: "ws_1", name: "feature/a" }]
+    ] as const;
+
+    for (const [name, inputSchema, operation, input] of expected) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(GitLocalMutationResultSchema);
+      expect(definition?.annotations).toEqual(LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS);
+      const schemaText = JSON.stringify(inputSchema);
+      for (const forbidden of ["argv", "command", "gitArgs", "shell", "rootPath", "hostPath"]) {
+        expect(schemaText).not.toContain(forbidden);
+      }
+      const result = (await handlers.get(name)!(input as never)) as { structuredContent?: unknown };
+      expect(result.structuredContent).toMatchObject({ schemaVersion: 1, operation });
+      expect(JSON.stringify(result.structuredContent)).not.toContain("capabilityId");
+    }
+  });
+
+  it("registers trusted remote Git with bounded schemas, network annotations, and structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const expected = [
+      ["git.fetch", "fetch", REMOTE_GIT_FETCH_TOOL_ANNOTATIONS],
+      ["git.pull", "pull", REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS],
+      ["git.push", "push", REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS]
+    ] as const;
+
+    for (const [name, operation, annotations] of expected) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(GitRemoteInputSchema);
+      expect(definition?.outputSchema).toBe(GitRemoteMutationResultSchema);
+      expect(definition?.annotations).toEqual(annotations);
+      const schemaText = JSON.stringify(definition?.inputSchema);
+      for (const forbidden of ["argv", "command", "gitArgs", "refspec", "url", "credential", "header", "rootPath", "hostPath"]) {
+        expect(schemaText.toLowerCase()).not.toContain(forbidden.toLowerCase());
+      }
+      const result = (await handlers.get(name)!({ workspaceId: "ws_1", ref: "main" } as never)) as {
+        structuredContent?: unknown;
+      };
+      expect(result.structuredContent).toMatchObject({ schemaVersion: 1, operation });
+      expect(JSON.stringify(result.structuredContent)).not.toContain("capabilityId");
+    }
+  });
+
   it("registers Git history with closed schemas and read-only annotations", () => {
     const definitions = new Map<string, Record<string, unknown>>();
     const server = {

@@ -82,6 +82,14 @@ function dependencies(
   };
   const workspaceManager = {
     listWorkspaces: () => [],
+    listTrustedWorkspaces: async () => [],
+    trustWorkspace: async () => ({
+      id: "trust_test",
+      canonicalRoot: readyWorkspace.canonicalRoot,
+      profileCeiling: "observe" as const,
+      trustedAt: "2026-08-15T00:00:00.000Z"
+    }),
+    untrustWorkspace: async () => true,
     openWorkspace: async () => readyWorkspace,
     closeWorkspace: async () => undefined,
     requireReady: () => readyWorkspace,
@@ -111,6 +119,14 @@ function dependencies(
     gitRange: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
     gitDiffHistory: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: "", truncated: false, truncationReasons: [] }),
     gitDiff: async () => gitInspection,
+    gitStage: async () => { throw new Error("unexpected gitStage"); },
+    gitCommit: async () => { throw new Error("unexpected gitCommit"); },
+    gitBranchCreate: async () => { throw new Error("unexpected gitBranchCreate"); },
+    gitBranchSwitch: async () => { throw new Error("unexpected gitBranchSwitch"); },
+    gitBranchDelete: async () => { throw new Error("unexpected gitBranchDelete"); },
+    gitFetch: async () => { throw new Error("unexpected gitFetch"); },
+    gitPull: async () => { throw new Error("unexpected gitPull"); },
+    gitPush: async () => { throw new Error("unexpected gitPush"); },
     runProcess: async () => completedProcess,
     inspectExecutable: async () => ({
       schemaVersion: 1 as const,

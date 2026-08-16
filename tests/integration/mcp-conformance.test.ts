@@ -23,7 +23,11 @@ describe("MCP 2026 + semantic surface conformance", () => {
     expect(MCP_PROTOCOL_VERSION).toBe("2026-07-28");
     expect(MCP_SURFACE_VERSION).toBeTruthy();
     expect(listSurfaceTools()).toEqual(EXPECTED_MCP_SURFACE_TOOLS);
-    expect(listSurfaceTools().some((tool) => tool.name.includes("trust"))).toBe(false);
+    expect(listSurfaceTools().filter((tool) => tool.name.includes("trust")).map((tool) => tool.name)).toEqual([
+      "trust.list",
+      "workspace.trust",
+      "workspace.untrust"
+    ]);
     expect(listSurfaceTools().some((tool) => tool.name === "shell.run")).toBe(false);
   });
 

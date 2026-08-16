@@ -7,7 +7,9 @@ import type {
   GitLogResult,
   GitShowResult,
   GitRangeResult,
-  GitDiffHistoryResult
+  GitDiffHistoryResult,
+  GitLocalMutationResult,
+  GitRemoteMutationResult
 } from "./contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -96,6 +98,28 @@ export interface CodeSearchAdapter {
 export interface GitInspectionAdapter {
   gitStatus(workspaceId: string): Promise<GitInspectionAdapterResult>;
   gitDiff(workspaceId: string): Promise<GitInspectionAdapterResult>;
+}
+
+export interface GitLocalAuthorityAdapter {
+  effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean };
+}
+
+export interface GitLocalMutationAdapter {
+  stage(workspaceId: string, paths: string[]): Promise<GitLocalMutationResult>;
+  commit(workspaceId: string, message: string): Promise<GitLocalMutationResult>;
+  branchCreate(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
+  branchSwitch(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
+  branchDelete(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
+}
+
+export interface GitRemoteAuthorityAdapter {
+  effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean; network: string };
+}
+
+export interface GitRemoteMutationAdapter {
+  fetch(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
+  pull(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
+  push(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
 }
 
 export interface GitHistoryLogAdapterInput {

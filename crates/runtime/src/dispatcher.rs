@@ -6,11 +6,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
-    GitLogParams, GitRangeParams, GitShowParams, GitStatusParams,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
-    ProcessOperationParams, ProcessRunParams, ProfileName, RuntimePolicy,
-    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
-    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, VerifyRunParams,
+    GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams, GitShowParams,
+    GitStatusParams, NetworkMode, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
+    ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
+    RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
+    SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
+    SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
@@ -31,8 +32,9 @@ use crate::audit::{
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
-    GitInspectionError, GitOperation, run_git_checkpoint, run_git_checkpoint_patch,
-    run_git_inspection,
+    GitInspectionError, GitLocalMutation, GitOperation, GitRemoteMutation, run_git_checkpoint,
+    run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation, run_git_remote_mutation,
+    validate_remote_mutation_input,
 };
 use crate::git_history::{
     GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GIT_RANGE_MAX_LIMIT, GitHistoryError,
@@ -53,6 +55,16 @@ use std::io::Write as _;
 #[serde(deny_unknown_fields)]
 struct SystemInspectRootParams {
     path: String,
+}
+
+fn valid_audit_operation_id(value: &str) -> bool {
+    value.strip_prefix("op_").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.len() <= 93
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
 }
 
 #[cfg(feature = "runtime-test-methods")]
@@ -251,6 +263,36 @@ async fn dispatch_one(
                     "identity": inspected.identity
                 }),
             )
+        }
+        "trust.audit" => {
+            let params = match serde_json::from_value::<TrustAuditParams>(request.params) {
+                Ok(params) if valid_audit_operation_id(&params.operation_id) => params,
+                _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let action = match params.action {
+                TrustAuditAction::Trust => AuditAction::WorkspaceTrust,
+                TrustAuditAction::ProfileUpdate => AuditAction::WorkspaceTrustProfileUpdate,
+                TrustAuditAction::Untrust => AuditAction::WorkspaceUntrust,
+            };
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: params.operation_id,
+                capability_id: None,
+                action,
+            };
+            let recorded = match params.phase {
+                TrustAuditPhase::Decision => audit.decision(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                ),
+                TrustAuditPhase::Success => audit.outcome(&audit_context, AuditOutcome::Success),
+                TrustAuditPhase::Failed => audit.outcome(&audit_context, AuditOutcome::Failed),
+            };
+            if recorded.is_err() {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request.id, json!({ "ok": true }))
         }
         "skill_source.inspect_root" => {
             let params =
@@ -887,6 +929,121 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.local_mutation" => {
+            let params = match serde_json::from_value::<GitLocalMutationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let (capability_id, mutation, action) = match params {
+                GitLocalMutationParams::Stage {
+                    capability_id,
+                    paths,
+                } => (
+                    capability_id,
+                    GitLocalMutation::Stage { paths },
+                    AuditAction::GitStage,
+                ),
+                GitLocalMutationParams::Commit {
+                    capability_id,
+                    message,
+                } => (
+                    capability_id,
+                    GitLocalMutation::Commit { message },
+                    AuditAction::GitCommit,
+                ),
+                GitLocalMutationParams::BranchCreate {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchCreate { name },
+                    AuditAction::GitBranchCreate,
+                ),
+                GitLocalMutationParams::BranchSwitch {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchSwitch { name },
+                    AuditAction::GitBranchSwitch,
+                ),
+                GitLocalMutationParams::BranchDelete {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitLocalMutation::BranchDelete { name },
+                    AuditAction::GitBranchDelete,
+                ),
+            };
+            if capability_id.is_empty() {
+                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+            }
+            dispatch_git_local_mutation(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                capability_id,
+                mutation,
+                action,
+            )
+            .await
+        }
+        "git.remote_mutation" => {
+            let params = match serde_json::from_value::<GitRemoteMutationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let (capability_id, mutation, action) = match params {
+                GitRemoteMutationParams::Fetch {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Fetch { remote, r#ref },
+                    AuditAction::GitFetch,
+                ),
+                GitRemoteMutationParams::Pull {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Pull { remote, r#ref },
+                    AuditAction::GitPull,
+                ),
+                GitRemoteMutationParams::Push {
+                    capability_id,
+                    remote,
+                    r#ref,
+                } => (
+                    capability_id,
+                    GitRemoteMutation::Push { remote, r#ref },
+                    AuditAction::GitPush,
+                ),
+            };
+            if capability_id.is_empty() {
+                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+            }
+            dispatch_git_remote_mutation(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                capability_id,
+                mutation,
+                action,
+            )
+            .await
+        }
         "git.log" => {
             let params = match serde_json::from_value::<GitLogParams>(request.params) {
                 Ok(params)
@@ -1462,6 +1619,275 @@ async fn dispatch_git_operation(
         AuditOutcome::Failed
     };
     if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_local_mutation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    mutation: GitLocalMutation,
+    action: AuditAction,
+) -> Value {
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
+        Err(_) => {
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
+        }
+    };
+    if policy.name != ProfileName::Trusted || !policy.allow_write {
+        return error_response(Some(request_id), -32059, "GIT_POLICY_DENIED");
+    }
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32061,
+            "GIT_MUTATION_UNAVAILABLE",
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_local_mutation(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            mutation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::InvalidMutationInput)) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32060,
+                "GIT_MUTATION_INPUT_INVALID",
+            );
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_failure(audit, &context, request_id, -32061, "GIT_MUTATION_FAILED");
+        }
+    };
+    let outcome = if result.exit_code == 0 {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_remote_mutation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    mutation: GitRemoteMutation,
+    action: AuditAction,
+) -> Value {
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
+        Err(_) => {
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
+        }
+    };
+    if policy.name != ProfileName::Trusted
+        || !policy.allow_write
+        || policy.network != NetworkMode::Unrestricted
+    {
+        return error_response(Some(request_id), -32062, "GIT_REMOTE_POLICY_DENIED");
+    }
+
+    let (remote, ref_name) = match &mutation {
+        GitRemoteMutation::Fetch { remote, r#ref }
+        | GitRemoteMutation::Pull { remote, r#ref }
+        | GitRemoteMutation::Push { remote, r#ref } => (remote.as_str(), r#ref.as_str()),
+    };
+    if validate_remote_mutation_input(remote, ref_name).is_err() {
+        return error_response(Some(request_id), -32063, "GIT_REMOTE_INPUT_INVALID");
+    }
+    let remote = remote.to_owned();
+    let ref_name = ref_name.to_owned();
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision_with_git_remote(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+            &remote,
+            &ref_name,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_git_remote_failure(
+                    audit, &context, request_id, code, message, &remote, &ref_name,
+                );
+            }
+        },
+        Err(_) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+                &remote,
+                &ref_name,
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_git_remote_failure(
+            audit,
+            &context,
+            request_id,
+            -32064,
+            "GIT_REMOTE_UNAVAILABLE",
+            &remote,
+            &ref_name,
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_remote_mutation(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            mutation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::InvalidMutationInput)) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32063,
+                "GIT_REMOTE_INPUT_INVALID",
+                &remote,
+                &ref_name,
+            );
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_git_remote_failure(
+                audit,
+                &context,
+                request_id,
+                -32065,
+                "GIT_REMOTE_FAILED",
+                &remote,
+                &ref_name,
+            );
+        }
+    };
+    let outcome = if result.exit_code == 0 {
+        AuditOutcome::Success
+    } else {
+        AuditOutcome::Failed
+    };
+    if audit
+        .outcome_with_git_remote(&context, outcome, &remote, &ref_name)
+        .is_err()
+    {
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     success_response(request_id, json!(result))
@@ -2490,6 +2916,25 @@ fn audited_failure(
     error_response(Some(request_id), code, message)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn audited_git_remote_failure(
+    audit: &AuditSink,
+    context: &AuditContext,
+    request_id: String,
+    code: i64,
+    message: &str,
+    remote: &str,
+    ref_name: &str,
+) -> Value {
+    if audit
+        .outcome_with_git_remote(context, AuditOutcome::Failed, remote, ref_name)
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    error_response(Some(request_id), code, message)
+}
+
 fn audited_skill_source_failure(
     audit: &AuditSink,
     context: &AuditContext,
@@ -2720,6 +3165,101 @@ mod tests {
         response
     }
 
+    async fn trust_audit_once(
+        audit: Arc<AuditSink>,
+        id: &str,
+        operation_id: &str,
+        action: &str,
+        phase: &str,
+    ) -> Value {
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
+        request_tx
+            .send(request(
+                id,
+                "trust.audit",
+                json!({
+                    "operationId": operation_id,
+                    "action": action,
+                    "phase": phase
+                }),
+            ))
+            .expect("trust audit request accepted");
+        drop(request_tx);
+
+        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+            .await
+            .expect("trust audit response arrives")
+            .expect("response channel open");
+        dispatcher.await.expect("dispatcher task joins");
+        response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_audit_routes_control_plane_records_through_the_single_rust_sink() {
+        let (audit, audit_root) = audit_sink("trust-control-plane");
+
+        let decision = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_decision",
+            "op_trust_control_plane",
+            "profile_update",
+            "decision",
+        )
+        .await;
+        assert_eq!(decision["result"]["ok"], true);
+
+        let outcome = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_success",
+            "op_trust_control_plane",
+            "profile_update",
+            "success",
+        )
+        .await;
+        assert_eq!(outcome["result"]["ok"], true);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert_eq!(audit_text.lines().count(), 2);
+        assert!(audit_text.contains("workspace_trust_profile_update"));
+        assert!(audit_text.contains("op_trust_control_plane"));
+        assert!(!audit_text.contains("rootPath"));
+        assert!(!audit_text.contains("deviceMajor"));
+        assert!(!audit_text.contains("inode"));
+
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trust_audit_fails_closed_when_the_single_rust_sink_is_unavailable() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-trust-audit-fault-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+
+        let response = trust_audit_once(
+            Arc::clone(&audit),
+            "req_trust_fault",
+            "op_trust_fault",
+            "trust",
+            "decision",
+        )
+        .await;
+
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inspect_root_returns_identity_without_capability_and_is_audited() {
         let (audit, audit_root) = audit_sink("inspect-valid");
@@ -2793,6 +3333,18 @@ mod tests {
         })
     }
 
+    fn trusted_policy() -> Value {
+        json!({
+            "name": "trusted",
+            "allowWrite": true,
+            "allowProcess": true,
+            "network": "unrestricted",
+            "allowedExecutableNames": ["git", "node", "python3"],
+            "inheritEnv": false,
+            "envAllowlist": ["LANG"]
+        })
+    }
+
     async fn next_response(
         request_tx: &mpsc::UnboundedSender<Value>,
         response_rx: &mut mpsc::UnboundedReceiver<Value>,
@@ -2803,7 +3355,7 @@ mod tests {
         request_tx
             .send(request(id, method, params))
             .expect("workspace request accepted");
-        tokio::time::timeout(Duration::from_secs(1), response_rx.recv())
+        tokio::time::timeout(Duration::from_secs(5), response_rx.recv())
             .await
             .unwrap_or_else(|_| panic!("workspace response arrives for {method} ({id})"))
             .expect("workspace response channel open")
@@ -2854,6 +3406,246 @@ mod tests {
         .await;
         assert_eq!(activated["result"]["ok"], true);
         capability_id
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_git_mutation_requires_ready_trusted_policy_and_audits_success() {
+        let (audit, audit_root) = audit_sink("git-local-mutation-policy");
+        let develop_workspace = audit_root.with_extension("git-develop-workspace");
+        let trusted_workspace = audit_root.with_extension("git-trusted-workspace");
+        for workspace in [&develop_workspace, &trusted_workspace] {
+            fs::create_dir_all(workspace).expect("workspace created");
+            test_git(workspace, &["init", "-b", "main"]);
+            test_git(workspace, &["config", "user.name", "KodeGPT Test"]);
+            test_git(
+                workspace,
+                &["config", "user.email", "kodegpt@example.invalid"],
+            );
+            fs::write(workspace.join("tracked.txt"), "content\n").expect("tracked file");
+        }
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let develop_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &develop_workspace,
+            develop_policy(true),
+            "git_local_develop",
+        )
+        .await;
+        let trusted_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &trusted_workspace,
+            trusted_policy(),
+            "git_local_trusted",
+        )
+        .await;
+
+        let denied = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_develop_denied",
+            "git.local_mutation",
+            json!({
+                "capabilityId": develop_capability,
+                "operation": "stage",
+                "paths": ["tracked.txt"]
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["message"], "GIT_POLICY_DENIED");
+        assert!(test_git(&develop_workspace, &["diff", "--cached", "--name-only"]).is_empty());
+
+        let staged = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_stage",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "stage",
+                "paths": ["tracked.txt"]
+            }),
+        )
+        .await;
+        assert_eq!(staged["result"]["schemaVersion"], 1);
+        assert_eq!(staged["result"]["operation"], "stage");
+        assert_eq!(staged["result"]["exitCode"], 0);
+        assert_eq!(
+            test_git(&trusted_workspace, &["diff", "--cached", "--name-only"]).trim(),
+            "tracked.txt"
+        );
+
+        let committed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_commit",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "commit",
+                "message": "top-secret-commit-message"
+            }),
+        )
+        .await;
+        assert_eq!(committed["result"]["operation"], "commit");
+        assert_eq!(committed["result"]["exitCode"], 0);
+
+        let branch_created = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_local_trusted_branch_create",
+            "git.local_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "branch_create",
+                "name": "secret-target-branch"
+            }),
+        )
+        .await;
+        assert_eq!(branch_created["result"]["operation"], "branch_create");
+        assert_eq!(branch_created["result"]["exitCode"], 0);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit log");
+        assert!(audit_text.contains("git_stage"));
+        assert!(audit_text.contains("git_commit"));
+        assert!(audit_text.contains("git_branch_create"));
+        assert!(audit_text.contains(&trusted_capability));
+        assert!(audit_text.contains("success"));
+        assert!(!audit_text.contains("tracked.txt"));
+        assert!(!audit_text.contains("top-secret-commit-message"));
+        assert!(!audit_text.contains("secret-target-branch"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(develop_workspace).expect("develop workspace cleanup");
+        fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
+        fs::remove_dir_all(audit_root).expect("audit root cleanup");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remote_git_mutation_requires_trusted_write_and_unrestricted_network() {
+        let (audit, audit_root) = audit_sink("git-remote-mutation-policy");
+        let denied_workspace = audit_root.with_extension("git-remote-denied-workspace");
+        let trusted_workspace = audit_root.with_extension("git-remote-trusted-workspace");
+        for workspace in [&denied_workspace, &trusted_workspace] {
+            fs::create_dir_all(workspace).expect("workspace created");
+            test_git(workspace, &["init", "-b", "main"]);
+            test_git(workspace, &["config", "user.name", "KodeGPT Test"]);
+            test_git(
+                workspace,
+                &["config", "user.email", "kodegpt@example.invalid"],
+            );
+            fs::write(workspace.join("tracked.txt"), "content\n").expect("tracked file");
+            test_git(workspace, &["add", "tracked.txt"]);
+            test_git(workspace, &["commit", "-m", "base"]);
+            test_git(workspace, &["init", "--bare", "remote.git"]);
+            test_git(workspace, &["remote", "add", "origin", "remote.git"]);
+        }
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let mut narrowed_policy = trusted_policy();
+        narrowed_policy["network"] = json!("deny");
+        let denied_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &denied_workspace,
+            narrowed_policy,
+            "git_remote_denied",
+        )
+        .await;
+        let trusted_capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &trusted_workspace,
+            trusted_policy(),
+            "git_remote_trusted",
+        )
+        .await;
+
+        let denied = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_denied",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": denied_capability,
+                "operation": "push",
+                "remote": "origin",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["message"], "GIT_REMOTE_POLICY_DENIED");
+        assert!(!denied_workspace.join("remote.git/refs/heads/main").exists());
+
+        let pushed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_push",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "push",
+                "remote": "origin",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(pushed["result"]["schemaVersion"], 1);
+        assert_eq!(pushed["result"]["operation"], "push");
+        assert_eq!(pushed["result"]["exitCode"], 0);
+        assert!(
+            !test_git(
+                &trusted_workspace,
+                &["--git-dir", "remote.git", "rev-parse", "refs/heads/main"]
+            )
+            .trim()
+            .is_empty()
+        );
+
+        let invalid = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_remote_invalid_url",
+            "git.remote_mutation",
+            json!({
+                "capabilityId": trusted_capability,
+                "operation": "fetch",
+                "remote": "https://transport-secret@example.invalid/repo.git",
+                "ref": "main"
+            }),
+        )
+        .await;
+        assert_eq!(invalid["error"]["message"], "GIT_REMOTE_INPUT_INVALID");
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit log");
+        assert!(audit_text.contains("git_push"));
+        assert!(audit_text.contains("\"remote\":\"origin\""));
+        assert!(audit_text.contains("\"ref\":\"main\""));
+        assert!(!audit_text.contains("transport-secret"));
+        assert!(!audit_text.contains("example.invalid/repo.git"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(denied_workspace).expect("denied workspace cleanup");
+        fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
+        fs::remove_dir_all(audit_root).expect("audit root cleanup");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

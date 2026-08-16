@@ -34,6 +34,33 @@ jobs:
           corepack prepare pnpm@10.15.0 --activate
           test "$(pnpm --version)" = "10.15.0"
 
+      - name: Harden trusted Node toolchain root
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_root="$(node -p 'require("node:path").dirname(require("node:path").dirname(process.execPath))')"
+          sudo chown "$(id -u):$(id -g)" "$node_root"
+          chmod 0755 "$node_root"
+          test "$(stat -c '%u:%g:%a' "$node_root")" = "$(id -u):$(id -g):755"
+          pnpm_entry="$node_root/bin/pnpm"
+          pnpm_target="$(readlink -f "$pnpm_entry")"
+          case "$pnpm_target" in
+            "$node_root"/*) ;;
+            *) echo "pnpm target escaped trusted Node root" >&2; exit 1 ;;
+          esac
+          chmod 0755 "$pnpm_target"
+          test "$(stat -Lc '%a' "$pnpm_entry")" = "755"
+          node_target="$(readlink -f "$node_root/bin/node")"
+          case "$node_target" in
+            "$node_root"/*) ;;
+            *) echo "node target escaped trusted Node root" >&2; exit 1 ;;
+          esac
+          chmod 0755 "$node_target"
+          test "$(stat -Lc '%a' "$node_root/bin/node")" = "755"
+          corepack_home="$HOME/.cache/node/corepack"
+          test "$(stat -c '%u:%g' "$corepack_home")" = "$(id -u):$(id -g)"
+          test $(( 8#$(stat -c '%a' "$corepack_home") & 8#022 )) -eq 0
+
       - name: Setup Rust stable
         shell: bash
         run: |

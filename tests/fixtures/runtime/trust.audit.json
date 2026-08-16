@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_trust_audit_fixture",
+  "method": "trust.audit",
+  "params": {
+    "operationId": "op_trust_fixture",
+    "action": "trust",
+    "phase": "decision"
+  }
+}

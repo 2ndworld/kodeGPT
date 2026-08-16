@@ -13,12 +13,20 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.branchCreate", required: ["workspaceId", "name"] },
+  { name: "git.branchDelete", required: ["workspaceId", "name"] },
+  { name: "git.branchSwitch", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
+  { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.fetch", required: ["workspaceId", "ref"] },
   { name: "git.log", required: ["workspaceId"] },
+  { name: "git.pull", required: ["workspaceId", "ref"] },
+  { name: "git.push", required: ["workspaceId", "ref"] },
   { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
   { name: "git.show", required: ["workspaceId"] },
+  { name: "git.stage", required: ["workspaceId", "paths"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -30,13 +38,16 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
+  { name: "workspace.open", required: ["rootPath"] },
+  { name: "workspace.trust", required: ["rootPath"] },
+  { name: "workspace.untrust", required: ["trustId"] }
 ] as const;
 
 export const EXPECTED_MCP_TOOL_NAMES = EXPECTED_MCP_SURFACE_TOOLS.map(({ name }) => name);

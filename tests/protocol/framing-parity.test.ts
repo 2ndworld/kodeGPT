@@ -14,6 +14,7 @@ import {
 const FIXTURE_NAMES = [
   "runtime.hello.json",
   "system.inspect_root.json",
+  "trust.audit.json",
   "workspace.register.json",
   "workspace.read_project_profile.json",
   "workspace.restrict_policy.json",
@@ -32,6 +33,8 @@ const FIXTURE_NAMES = [
   "git.checkpoint.json",
   "git.checkpoint_patch.json",
   "git.diff.json",
+  "git.local_mutation.json",
+  "git.remote_mutation.json",
   "git.log.json",
   "git.show.json",
   "git.range.json",
@@ -53,6 +56,7 @@ const FIXTURE_NAMES = [
 const EXPECTED_METHODS = [
   "runtime.hello",
   "system.inspect_root",
+  "trust.audit",
   "workspace.register",
   "workspace.read_project_profile",
   "workspace.restrict_policy",
@@ -71,6 +75,8 @@ const EXPECTED_METHODS = [
   "git.checkpoint",
   "git.checkpoint_patch",
   "git.diff",
+  "git.local_mutation",
+  "git.remote_mutation",
   "git.log",
   "git.show",
   "git.range",

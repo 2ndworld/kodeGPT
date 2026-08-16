@@ -72,6 +72,65 @@ describe("canonical runtime JSON Schemas", () => {
     }
   });
 
+  it("defines closed bounded local Git mutation variants without raw argv", async () => {
+    expect(RUNTIME_METHODS).toContain("git.local_mutation");
+    const request = await schema("request.schema.json");
+    const variants = request.oneOf as JsonSchema[];
+    const mutation = variants.find(
+      (variant) => variant.properties.method.const === "git.local_mutation"
+    );
+    expect(mutation).toBeDefined();
+    const params = mutation?.properties.params as JsonSchema;
+    expect(params.oneOf).toHaveLength(5);
+    const operations = (params.oneOf as JsonSchema[]).map(
+      (variant) => variant.properties.operation.const
+    );
+    expect(operations).toEqual([
+      "stage",
+      "commit",
+      "branch_create",
+      "branch_switch",
+      "branch_delete"
+    ]);
+    for (const variant of params.oneOf as JsonSchema[]) {
+      expect(variant.additionalProperties).toBe(false);
+      expect(variant.properties).not.toHaveProperty("argv");
+    }
+    const stage = (params.oneOf as JsonSchema[])[0];
+    expect(stage.properties.paths.maxItems).toBe(128);
+    expect(stage.properties.paths.items.maxLength).toBe(4096);
+    const commit = (params.oneOf as JsonSchema[])[1];
+    expect(commit.properties.message.maxLength).toBe(4096);
+    for (const branch of (params.oneOf as JsonSchema[]).slice(2)) {
+      expect(branch.properties.name.maxLength).toBe(255);
+    }
+  });
+
+  it("defines closed bounded remote Git variants without URLs, force, or raw argv", async () => {
+    expect(RUNTIME_METHODS).toContain("git.remote_mutation");
+    const request = await schema("request.schema.json");
+    const variants = request.oneOf as JsonSchema[];
+    const mutation = variants.find(
+      (variant) => variant.properties.method.const === "git.remote_mutation"
+    );
+    expect(mutation).toBeDefined();
+    const params = mutation?.properties.params as JsonSchema;
+    expect(params.oneOf).toHaveLength(3);
+    expect((params.oneOf as JsonSchema[]).map((variant) => variant.properties.operation.const)).toEqual([
+      "fetch",
+      "pull",
+      "push"
+    ]);
+    for (const variant of params.oneOf as JsonSchema[]) {
+      expect(variant.additionalProperties).toBe(false);
+      expect(variant.properties.remote.maxLength).toBe(128);
+      expect(variant.properties.ref.maxLength).toBe(255);
+      for (const forbidden of ["argv", "url", "force", "rebase", "headers", "credential"] ) {
+        expect(variant.properties).not.toHaveProperty(forbidden);
+      }
+    }
+  });
+
   it("closes success and error response envelopes", async () => {
     const success = await schema("success-response.schema.json");
     const error = await schema("error-response.schema.json");

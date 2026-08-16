@@ -8,6 +8,12 @@ import type {
   FilePatchResult,
   GitChangesInput,
   GitChangesResult,
+  GitStageInput,
+  GitCommitInput,
+  GitBranchInput,
+  GitLocalMutationResult,
+  GitRemoteInput,
+  GitRemoteMutationResult,
   GitLogInput,
   GitLogResult,
   GitShowInput,
@@ -26,6 +32,7 @@ import type {
 import type {
   ExecutionManager,
   OpenWorkspace,
+  TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
   WorkspaceManager,
   WorkspaceSearchMatch,
@@ -53,6 +60,11 @@ export interface WorkspaceCloseResult {
   ok: true;
 }
 
+export interface WorkspaceUntrustResult {
+  trustId: string;
+  removed: boolean;
+}
+
 export interface ProfileCurrentResult {
   workspaceId: string;
   effectivePolicy: OpenWorkspace["effectivePolicy"];
@@ -61,6 +73,11 @@ export interface ProfileCurrentResult {
 export interface WorkspaceToolContext {
   list(): MaybePromise<OpenWorkspace[]>;
   open(input: { rootPath: string }): MaybePromise<OpenWorkspace>;
+  trust(input: {
+    rootPath: string;
+    profile?: "observe" | "develop" | "trusted";
+  }): MaybePromise<TrustedWorkspaceSummary>;
+  untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
   info(input: { workspaceId: string }): MaybePromise<OpenWorkspace>;
   readFile(input: {
@@ -90,10 +107,22 @@ export interface WorkspaceToolContext {
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
 }
 
+export interface TrustToolContext {
+  list(): MaybePromise<TrustedWorkspaceSummary[]>;
+}
+
 export interface GitToolContext {
   status(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   diff(input: { workspaceId: string }): MaybePromise<WorkspaceGitInspectionResult>;
   changes(input: GitChangesInput): Promise<GitChangesResult>;
+  stage(input: GitStageInput): Promise<GitLocalMutationResult>;
+  commit(input: GitCommitInput): Promise<GitLocalMutationResult>;
+  branchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  branchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  branchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  fetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  pull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  push(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   log(input: GitLogInput): Promise<GitLogResult>;
   show(input: GitShowInput): Promise<GitShowResult>;
   range(input: GitRangeInput): Promise<GitRangeResult>;
@@ -172,6 +201,7 @@ export interface SkillToolContext {
 
 export interface KodegptToolContext {
   workspace: WorkspaceToolContext;
+  trust: TrustToolContext;
   git: GitToolContext;
   process: ProcessToolContext;
   artifact: ArtifactToolContext;
@@ -188,7 +218,10 @@ export interface KodegptToolContext {
 export type WorkspaceManagerToolAdapter = Pick<
   WorkspaceManager,
   | "listWorkspaces"
+  | "listTrustedWorkspaces"
   | "openWorkspace"
+  | "trustWorkspace"
+  | "untrustWorkspace"
   | "closeWorkspace"
   | "requireReady"
   | "readFile"
@@ -196,6 +229,11 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "editFile"
   | "gitStatus"
   | "gitDiff"
+  | "gitStage"
+  | "gitCommit"
+  | "gitBranchCreate"
+  | "gitBranchSwitch"
+  | "gitBranchDelete"
   | "search"
   | "tree"
 >;
@@ -208,6 +246,14 @@ export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
   searchCode(input: CodeSearchInput): Promise<CodeSearchResult>;
   gitChanges(input: GitChangesInput): Promise<GitChangesResult>;
+  gitStage(input: GitStageInput): Promise<GitLocalMutationResult>;
+  gitCommit(input: GitCommitInput): Promise<GitLocalMutationResult>;
+  gitBranchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitBranchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  gitPull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
+  gitPush(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   gitLog(input: GitLogInput): Promise<GitLogResult>;
   gitShow(input: GitShowInput): Promise<GitShowResult>;
   gitRange(input: GitRangeInput): Promise<GitRangeResult>;
@@ -246,6 +292,11 @@ export function createKodegptToolContext(options: {
     workspace: {
       list: () => options.workspaceManager.listWorkspaces(),
       open: ({ rootPath }) => options.workspaceManager.openWorkspace(rootPath),
+      trust: ({ rootPath, profile }) => options.workspaceManager.trustWorkspace(rootPath, profile),
+      untrust: async ({ trustId }) => ({
+        trustId,
+        removed: await options.workspaceManager.untrustWorkspace(trustId)
+      }),
       close: async ({ workspaceId }) => {
         await options.workspaceManager.closeWorkspace(workspaceId);
         return { ok: true };
@@ -268,10 +319,21 @@ export function createKodegptToolContext(options: {
       tree: ({ workspaceId, path }) => options.workspaceManager.tree(workspaceId, path),
       inspect: (input) => native.inspectWorkspace(input)
     },
+    trust: {
+      list: () => options.workspaceManager.listTrustedWorkspaces()
+    },
     git: {
       status: ({ workspaceId }) => options.workspaceManager.gitStatus(workspaceId),
       diff: ({ workspaceId }) => options.workspaceManager.gitDiff(workspaceId),
       changes: (input) => native.gitChanges(input),
+      stage: (input) => native.gitStage(input),
+      commit: (input) => native.gitCommit(input),
+      branchCreate: (input) => native.gitBranchCreate(input),
+      branchSwitch: (input) => native.gitBranchSwitch(input),
+      branchDelete: (input) => native.gitBranchDelete(input),
+      fetch: (input) => native.gitFetch(input),
+      pull: (input) => native.gitPull(input),
+      push: (input) => native.gitPush(input),
       log: (input) => native.gitLog(input),
       show: (input) => native.gitShow(input),
       range: (input) => native.gitRange(input),
@@ -345,6 +407,14 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
     inspectWorkspace: () => unavailable("workspace.inspect"),
     searchCode: () => unavailable("code.search"),
     gitChanges: () => unavailable("git.changes"),
+    gitStage: () => unavailable("git.stage"),
+    gitCommit: () => unavailable("git.commit"),
+    gitBranchCreate: () => unavailable("git.branchCreate"),
+    gitBranchSwitch: () => unavailable("git.branchSwitch"),
+    gitBranchDelete: () => unavailable("git.branchDelete"),
+    gitFetch: () => unavailable("git.fetch"),
+    gitPull: () => unavailable("git.pull"),
+    gitPush: () => unavailable("git.push"),
     gitLog: () => unavailable("git.log"),
     gitShow: () => unavailable("git.show"),
     gitRange: () => unavailable("git.range"),

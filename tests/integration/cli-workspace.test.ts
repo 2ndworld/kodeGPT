@@ -170,9 +170,13 @@ describe("CLI workspace trust integration flow", () => {
       const store = new ConnectorCredentialStore(stateDir);
       const credential = await store.rotate();
 
-      // Verify MCP surface has NO trust tool
+      // Verify MCP surface exposes only the intended typed trust control plane.
       const surfaceTools = listSurfaceTools();
-      expect(surfaceTools.some((t) => t.name.includes("trust"))).toBe(false);
+      expect(surfaceTools.filter((tool) => tool.name.includes("trust")).map((tool) => tool.name)).toEqual([
+        "trust.list",
+        "workspace.trust",
+        "workspace.untrust"
+      ]);
 
       // Verify workspace.open for trusted directory succeeds
       const openTrustedRes = await callMcpTool(

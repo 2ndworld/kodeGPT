@@ -727,6 +727,7 @@ fn map_git_inspection_error(error: GitInspectionError) -> GitHistoryError {
         | GitInspectionError::CaptureFailed
         | GitInspectionError::UnsafeRepositoryConfig
         | GitInspectionError::InvalidCheckpointStatus
+        | GitInspectionError::InvalidMutationInput
         | GitInspectionError::CommandFailed
         | GitInspectionError::CheckpointIdentityUnavailable
         | GitInspectionError::WaitFailed(_) => GitHistoryError::GitReadFailed,

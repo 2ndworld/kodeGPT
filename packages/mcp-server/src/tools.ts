@@ -7,6 +7,12 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitStageInputSchema,
+  GitCommitInputSchema,
+  GitBranchInputSchema,
+  GitLocalMutationResultSchema,
+  GitRemoteInputSchema,
+  GitRemoteMutationResultSchema,
   GitLogInputSchema,
   GitLogResultSchema,
   GitShowInputSchema,
@@ -37,8 +43,11 @@ import {
 import { z } from "zod";
 
 import {
+  LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
+  REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
@@ -60,12 +69,20 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
+  { name: "git.branchCreate", required: ["workspaceId", "name"] },
+  { name: "git.branchDelete", required: ["workspaceId", "name"] },
+  { name: "git.branchSwitch", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
+  { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
   { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
+  { name: "git.fetch", required: ["workspaceId", "ref"] },
   { name: "git.log", required: ["workspaceId"] },
+  { name: "git.pull", required: ["workspaceId", "ref"] },
+  { name: "git.push", required: ["workspaceId", "ref"] },
   { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
   { name: "git.show", required: ["workspaceId"] },
+  { name: "git.stage", required: ["workspaceId", "paths"] },
   { name: "git.status", required: ["workspaceId"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -77,13 +94,16 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
   { name: "system.health", required: [] },
+  { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] }
+  { name: "workspace.open", required: ["rootPath"] },
+  { name: "workspace.trust", required: ["rootPath"] },
+  { name: "workspace.untrust", required: ["trustId"] }
 ] as const);
 
 export function listSurfaceTools(): Array<{ name: string; required: string[] }> {
@@ -163,6 +183,16 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "trust.list",
+    {
+      description: "List durable trusted workspace records without exposing filesystem identity.",
+      inputSchema: {},
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async () => structuredToolResult(await context.trust.list())
+  );
+
+  server.registerTool(
     "workspace.open",
     {
       description: "Open a locally trusted workspace. This tool cannot establish workspace trust.",
@@ -170,6 +200,30 @@ export function registerKodegptTools(
       annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
     },
     async ({ rootPath }) => structuredToolResult(await context.workspace.open({ rootPath }))
+  );
+
+  server.registerTool(
+    "workspace.trust",
+    {
+      description: "Trust a local workspace path using locally derived persistent filesystem identity.",
+      inputSchema: {
+        rootPath: z.string().min(1),
+        profile: z.enum(["observe", "develop", "trusted"]).optional()
+      },
+      annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    },
+    async ({ rootPath, profile }) =>
+      structuredToolResult(await context.workspace.trust({ rootPath, profile }))
+  );
+
+  server.registerTool(
+    "workspace.untrust",
+    {
+      description: "Remove durable workspace trust and revoke active workspace authority when open.",
+      inputSchema: { trustId: z.string().min(1) },
+      annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    },
+    async ({ trustId }) => structuredToolResult(await context.workspace.untrust({ trustId }))
   );
 
   server.registerTool(
@@ -403,6 +457,102 @@ export function registerKodegptTools(
       nativeCapabilityResult(async () =>
         GitDiffHistoryResultSchema.parse(await context.git.diffHistory(input))
       )
+  );
+
+  server.registerTool(
+    "git.stage",
+    {
+      description: "Stage bounded workspace-relative paths through the trusted local Git workflow.",
+      inputSchema: GitStageInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.stage(input)))
+  );
+
+  server.registerTool(
+    "git.commit",
+    {
+      description: "Create a local Git commit with a bounded message through trusted workspace authority.",
+      inputSchema: GitCommitInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.commit(input)))
+  );
+
+  server.registerTool(
+    "git.branchCreate",
+    {
+      description: "Create a validated local Git branch through trusted workspace authority.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchCreate(input)))
+  );
+
+  server.registerTool(
+    "git.branchSwitch",
+    {
+      description: "Switch to a validated existing local Git branch through trusted workspace authority.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchSwitch(input)))
+  );
+
+  server.registerTool(
+    "git.branchDelete",
+    {
+      description: "Safely delete a validated merged local Git branch without force deletion.",
+      inputSchema: GitBranchInputSchema,
+      outputSchema: GitLocalMutationResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchDelete(input)))
+  );
+
+  server.registerTool(
+    "git.fetch",
+    {
+      description: "Fetch a validated branch from a named remote into its bounded remote-tracking ref.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_FETCH_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.fetch(input)))
+  );
+
+  server.registerTool(
+    "git.pull",
+    {
+      description: "Fetch and fast-forward only from a validated remote branch in a trusted workspace.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.pull(input)))
+  );
+
+  server.registerTool(
+    "git.push",
+    {
+      description: "Push a validated local branch to the same branch on a named remote without force.",
+      inputSchema: GitRemoteInputSchema,
+      outputSchema: GitRemoteMutationResultSchema,
+      annotations: REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitRemoteMutationResultSchema.parse(await context.git.push(input)))
   );
 
   server.registerTool(

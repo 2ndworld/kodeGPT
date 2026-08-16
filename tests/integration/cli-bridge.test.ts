@@ -135,7 +135,11 @@ describe("CLI stdio bridge integration flow", () => {
       expect(tools.length).toBe(EXPECTED_MCP_TOOL_NAMES.length);
       const toolNames = tools.map((t) => t.name).sort();
       expect(toolNames).toEqual([...EXPECTED_MCP_TOOL_NAMES].sort());
-      expect(toolNames.some((n) => n.includes("trust"))).toBe(false);
+      expect(toolNames.filter((name) => name.includes("trust"))).toEqual([
+        "trust.list",
+        "workspace.trust",
+        "workspace.untrust"
+      ]);
 
       // 3. System health
       const healthPromise = nextMessage(stdout);

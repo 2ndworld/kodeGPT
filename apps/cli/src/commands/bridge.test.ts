@@ -123,7 +123,15 @@ describe("bridge command unit tests", () => {
       createManagers: () => ({
         workspaceManager: {
           listWorkspaces: () => [],
+          listTrustedWorkspaces: async () => [],
           openWorkspace: async () => readyWorkspace,
+          trustWorkspace: async () => ({
+            id: "trust_1",
+            canonicalRoot: "/tmp",
+            profileCeiling: "observe" as const,
+            trustedAt: "2026-08-15T00:00:00.000Z"
+          }),
+          untrustWorkspace: async () => true,
           closeWorkspace: async () => undefined,
           requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
@@ -182,6 +190,14 @@ describe("bridge command unit tests", () => {
             bytesSpooled: 0,
             artifact: processResult.artifact
           }),
+          gitStage: async () => { throw new Error("unexpected gitStage"); },
+          gitCommit: async () => { throw new Error("unexpected gitCommit"); },
+          gitBranchCreate: async () => { throw new Error("unexpected gitBranchCreate"); },
+          gitBranchSwitch: async () => { throw new Error("unexpected gitBranchSwitch"); },
+          gitBranchDelete: async () => { throw new Error("unexpected gitBranchDelete"); },
+          gitFetch: async () => { throw new Error("unexpected gitFetch"); },
+          gitPull: async () => { throw new Error("unexpected gitPull"); },
+          gitPush: async () => { throw new Error("unexpected gitPush"); },
           runProcess: async () => processResult,
           inspectExecutable: async () => ({
             schemaVersion: 1 as const,

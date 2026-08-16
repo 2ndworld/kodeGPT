@@ -71,6 +71,46 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "changed files",
     "summarize changes"
   ]),
+  "git.stage": entry("git.stage", "Stage bounded workspace-relative paths in trusted local Git.", [
+    "git stage",
+    "git add",
+    "stage changes"
+  ]),
+  "git.commit": entry("git.commit", "Create a bounded trusted local Git commit.", [
+    "git commit",
+    "commit changes",
+    "local commit"
+  ]),
+  "git.branchCreate": entry("git.branchCreate", "Create a validated trusted local Git branch.", [
+    "create git branch",
+    "new branch",
+    "git branch create"
+  ]),
+  "git.branchSwitch": entry("git.branchSwitch", "Switch to a validated trusted local Git branch.", [
+    "switch git branch",
+    "checkout branch",
+    "git switch"
+  ]),
+  "git.branchDelete": entry("git.branchDelete", "Safely delete a merged validated trusted local Git branch.", [
+    "delete git branch",
+    "remove branch",
+    "safe branch delete"
+  ]),
+  "git.fetch": entry("git.fetch", "Fetch a validated branch from a named remote in a trusted workspace.", [
+    "git fetch",
+    "fetch remote branch",
+    "update remote tracking branch"
+  ]),
+  "git.pull": entry("git.pull", "Fast-forward a trusted workspace from a validated remote branch.", [
+    "git pull",
+    "fast-forward pull",
+    "update from remote"
+  ]),
+  "git.push": entry("git.push", "Push a validated local branch to the same branch on a named remote.", [
+    "git push",
+    "push branch",
+    "publish branch"
+  ]),
   "git.log": entry("git.log", "List bounded structured local Git commit history.", [
     "git log",
     "commit history",

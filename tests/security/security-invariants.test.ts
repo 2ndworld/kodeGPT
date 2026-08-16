@@ -161,25 +161,47 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships the native capability hub surface without trust, shell, Codex, or skill execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.4");
+  it("ships only the intended typed trust and bounded Git surface with no generic authority or execution tools", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.6");
     const names = listSurfaceTools().map(({ name }) => name);
     for (const required of [
       "workspace.inspect",
       "code.search",
       "git.changes",
+      "git.stage",
+      "git.commit",
+      "git.branchCreate",
+      "git.branchSwitch",
+      "git.branchDelete",
+      "git.fetch",
+      "git.pull",
+      "git.push",
       "verify.list",
       "verify.run",
       "file.patch",
       "context.build",
+      "trust.list",
+      "workspace.trust",
+      "workspace.untrust",
       "skill.list",
       "skill.inspect",
       "skill.load"
     ]) {
       expect(names).toContain(required);
     }
-    for (const forbidden of [
+    expect(names.filter((name) => name.includes("trust"))).toEqual([
+      "trust.list",
       "workspace.trust",
+      "workspace.untrust"
+    ]);
+    for (const forbidden of [
+      "policy.get",
+      "policy.set",
+      "policy.grant",
+      "policy.revoke",
+      "profile.set",
+      "grant.add",
+      "grant.remove",
       "shell.run",
       "codex.run",
       "codex.exec",
@@ -190,7 +212,12 @@ describe("full security acceptance invariants", () => {
       "skill.source.remove",
       "provider.list",
       "provider.tools",
-      "provider.invoke"
+      "provider.invoke",
+      "git.run",
+      "git.exec",
+      "git.command",
+      "git.reset",
+      "git.rebase"
     ]) {
       expect(names).not.toContain(forbidden);
     }

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -160,6 +160,62 @@ describe("KernelClient persistent runtime", () => {
     });
 
     await client.stop();
+  }, 10_000);
+
+  it("passes the current Node installation root to the hardened runtime as a private bootstrap hint", async () => {
+    const root = await stateRoot("kodegpt-node-root-hint-");
+    const wrapperPath = join(root, "runtime-wrapper.sh");
+    const observedPath = join(root, "node-root.txt");
+    await writeFile(
+      wrapperPath,
+      `#!/bin/sh\nprintf '%s\\n' "$KODEGPT_HOST_NODE_ROOT" > "$KODEGPT_STATE_ROOT/node-root.txt"\nexec ${shellQuote(FEATURE_RUNTIME)}\n`,
+      { mode: 0o755 }
+    );
+    await chmod(wrapperPath, 0o755);
+
+    const client = await KernelClient.start({
+      runtimePath: wrapperPath,
+      stateRoot: root,
+      enableTestMethods: true
+    });
+
+    try {
+      expect((await client.hello()).testMethods).toBe(true);
+      await expect(readFile(observedPath, "utf8")).resolves.toBe(
+        `${dirname(dirname(process.execPath))}\n`
+      );
+    } finally {
+      await client.stop();
+    }
+  }, 10_000);
+
+  it("passes the stable Rust toolchain root without exposing cargo shims or host PATH", async () => {
+    expect(process.platform).toBe("linux");
+    expect(process.arch).toBe("x64");
+    const root = await stateRoot("kodegpt-rust-root-hint-");
+    const wrapperPath = join(root, "runtime-wrapper.sh");
+    const observedPath = join(root, "rust-root.txt");
+    await writeFile(
+      wrapperPath,
+      `#!/bin/sh\nprintf '%s\\n' "$KODEGPT_HOST_RUST_TOOLCHAIN_ROOT" > "$KODEGPT_STATE_ROOT/rust-root.txt"\nexec ${shellQuote(FEATURE_RUNTIME)}\n`,
+      { mode: 0o755 }
+    );
+    await chmod(wrapperPath, 0o755);
+
+    const client = await KernelClient.start({
+      runtimePath: wrapperPath,
+      stateRoot: root,
+      enableTestMethods: true
+    });
+
+    try {
+      expect((await client.hello()).testMethods).toBe(true);
+      await expect(readFile(observedPath, "utf8")).resolves.toBe(
+        `${join(homedir(), ".rustup", "toolchains", "stable-x86_64-unknown-linux-gnu")}\n`
+      );
+    } finally {
+      await client.stop();
+    }
   }, 10_000);
 
   it("keeps test methods unavailable when the feature build is not explicitly enabled", async () => {
