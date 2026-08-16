@@ -1,5 +1,10 @@
 export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "artifact.read", required: ["uri"] },
+  { name: "ci.failure", required: ["runId"] },
+  { name: "ci.repository", required: [] },
+  { name: "ci.run", required: ["runId"] },
+  { name: "ci.runs", required: [] },
+  { name: "ci.status", required: [] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
