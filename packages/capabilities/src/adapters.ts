@@ -11,6 +11,15 @@ import type {
   GitLocalMutationResult,
   GitRemoteMutationResult
 } from "./contracts.js";
+import type {
+  CiAnnotation,
+  CiCheckSummary,
+  CiConclusion,
+  CiJobSummary,
+  CiRepositoryIdentity,
+  CiRunStatus,
+  CiRunSummary
+} from "./remote-ci/contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
 
@@ -138,6 +147,48 @@ export interface RemoteCiCredentialCommandResult {
 
 export interface RemoteCiCredentialCommandRunner {
   run(input: RemoteCiCredentialCommandInput): Promise<RemoteCiCredentialCommandResult>;
+}
+
+export interface RemoteCiProviderList<T> {
+  items: T[];
+  providerPageLimited: boolean;
+  limitReached: boolean;
+}
+
+export interface RemoteCiStatusEvidence {
+  checks: CiCheckSummary[];
+  runs: CiRunSummary[];
+  providerPageLimited: boolean;
+  summaryLimitReached: boolean;
+}
+
+export interface RemoteCiRunDetail {
+  run: CiRunSummary;
+  jobs: CiJobSummary[];
+  annotations: CiAnnotation[];
+  providerPageLimited: boolean;
+  jobLimitReached: boolean;
+  stepLimitReached: boolean;
+}
+
+export interface RemoteCiAdapter {
+  repository(input: { repository: CiRepositoryIdentity }): Promise<{ defaultBranch: string | null }>;
+  statusEvidence(input: { repository: CiRepositoryIdentity; oid: string }): Promise<RemoteCiStatusEvidence>;
+  runs(input: {
+    repository: CiRepositoryIdentity;
+    workflow?: string;
+    ref?: string;
+    status?: CiRunStatus;
+    conclusion?: CiConclusion;
+    limit: number;
+  }): Promise<RemoteCiProviderList<CiRunSummary>>;
+  run(input: { repository: CiRepositoryIdentity; runId: string }): Promise<RemoteCiRunDetail>;
+  failureMetadata(input: { repository: CiRepositoryIdentity; runId: string }): Promise<RemoteCiRunDetail>;
+  failureLog(input: {
+    repository: CiRepositoryIdentity;
+    jobId: string;
+    scanMaxBytes: number;
+  }): Promise<{ bytes: Uint8Array; truncated: boolean }>;
 }
 
 export interface GitLocalAuthorityAdapter {
