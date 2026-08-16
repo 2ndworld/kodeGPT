@@ -13,8 +13,12 @@ import {
 } from "@kodegpt/auth";
 import {
   NativeCapabilityService,
+  PRODUCTION_PROVIDER_MANIFESTS,
+  ProviderAuditClient,
   createGitHubRemoteCiToolAdapter,
+  createProviderGatewayRuntime,
   type GitHubRemoteCiToolAdapterDependencies,
+  type ProviderGatewayRuntime,
   type RemoteCiToolAdapter
 } from "@kodegpt/capabilities";
 import {
@@ -181,6 +185,9 @@ export interface ProductionServiceStackDependencies {
     trustProfile: TrustProfileBundle;
   }): ManagerBundle;
   createRemoteCi?(options: GitHubRemoteCiToolAdapterDependencies): RemoteCiToolAdapter;
+  createProviderGateway?(
+    input: Parameters<typeof createProviderGatewayRuntime>[0]
+  ): Pick<ProviderGatewayRuntime, "close">;
 }
 
 export interface ProductionServiceStack {
@@ -205,6 +212,7 @@ export async function createProductionServiceStack(
 
   let kernel: StartKernel | undefined;
   let skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined;
+  let providerRuntime: Pick<ProviderGatewayRuntime, "close"> | undefined;
   try {
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
@@ -223,6 +231,25 @@ export async function createProductionServiceStack(
 
     const trustProfile = dependencies.createTrustProfile(stateRoot);
     const managers = dependencies.createManagers({ kernel, trustProfile });
+    const providerAudit = new ProviderAuditClient({
+      request: (method, params) => kernel!.request(method, params as Record<string, unknown>)
+    });
+    providerRuntime = (dependencies.createProviderGateway ?? createProviderGatewayRuntime)({
+      stateRoot,
+      manifests: PRODUCTION_PROVIDER_MANIFESTS,
+      audit: providerAudit,
+      workspaceAuthority: {
+        async resolve(workspaceId) {
+          const workspace = managers.workspaceManager.listWorkspaces().find((item) => item.id === workspaceId);
+          if (workspace === undefined) throw new Error(`workspace is not ready: ${workspaceId}`);
+          return {
+            workspaceId,
+            network: workspace.effectivePolicy.network === "unrestricted" ? "unrestricted" : "deny"
+          };
+        }
+      },
+      workspaceRoots: () => managers.workspaceManager.listWorkspaces().map((item) => item.canonicalRoot)
+    });
     const remoteCi = (dependencies.createRemoteCi ?? createGitHubRemoteCiToolAdapter)({
       selections: {
         listReady: async () => managers.workspaceManager.listWorkspaces().map(({ id }) => ({ id }))
@@ -406,11 +433,11 @@ export async function createProductionServiceStack(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
-        await closeProductionStack(skillCatalog, kernel);
+        await closeProductionStack(providerRuntime, skillCatalog, kernel);
       }
     };
   } catch (error) {
-    await closeProductionStack(skillCatalog, kernel).catch(() => undefined);
+    await closeProductionStack(providerRuntime, skillCatalog, kernel).catch(() => undefined);
     throw error;
   }
 }
@@ -629,11 +656,13 @@ async function bindLoopback(mcp: McpNodeHandle, port: number): Promise<BoundLoop
 }
 
 async function closeProductionStack(
+  providerRuntime: Pick<ProviderGatewayRuntime, "close"> | undefined,
   skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined,
   kernel: StartKernel | undefined
 ): Promise<void> {
   let firstError: unknown;
   for (const close of [
+    providerRuntime === undefined ? undefined : () => providerRuntime.close(),
     skillCatalog === undefined ? undefined : () => skillCatalog.close(),
     kernel === undefined ? undefined : () => kernel.stop()
   ]) {

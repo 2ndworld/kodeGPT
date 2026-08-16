@@ -27,7 +27,13 @@ function dependencies(
   }
 ): StartDependencies {
   const kernel = {
-    request: async <T>() => ({} as T),
+    request: async <T>(method: string) => {
+      if (method === "provider.audit") {
+        events.push("provider.audit");
+        return { ok: true } as T;
+      }
+      return {} as T;
+    },
     hello: async () => {
       events.push("kernel.hello");
       return hello;
@@ -229,6 +235,60 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
+  it("keeps Provider Gateway private and idle while wiring audit and workspace authority", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    deps.createManagers = (options) => {
+      const bundle = originalCreateManagers(options);
+      const ready = bundle.workspaceManager.requireReady("ws_test");
+      bundle.workspaceManager.listWorkspaces = () => [{
+        ...ready,
+        effectivePolicy: { ...ready.effectivePolicy, network: "unrestricted" as const }
+      }];
+      return bundle;
+    };
+    let providerInput: Parameters<NonNullable<StartDependencies["createProviderGateway"]>>[0] | undefined;
+    deps.createProviderGateway = (input) => {
+      events.push("provider-runtime");
+      providerInput = input;
+      return {
+        close: async () => {
+          events.push("provider.close");
+        }
+      };
+    };
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      deps
+    );
+    try {
+      expect(events).toContain("provider-runtime");
+      expect(events).not.toContain("provider.audit");
+      expect(Object.keys(stack)).not.toContain("providerRuntime");
+      expect(Object.keys(stack.toolContext)).not.toContain("provider");
+      expect(providerInput!.manifests).toEqual([]);
+      expect(providerInput!.workspaceRoots()).toEqual(["/workspace"]);
+      await expect(providerInput!.workspaceAuthority.resolve("ws_test")).resolves.toEqual({
+        workspaceId: "ws_test",
+        network: "unrestricted"
+      });
+      await providerInput!.audit.record({
+        operationId: "op_test",
+        operation: "execute",
+        phase: "decision",
+        providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
+        adapterId: "test.fixture.read.v1",
+        semanticCapabilityId: "test.fixture.record.read"
+      });
+      expect(events).toContain("provider.audit");
+    } finally {
+      await stack.close();
+    }
+    expect(events.slice(-3)).toEqual(["provider.close", "skill.close", "kernel.stop"]);
+  });
+
   it("production-wires Remote-CI without invoking provider work during startup", async () => {
     const events: string[] = [];
     const deps = dependencies(events);
