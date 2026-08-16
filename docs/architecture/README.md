@@ -11,7 +11,8 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 | Managed public exposure | current zrok implementation and its repository design/operational documentation; older ngrok/generic-tunnel drafts are historical unless explicitly marked current |
 | Stable local service + exposure lifecycle | `docs/superpowers/specs/2026-08-14-kodegpt-stable-local-service-lifecycle-design.md`, `docs/superpowers/plans/2026-08-14-kodegpt-stable-local-service-lifecycle.md`, and current `apps/cli/src/service` + service CLI tests |
 | Hybrid skill interoperability | `docs/superpowers/specs/2026-08-12-kodegpt-hybrid-skill-interoperability-reconciled-design.md` plus current `packages/skills`, `packages/mcp-server`, integration tests, and the capability-quality reconciliation plan |
-| Personal trusted authority / MCP surface `0.6` | `docs/superpowers/specs/2026-08-15-kodegpt-personal-trusted-authority-design.md`, `docs/superpowers/plans/2026-08-15-kodegpt-personal-trusted-authority.md`, current trust/Git tool source and tests, and merged PR #13 baseline `3e568ead27346d6670ecd9acca991708048431c2` |
+| Personal trusted authority | `docs/superpowers/specs/2026-08-15-kodegpt-personal-trusted-authority-design.md`, `docs/superpowers/plans/2026-08-15-kodegpt-personal-trusted-authority.md`, current trust/Git tool source and tests, and merged PR #13 baseline `3e568ead27346d6670ecd9acca991708048431c2` |
+| Bounded Remote-CI Intelligence / current MCP surface `0.7` | `docs/superpowers/specs/2026-08-16-kodegpt-bounded-remote-ci-intelligence-design.md`, `docs/superpowers/plans/2026-08-16-kodegpt-bounded-remote-ci-intelligence.md`, `docs/release/2026-08-16-bounded-remote-ci-readiness.md`, current `ci.*` source/tests, and merged PR #15 baseline `f6113b3eef12ab6f3d6b8b7b7952aa18d3f4bae1` |
 | ChatGPT compatibility and host evidence contract | `docs/compatibility/chatgpt.md` and `tests/host/README.md`; only observed host behavior may be recorded as observed |
 | Security/runtime invariants | Rust runtime/workspace authority, security tests, protocol tests, isolation tests, and the execution tracker; source/tests take precedence over stale historical prose |
 
@@ -24,12 +25,12 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 - Local service lifecycle is operator-only CLI authority. It is not an MCP capability and does not grant workspace/process/filesystem authority.
 - `systemd --user` owns only the outer installed KodeGPT foreground service; KodeGPT's existing managed-zrok path remains the single supervisor for the loopback MCP server, Rust runtime, and zrok child.
 - Installed service releases live outside Git worktrees so deleting a feature worktree cannot invalidate the running executable. The general KodeGPT state root remains `~/.kodegpt`.
-- Provider interoperability is not part of the current shipped authority and requires a separate future security/design gate before implementation.
+- Provider interoperability is not part of the current shipped authority. A dedicated security/design gate is the next authority-bearing design phase, and production implementation remains prohibited until that design is explicitly reviewed/approved and followed by a separate implementation plan.
 - CodexPro/Codex/Claude are not KodeGPT runtime dependencies.
 
 ## Deferred authority-bearing work
 
-### Provider interoperability — separate future security/design gate
+### Provider interoperability — dedicated security/design gate; implementation not started
 
 The following provider actions are **genuinely absent** from the current KodeGPT product/runtime and must not be added opportunistically inside capability, skill, or tunnel maintenance work:
 
@@ -39,7 +40,7 @@ provider.tools
 provider.invoke
 ```
 
-Before any provider code is written, a dedicated future design must resolve at least:
+Before any provider code is written, the dedicated Provider Gateway design must resolve at least:
 
 - provider admission, trust, and durable identity;
 - tool-inventory identity/versioning and capability mapping;
@@ -50,7 +51,7 @@ Before any provider code is written, a dedicated future design must resolve at l
 - bounded request/output/artifact semantics;
 - host-path, environment, prompt, and secret redaction across every public result/error path.
 
-Provider interoperability does **not** imply a generic `skill.run`. GPT Web continues to interpret loaded skill instructions. Any future provider tools must be separately named, typed, bounded actions with their own authority and audit contracts; they must not turn a skill bundle into executable authority.
+Provider interoperability does **not** imply a generic `skill.run`. GPT Web continues to interpret loaded skill instructions. Any future provider-backed actions must be separately named, typed, bounded actions with their own authority and audit contracts; they must not turn a skill bundle into executable authority. Historical names such as `provider.list`, `provider.tools`, and `provider.invoke` are design inputs, not pre-approved public surface names.
 
 ### Superseded transport work
 
