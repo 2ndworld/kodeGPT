@@ -152,7 +152,7 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "workflow run details",
     "github actions run"
   ]),
-  "ci.failure": entry("ci.failure", "Inspect bounded redacted failure evidence from one Remote-CI workflow run.", [
+  "ci.failure": entry("ci.failure", "Inspect bounded redacted read-only failure evidence from one Remote-CI workflow run.", [
     "ci failure",
     "why ci failed",
     "github actions failure"
