@@ -4,6 +4,7 @@ import type {
   RemoteCiAdapter,
   RemoteCiAuditAdapter,
   RemoteCiAuditInput,
+  RemoteCiRevisionAdapter,
   RemoteCiWorkspaceRootAdapter
 } from "../adapters.js";
 import { CapabilityError } from "../errors.js";
@@ -44,6 +45,14 @@ class Fixture {
   credentialError: Error | undefined;
   runsInput: Parameters<RemoteCiAdapter["runs"]>[0] | undefined;
   factoryCredentials: string[] = [];
+  statusChecks: Awaited<ReturnType<RemoteCiAdapter["statusEvidence"]>>["checks"] = [];
+  statusRuns: Awaited<ReturnType<RemoteCiAdapter["statusEvidence"]>>["runs"] = [];
+  statusRequests = 3;
+  statusPageLimited = false;
+  statusSummaryLimitReached = false;
+  statusInput: Parameters<RemoteCiAdapter["statusEvidence"]>[0] | undefined;
+  revisionResult = { oid: "b".repeat(40), branch: "release" as string | null };
+  revisionInput: { workspaceId: string; revision: unknown } | undefined;
   runsRequests = 1;
   runRequests = 2;
   runsLimitReached = false;
@@ -62,6 +71,14 @@ class Fixture {
 
   roots: RemoteCiWorkspaceRootAdapter = {
     rootFor: async () => "/workspace"
+  };
+
+  revisions: RemoteCiRevisionAdapter = {
+    resolve: async (workspaceId, revision) => {
+      this.events.push("resolve-revision");
+      this.revisionInput = { workspaceId, revision };
+      return this.revisionResult;
+    }
   };
 
   credential: GitHubCredentialProvider = {
@@ -86,13 +103,18 @@ class Fixture {
       if (this.providerError !== undefined) throw this.providerError;
       return { defaultBranch: "main", providerRequests: 1 };
     },
-    statusEvidence: async () => ({
-      checks: [],
-      runs: [],
-      providerPageLimited: false,
-      summaryLimitReached: false,
-      providerRequests: 2
-    }),
+    statusEvidence: async (input) => {
+      this.events.push("provider-status");
+      this.statusInput = input;
+      if (this.providerError !== undefined) throw this.providerError;
+      return {
+        checks: this.statusChecks,
+        runs: this.statusRuns,
+        providerPageLimited: this.statusPageLimited,
+        summaryLimitReached: this.statusSummaryLimitReached,
+        providerRequests: this.statusRequests
+      };
+    },
     runs: async (input) => {
       this.events.push("provider-runs");
       this.runsInput = input;
@@ -133,6 +155,7 @@ class Fixture {
     return new RemoteCiService({
       resolver: this.resolver,
       roots: this.roots,
+      revisions: this.revisions,
       credentialProvider: this.credential,
       adapterFactory: {
         create: (credential) => {
@@ -149,6 +172,136 @@ class Fixture {
 async function expectCode(promise: Promise<unknown>, code: string) {
   await expect(promise).rejects.toMatchObject({ name: "CapabilityError", code });
 }
+
+describe("RemoteCiService status", () => {
+  it("uses the trusted local HEAD on the zero-argument fast path", async () => {
+    const fixture = new Fixture();
+    const result = await fixture.service().status({});
+
+    expect(result).toMatchObject({
+      workspaceId: "ws_1",
+      provider: "github",
+      repository: { fullName: "2ndworld/kodeGPT" },
+      revision: { oid: OID, branch: "main" },
+      state: "UNKNOWN",
+      checks: [],
+      runs: [],
+      failures: [],
+      truncated: false,
+      truncationReasons: []
+    });
+    expect(fixture.statusInput).toEqual({
+      repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" },
+      oid: OID
+    });
+    expect(fixture.revisionInput).toBeUndefined();
+    expect(fixture.events).toEqual([
+      "resolve-repository",
+      "audit-decision",
+      "credential",
+      "provider-status",
+      "audit-success"
+    ]);
+  });
+
+  it("applies exact FAIL > PENDING > CANCELLED > UNKNOWN > PASS precedence", async () => {
+    const fixture = new Fixture();
+    fixture.statusChecks = [
+      { id: "1", name: "pass", state: "PASS", conclusion: "SUCCESS", url: null },
+      { id: "2", name: "unknown", state: "UNKNOWN", conclusion: null, url: null },
+      { id: "3", name: "cancelled", state: "CANCELLED", conclusion: "CANCELLED", url: null },
+      { id: "4", name: "pending", state: "PENDING", conclusion: null, url: null },
+      { id: "5", name: "fail", state: "FAIL", conclusion: "FAILURE", url: null }
+    ];
+    await expect(fixture.service().status({})).resolves.toMatchObject({ state: "FAIL" });
+
+    fixture.statusChecks = fixture.statusChecks.filter((check) => check.state !== "FAIL");
+    await expect(fixture.service().status({})).resolves.toMatchObject({ state: "PENDING" });
+    fixture.statusChecks = fixture.statusChecks.filter((check) => check.state !== "PENDING");
+    await expect(fixture.service().status({})).resolves.toMatchObject({ state: "CANCELLED" });
+    fixture.statusChecks = fixture.statusChecks.filter((check) => check.state !== "CANCELLED");
+    await expect(fixture.service().status({})).resolves.toMatchObject({ state: "UNKNOWN" });
+    fixture.statusChecks = fixture.statusChecks.filter((check) => check.state !== "UNKNOWN");
+    await expect(fixture.service().status({})).resolves.toMatchObject({ state: "PASS" });
+  });
+
+  it("keeps failure/pending observations when the combined summary limit is exceeded", async () => {
+    const fixture = new Fixture();
+    fixture.statusChecks = Array.from({ length: 49 }, (_, index) => ({
+      id: String(index + 1),
+      name: `pass-${index + 1}`,
+      state: "PASS" as const,
+      conclusion: "SUCCESS" as const,
+      url: null
+    }));
+    fixture.statusRuns = [
+      { ...RUN, id: "100", status: "COMPLETED", conclusion: "FAILURE" },
+      { ...RUN, id: "101", status: "IN_PROGRESS", conclusion: null },
+      { ...RUN, id: "102", status: "COMPLETED", conclusion: "SUCCESS" }
+    ];
+
+    const result = await fixture.service().status({});
+    expect(result.checks.length + result.runs.length).toBe(50);
+    expect(result.runs.map((run) => run.id)).toContain("100");
+    expect(result.runs.map((run) => run.id)).toContain("101");
+    expect(result.state).toBe("FAIL");
+    expect(result.truncationReasons).toEqual(["SUMMARY_LIMIT"]);
+  });
+
+  it("caps failure summaries at 20 with explicit SUMMARY_LIMIT", async () => {
+    const fixture = new Fixture();
+    fixture.statusRuns = Array.from({ length: 25 }, (_, index) => ({
+      ...RUN,
+      id: String(100 + index),
+      conclusion: "FAILURE" as const
+    }));
+
+    const result = await fixture.service().status({});
+    expect(result.failures).toHaveLength(20);
+    expect(result.failures[0]).toMatchObject({ runId: "100", conclusion: "FAILURE" });
+    expect(result.truncationReasons).toEqual(["SUMMARY_LIMIT"]);
+  });
+
+  it("resolves an explicit local revision without changing repository identity", async () => {
+    const fixture = new Fixture();
+    const result = await fixture.service().status({
+      revision: { kind: "branch", name: "release" }
+    });
+
+    expect(fixture.revisionInput).toEqual({
+      workspaceId: "ws_1",
+      revision: { kind: "branch", name: "release" }
+    });
+    expect(fixture.statusInput?.oid).toBe("b".repeat(40));
+    expect(result.revision).toEqual({ oid: "b".repeat(40), branch: "release" });
+    expect(result.repository.fullName).toBe("2ndworld/kodeGPT");
+    expect(fixture.events.slice(0, 3)).toEqual([
+      "resolve-repository",
+      "audit-decision",
+      "resolve-revision"
+    ]);
+  });
+
+  it("fails and audits when GitHub cannot observe the locally resolved commit", async () => {
+    const fixture = new Fixture();
+    fixture.providerError = new CapabilityError("CI_NOT_FOUND", "Commit is not observable");
+    await expectCode(
+      fixture.service().status({ revision: { kind: "oid", oid: "b".repeat(40) } }),
+      "CI_NOT_FOUND"
+    );
+    expect(fixture.audits.at(-1)).toMatchObject({ phase: "failed", errorCode: "CI_NOT_FOUND" });
+  });
+
+  it("enforces the six-request ci.status provider budget", async () => {
+    const fixture = new Fixture();
+    fixture.statusRequests = 7;
+    await expectCode(fixture.service().status({}), "CI_RESPONSE_INVALID");
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "failed",
+      errorCode: "CI_RESPONSE_INVALID"
+    });
+  });
+});
 
 describe("RemoteCiService repository/runs/run", () => {
   it("enforces decision-before-credential/network and outcome-before-return", async () => {

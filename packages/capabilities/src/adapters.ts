@@ -154,6 +154,13 @@ export interface RemoteCiWorkspaceRootAdapter {
   rootFor(workspaceId: string): Promise<string>;
 }
 
+export interface RemoteCiRevisionAdapter {
+  resolve(workspaceId: string, revision: GitRevision): Promise<{
+    oid: string;
+    branch: string | null;
+  }>;
+}
+
 export type RemoteCiErrorCode = Extract<CapabilityErrorCode, `CI_${string}`>;
 
 export interface RemoteCiAuditInput {

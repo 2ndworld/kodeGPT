@@ -57,6 +57,10 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
     oid: string;
   }): Promise<RemoteCiStatusEvidence> {
     const oid = expectOid(input.oid);
+    const commitRaw = await this.#http.getJson<unknown>(`${repoPath(input.repository)}/commits/${oid}`);
+    const commit = expectRecord(commitRaw);
+    if (expectOid(commit.sha) !== oid) throw invalidResponse();
+
     const checksQuery = new URLSearchParams({ per_page: String(MAX_CI_STATUS_SUMMARIES) });
     const runsQuery = new URLSearchParams({ head_sha: oid, per_page: String(MAX_CI_STATUS_SUMMARIES) });
     const [checksRaw, runsRaw] = await Promise.all([
@@ -70,7 +74,7 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
       runs: runs.items,
       providerPageLimited: checks.providerPageLimited || runs.providerPageLimited,
       summaryLimitReached: checks.limitReached || runs.limitReached,
-      providerRequests: checks.providerRequests + runs.providerRequests
+      providerRequests: 1 + checks.providerRequests + runs.providerRequests
     };
   }
 

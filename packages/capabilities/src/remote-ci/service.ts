@@ -5,18 +5,27 @@ import type {
   RemoteCiAuditAdapter,
   RemoteCiAuditInput,
   RemoteCiErrorCode,
+  RemoteCiRevisionAdapter,
   RemoteCiWorkspaceRootAdapter
 } from "../adapters.js";
 import { CapabilityError, type CapabilityErrorCode } from "../errors.js";
 import {
   CI_REQUEST_BUDGETS,
   DEFAULT_CI_RUNS_LIMIT,
+  MAX_CI_STATUS_FAILURE_SUMMARIES,
+  MAX_CI_STATUS_SUMMARIES,
+  type CiCheckSummary,
+  type CiFailureSummary,
+  type CiOverallState,
   type CiRepositoryInput,
   type CiRepositoryResult,
   type CiRunInput,
   type CiRunResult,
   type CiRunsInput,
   type CiRunsResult,
+  type CiRunSummary,
+  type CiStatusInput,
+  type CiStatusResult,
   type CiTruncationReason
 } from "./contracts.js";
 import type { GitHubCredential, GitHubCredentialProvider } from "./credential-provider.js";
@@ -28,7 +37,9 @@ import {
   CiRunInputSchema,
   CiRunResultSchema,
   CiRunsInputSchema,
-  CiRunsResultSchema
+  CiRunsResultSchema,
+  CiStatusInputSchema,
+  CiStatusResultSchema
 } from "./schemas.js";
 
 export interface RemoteCiRepositoryResolverLike {
@@ -42,6 +53,7 @@ export interface RemoteCiAdapterFactory {
 export interface RemoteCiServiceDependencies {
   resolver: RemoteCiRepositoryResolverLike;
   roots: RemoteCiWorkspaceRootAdapter;
+  revisions: RemoteCiRevisionAdapter;
   credentialProvider: GitHubCredentialProvider;
   adapterFactory: RemoteCiAdapterFactory;
   audit: RemoteCiAuditAdapter;
@@ -52,6 +64,7 @@ export interface RemoteCiServiceDependencies {
 export class RemoteCiService {
   readonly #resolver: RemoteCiRepositoryResolverLike;
   readonly #roots: RemoteCiWorkspaceRootAdapter;
+  readonly #revisions: RemoteCiRevisionAdapter;
   readonly #credentialProvider: GitHubCredentialProvider;
   readonly #adapterFactory: RemoteCiAdapterFactory;
   readonly #audit: RemoteCiAuditAdapter;
@@ -61,6 +74,7 @@ export class RemoteCiService {
   constructor(dependencies: RemoteCiServiceDependencies) {
     this.#resolver = dependencies.resolver;
     this.#roots = dependencies.roots;
+    this.#revisions = dependencies.revisions;
     this.#credentialProvider = dependencies.credentialProvider;
     this.#adapterFactory = dependencies.adapterFactory;
     this.#audit = dependencies.audit;
@@ -119,6 +133,104 @@ export class RemoteCiService {
         credentialSource: "gh",
         truncated: false,
         truncationReasons: []
+      });
+      await this.#success(operation, result.truncated, credentialSource);
+      return result;
+    } catch (error) {
+      const normalized = normalizeOperationError(error);
+      if (normalized.code === "CI_AUDIT_UNAVAILABLE") throw normalized;
+      await this.#failed(operation, normalized, credentialSource);
+      throw normalized;
+    }
+  }
+
+  async status(input: CiStatusInput): Promise<CiStatusResult> {
+    const parsed = parseInput(CiStatusInputSchema, input);
+    const resolved = await this.#resolve(parsed.workspaceId);
+    const operation = this.#operation("ci.status", resolved);
+    await this.#decision(operation);
+
+    let credentialSource: "gh" | undefined;
+    try {
+      const revision =
+        parsed.revision === undefined || parsed.revision.kind === "head"
+          ? { oid: resolved.headOid, branch: resolved.branch }
+          : validateResolvedRevision(
+              await this.#revisions.resolve(resolved.workspaceId, parsed.revision)
+            );
+      const root = await this.#roots.rootFor(resolved.workspaceId);
+      const credential = await this.#credentialProvider.getCredential({ workspaceRoot: root });
+      credentialSource = credential.source;
+      const adapter = this.#adapterFactory.create(credential);
+      const provider = await adapter.statusEvidence({
+        repository: publicRepository(resolved),
+        oid: revision.oid
+      });
+      enforceProviderBudget("status", provider.providerRequests);
+
+      const observations = [
+        ...provider.checks.map((check, index) => ({
+          kind: "check" as const,
+          state: check.state,
+          index,
+          value: check
+        })),
+        ...provider.runs.map((run, index) => ({
+          kind: "run" as const,
+          state: stateForRun(run),
+          index,
+          value: run
+        }))
+      ];
+      const overallState = aggregateState(observations.map((observation) => observation.state));
+      const retained = [...observations]
+        .sort((left, right) => {
+          const rank = CI_STATE_RANK[right.state] - CI_STATE_RANK[left.state];
+          if (rank !== 0) return rank;
+          if (left.kind !== right.kind) return left.kind === "check" ? -1 : 1;
+          return left.index - right.index;
+        })
+        .slice(0, MAX_CI_STATUS_SUMMARIES);
+      const checks = retained
+        .filter((observation): observation is Extract<(typeof retained)[number], { kind: "check" }> => observation.kind === "check")
+        .map((observation) => observation.value);
+      const runs = retained
+        .filter((observation): observation is Extract<(typeof retained)[number], { kind: "run" }> => observation.kind === "run")
+        .map((observation) => observation.value);
+
+      const failureCandidates = provider.runs
+        .filter((run) => stateForRun(run) === "FAIL")
+        .map<CiFailureSummary>((run) => ({
+          runId: run.id,
+          jobId: null,
+          jobName: null,
+          stepName: null,
+          conclusion: run.conclusion,
+          url: run.url
+        }));
+      const failures = failureCandidates.slice(0, MAX_CI_STATUS_FAILURE_SUMMARIES);
+      const reasons: CiTruncationReason[] = [];
+      if (
+        provider.summaryLimitReached ||
+        observations.length > MAX_CI_STATUS_SUMMARIES ||
+        failureCandidates.length > MAX_CI_STATUS_FAILURE_SUMMARIES
+      ) {
+        reasons.push("SUMMARY_LIMIT");
+      }
+      if (provider.providerPageLimited) reasons.push("PROVIDER_PAGE_LIMIT");
+
+      const result = this.#finalizeStatus({
+        schemaVersion: 1,
+        workspaceId: resolved.workspaceId,
+        provider: "github",
+        repository: publicRepository(resolved),
+        revision,
+        state: overallState,
+        checks,
+        runs,
+        failures,
+        truncated: reasons.length > 0,
+        truncationReasons: reasons
       });
       await this.#success(operation, result.truncated, credentialSource);
       return result;
@@ -301,6 +413,10 @@ export class RemoteCiService {
     return parseResult(CiRepositoryResultSchema, fitCiResult(value));
   }
 
+  #finalizeStatus(value: CiStatusResult): CiStatusResult {
+    return parseResult(CiStatusResultSchema, fitCiResult(value));
+  }
+
   #finalizeRuns(value: CiRunsResult): CiRunsResult {
     return parseResult(CiRunsResultSchema, fitCiResult(value));
   }
@@ -339,6 +455,68 @@ function publicRepository(resolved: ResolvedCiRepository) {
     name: resolved.name,
     fullName: resolved.fullName
   };
+}
+
+const CI_STATE_RANK: Record<CiOverallState, number> = {
+  PASS: 0,
+  UNKNOWN: 1,
+  CANCELLED: 2,
+  PENDING: 3,
+  FAIL: 4
+};
+
+function aggregateState(states: CiOverallState[]): CiOverallState {
+  if (states.length === 0) return "UNKNOWN";
+  return states.reduce<CiOverallState>((highest, state) =>
+    CI_STATE_RANK[state] > CI_STATE_RANK[highest] ? state : highest
+  , "PASS");
+}
+
+function stateForRun(run: CiRunSummary): CiOverallState {
+  if (run.status === "QUEUED" || run.status === "IN_PROGRESS") return "PENDING";
+  if (run.status !== "COMPLETED") return "UNKNOWN";
+  switch (run.conclusion) {
+    case "FAILURE":
+    case "TIMED_OUT":
+    case "ACTION_REQUIRED":
+    case "STARTUP_FAILURE":
+      return "FAIL";
+    case "CANCELLED":
+      return "CANCELLED";
+    case "SUCCESS":
+    case "NEUTRAL":
+    case "SKIPPED":
+      return "PASS";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+function validateResolvedRevision(value: {
+  oid: string;
+  branch: string | null;
+}): { oid: string; branch: string | null } {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.oid)) {
+    throw new CapabilityError("CI_RESPONSE_INVALID", "Local Git revision resolver returned an invalid OID");
+  }
+  if (value.branch !== null && !isSafeGitRef(value.branch)) {
+    throw new CapabilityError("CI_RESPONSE_INVALID", "Local Git revision resolver returned an invalid branch");
+  }
+  return value;
+}
+
+function isSafeGitRef(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 128 &&
+    !value.includes("..") &&
+    !value.includes("@{") &&
+    value.split("/").every((part) =>
+      /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) &&
+      !part.endsWith(".lock") &&
+      !part.endsWith(".")
+    )
+  );
 }
 
 function parseInput<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T {

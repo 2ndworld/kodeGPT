@@ -91,6 +91,7 @@ describe("GitHubRemoteCiAdapter", () => {
   it("normalizes check and workflow-run evidence for one commit", async () => {
     const http = new FakeHttp();
     http.responses.push(
+      { sha: OID },
       {
         total_count: 2,
         check_runs: [
@@ -124,6 +125,10 @@ describe("GitHubRemoteCiAdapter", () => {
     expect(http.calls).toEqual([
       {
         kind: "json",
+        path: `/repos/2ndworld/kodeGPT/commits/${OID}`
+      },
+      {
+        kind: "json",
         path: `/repos/2ndworld/kodeGPT/commits/${OID}/check-runs`,
         query: "per_page=50"
       },
@@ -137,15 +142,30 @@ describe("GitHubRemoteCiAdapter", () => {
 
   it("returns empty status evidence rather than PASS when the provider observes nothing", async () => {
     const http = new FakeHttp();
-    http.responses.push({ total_count: 0, check_runs: [] }, { total_count: 0, workflow_runs: [] });
+    http.responses.push(
+      { sha: OID },
+      { total_count: 0, check_runs: [] },
+      { total_count: 0, workflow_runs: [] }
+    );
     const adapter = new GitHubRemoteCiAdapter({ http });
     await expect(adapter.statusEvidence({ repository: REPOSITORY, oid: OID })).resolves.toEqual({
       checks: [],
       runs: [],
       providerPageLimited: false,
       summaryLimitReached: false,
-      providerRequests: 2
+      providerRequests: 3
     });
+  });
+
+  it("rejects commit metadata whose canonical SHA does not match the requested local revision", async () => {
+    const http = new FakeHttp();
+    http.responses.push({ sha: "b".repeat(40) });
+    const adapter = new GitHubRemoteCiAdapter({ http });
+    await expectCode(
+      adapter.statusEvidence({ repository: REPOSITORY, oid: OID }),
+      "CI_RESPONSE_INVALID"
+    );
+    expect(http.calls).toHaveLength(1);
   });
 
   it("lists at most one bounded provider page and filters normalized runs", async () => {
