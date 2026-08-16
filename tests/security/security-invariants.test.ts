@@ -10,6 +10,13 @@ import {
   KernelClient,
   RuntimeUnavailableError
 } from "../../packages/core/src/kernel-client.js";
+import {
+  PRODUCTION_PROVIDER_MANIFESTS,
+  PROVIDER_CREDENTIAL_TIMEOUT_MS,
+  PROVIDER_MAX_REQUESTS,
+  PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS,
+  PROVIDER_OPERATION_TIMEOUT_MS
+} from "../../packages/capabilities/src/index.js";
 import { READ_ONLY_TOOL_ANNOTATIONS } from "../../packages/mcp-server/src/annotations.js";
 import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
 import {
@@ -164,6 +171,13 @@ describe("full security acceptance invariants", () => {
   it("ships only the intended typed trust and bounded Git surface with no generic authority or execution tools", () => {
     expect(MCP_SURFACE_VERSION).toBe("0.7");
     const names = listSurfaceTools().map(({ name }) => name);
+    expect(names).toHaveLength(51);
+    expect(names.some((name) => name.startsWith("provider."))).toBe(false);
+    expect(PRODUCTION_PROVIDER_MANIFESTS).toEqual([]);
+    expect(PROVIDER_CREDENTIAL_TIMEOUT_MS).toBe(5_000);
+    expect(PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS).toBe(10_000);
+    expect(PROVIDER_OPERATION_TIMEOUT_MS).toBe(30_000);
+    expect(PROVIDER_MAX_REQUESTS).toBe(8);
     for (const required of [
       "workspace.inspect",
       "ci.repository",

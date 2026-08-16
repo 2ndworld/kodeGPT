@@ -64,6 +64,30 @@ function scanFile(path, source) {
       /["'](?:github\.request|github\.graphql|github\.rest|gh\.run|ci\.logs\.raw|ci\.jobs\.list|ci\.steps\.list|ci\.rerun|ci\.cancel|ci\.dispatch|provider\.list|provider\.tools|provider\.invoke|skill\.run)["']/
     );
     forbid(path, source, "remote-ci-gh-api", /\bgh\s+api\b/i);
+    forbid(
+      path,
+      source,
+      "provider-forbidden-surface",
+      /["']provider\.(?:request|execute|dispatch|graphql|rest|write|create|update|delete|mutate|cancel|rerun|agent|process)["']/i
+    );
+    forbid(
+      path,
+      source,
+      "provider-raw-authority",
+      /\bprovider(?:Url|URL|Method|Headers|Argv|Graphql|GraphQL)\b/
+    );
+    forbid(
+      path,
+      source,
+      "provider-generic-dispatch",
+      /\b(?:genericProviderRequest|dispatchProviderRequest|providerRequestDispatcher)\b/
+    );
+    forbid(
+      path,
+      source,
+      "provider-process-proxy",
+      /\b(?:Provider|provider)(?:Agent|Process)(?:Proxy|Bridge|Runner)\b/
+    );
   }
 
   if (path === "crates/sandbox/src/bubblewrap.rs") {
