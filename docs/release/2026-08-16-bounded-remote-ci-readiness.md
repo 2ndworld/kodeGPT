@@ -4,7 +4,7 @@ Status date: 2026-08-16
 Branch: `feat/bounded-remote-ci-intelligence`
 Pre-documentation exact candidate: `d959fbb7772521d8ff5501343d257773409e2b4a`
 Baseline: `7a22bcd576e841dc7e49ba431679934af0f7284f`
-Status: automated verification PASS; immutable installed-service cutover PASS; live health/capability identity PASS; final five-tool ChatGPT host dogfood PENDING because this conversation still exposes the pre-refresh 46-tool connector schema even though the live service reports surface `0.7`.
+Status: PASS — automated verification, immutable installed-service cutover, fresh-host five-tool Remote-CI dogfood, live durable-audit inspection, and post-dogfood defect correction/cutover are complete on runtime `0.1`, protocol `2026-07-28`, surface `0.7`.
 
 ## Scope
 
@@ -96,6 +96,28 @@ Fresh Task 16 gates on exact candidate `d959fbb7772521d8ff5501343d257773409e2b4a
 
 The initial full `pnpm test` run found exactly four stale surface fixtures that expected 46 tools. Targeted regression verification passed 15/15 before the complete gate sequence was rerun to green.
 
+## Fresh-host defect signal and correction
+
+Fresh-host dogfood exposed one real provider-shape compatibility defect after the initial `0.7` cutover. `ci.failure` rejected existing GitHub failure annotations whose valid `message` field contained a line feed, because the annotation normalizer reused a single-line control-character validator.
+
+The defect was reproduced against historical failed run `31887613397`, isolated to the multiline annotation message, and corrected test-first. The regression test was observed RED before production code changed, then GREEN after the normalizer was narrowed so only annotation `message` accepts LF-delimited bounded text; other annotation fields retain the stricter control-character rejection.
+
+Correction commit:
+
+```text
+57ef0e109d2e2c993d9bef4d780b4cac7fb2a96e fix: accept multiline ci annotations
+```
+
+Fresh verification after that behavior change:
+
+- `pnpm test`: PASS — 96 files / 594 tests.
+- `cargo test --workspace`: PASS across the complete Rust workspace.
+- `pnpm run typecheck`: PASS.
+- `pnpm run build`: PASS.
+- `pnpm run verify:forbidden`: PASS — `forbidden-pattern scan ok`.
+- `pnpm run verify:package`: PASS — `package smoke ok`.
+- `pnpm run test:acceptance`: PASS — 2 files / 6 tests.
+
 ## Immutable installed-service staging and cutover
 
 Pre-cutover live baseline:
@@ -146,26 +168,64 @@ A live ChatGPT connector call after cutover returned `system.health.ok=true`, `a
 
 The canonical trusted repository `/home/sauron/dev/kodegpt` could still be opened and closed normally through the live connector after cutover.
 
-## Remaining live-host blocker
+## Fresh-host five-tool dogfood
 
-The current ChatGPT conversation was created before the surface `0.7` cutover. Its loaded KodeGPT connector action schema remains cached at 46 tools. Re-querying the connector resource inventory after cutover still returned 46 tools even though live `system.capabilities` already reports surface `0.7`.
+A fresh ChatGPT host snapshot exposed exactly 51 KodeGPT actions, including all five additive Remote-CI actions, while live `system.capabilities` reported runtime `0.1`, protocol `2026-07-28`, and surface `0.7`.
 
-Therefore this conversation cannot directly invoke the newly-added `ci.repository`, `ci.status`, `ci.runs`, `ci.run`, or `ci.failure` actions. Rotating the connector credential merely to bypass this host-schema cache was intentionally not done because it would invalidate the existing ChatGPT connector credential and is unnecessary/risky.
+Live acceptance against the trusted canonical repository `/home/sauron/dev/kodegpt` produced the following bounded evidence:
 
-As a result, the following final Task 17 evidence is still pending a fresh ChatGPT host/session whose connector schema has refreshed to 51 tools:
+- `ci.repository`: PASS — provider `github`, repository `2ndworld/kodeGPT`, selected remote `origin`, default branch `main`, auth state `AVAILABLE`.
+- zero-argument `ci.status({})`: PASS when the uniquely READY canonical workspace was temporarily on its clean published `main` branch; it resolved revision `7a22bcd576e841dc7e49ba431679934af0f7284f`, branch `main`, overall state `PASS`, check `95108996638`, and run `31924171563`. The canonical repository's normal `docs/bounded-remote-ci-design` branch contains two intentional local-only design/plan commits, so an earlier zero-argument call on that unpublished HEAD could not resolve provider commit evidence. The branch was restored immediately after exercising the intended zero-argument path.
+- `ci.runs`: PASS — bounded recent runs returned; `31924171563` was `COMPLETED` / `SUCCESS`. The small requested page reported `RUN_LIMIT` and `PROVIDER_PAGE_LIMIT` truncation explicitly.
+- `ci.run`: PASS on existing run `31924171563`, returning structured bounded run/job/step data for job `95108996638`.
+- `ci.failure`: PASS on pre-existing historical failed run `31887613397`; selected job `95019102488`, failed step `TypeScript test suite`, reason `STEP_FAILURE`, two structured annotations, and bounded failure-log evidence. Result reported `LOG_BYTE_LIMIT`; secret-bearing GitHub log fields were observed only in GitHub's redacted `***` form. No failing workflow was created, rerun, cancelled, or dispatched for acceptance.
 
-1. confirm the host action inventory exposes exactly 51 tools and exactly five `ci.*` actions;
-2. live `ci.repository` against trusted `/home/sauron/dev/kodegpt`;
-3. live zero-argument `ci.status`;
-4. live `ci.runs`;
-5. live `ci.run` on an existing run;
-6. live `ci.failure` only on an already-existing historical failed run, if one exists;
-7. inspect durable audit after those calls and confirm only bounded CI metadata is present, with no token, Authorization header, raw response body/headers, or full raw CI log.
+## Durable live audit evidence
 
-No failing CI run should be created for acceptance.
+The live durable audit file was inspected through a bounded local projection that emitted only the CI audit schema fields plus boolean forbidden-text checks. The latest outcome for every required action was `success`:
+
+```text
+ci_repository  provider=github repository=2ndworld/kodeGPT truncated=false
+ci_status      provider=github repository=2ndworld/kodeGPT truncated=false
+ci_runs        provider=github repository=2ndworld/kodeGPT truncated=true
+ci_run         provider=github repository=2ndworld/kodeGPT runId=31924171563 truncated=false
+ci_failure     provider=github repository=2ndworld/kodeGPT runId=31887613397 jobId=95019102488 truncated=true
+```
+
+Observed CI-record keys are limited to the audit envelope plus bounded fields such as `provider`, `repository`, `credentialSource`, `runId`, `jobId`, `errorCode`, `truncated`, and `durationMs`. Full-file forbidden-text checks were false for `authorization`, `bearer `, `github_token`, `rawHeaders`, `rawBody`, `rawLog`, and `secretEnv`. No connector credential, GitHub token, raw HTTP header/body, full raw CI log, or secret environment value was copied into release documentation.
+
+## Corrected installed-service cutover
+
+The post-dogfood correction was staged as immutable release:
+
+```text
+rel_d826f47599984583931c632ed7e5818e
+```
+
+A status read after `service install` proved the existing `rel_0ceb386027eaad0cbd92e982321a8915` release remained active while `rel_d826...` was only staged. Explicit `service restart` then promoted the corrected release.
+
+Final live service state:
+
+```text
+state = running
+enabled = true
+linger = disabled
+listenerReady = true
+managedExposure = true
+reservedName = public:kodegpt-dev
+localPort = 43121
+runtime = 0.1
+protocol = 2026-07-28
+surface = 0.7
+activeRelease = rel_d826f47599984583931c632ed7e5818e
+rollbackRelease = rel_0ceb386027eaad0cbd92e982321a8915
+publicUrl = https://kodegpt-dev.shares.zrok.io/mcp
+```
+
+Post-restart `system.health` remained `ok=true`, `auditHealthy=true`, `filesystemBoundaryAvailable=true`, and `testMethods=false`.
 
 ## Readiness conclusion
 
-Source implementation, deterministic verification, package verification, service staging, explicit cutover, and live service identity are green. The installed candidate is healthy on surface `0.7` with a known-good immediate rollback release.
+Task 17 is PASS. The source implementation, corrected provider-shape handling, complete deterministic verification, package verification, immutable staging, explicit corrected cutover, fresh-host five-tool dogfood, bounded failure evidence, redaction, and durable audit inspection are green on surface `0.7`.
 
-Task 17 is not yet declared fully closed because the current conversation's connector schema has not refreshed to the 51-tool host surface. Task 18 tracker reconciliation/final closure must wait for that fresh-host five-tool dogfood and audit evidence. Provider Gateway remains deferred.
+Provider Gateway / generic provider interoperability remains deferred. No `skill.run`, provider invocation, generic GitHub API passthrough, arbitrary HTTP authority, CI mutation authority, or raw CI-log persistence was added.
