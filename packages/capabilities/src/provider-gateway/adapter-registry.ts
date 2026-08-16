@@ -6,8 +6,11 @@ import {
   type ProviderAdapterManifest,
   type ProviderSemanticMappingDefinition
 } from "./contracts.js";
+import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
 
-export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([]);
+export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([
+  GITHUB_READ_PROVIDER_MANIFEST
+]);
 
 export class ProviderAdapterRegistry {
   readonly #manifests: readonly ProviderAdapterManifest[];
