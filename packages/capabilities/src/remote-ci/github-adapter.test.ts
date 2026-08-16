@@ -76,7 +76,8 @@ describe("GitHubRemoteCiAdapter", () => {
     http.responses.push({ full_name: "2NDWORLD/KODEGPT", default_branch: "main" });
     const adapter = new GitHubRemoteCiAdapter({ http });
     await expect(adapter.repository({ repository: REPOSITORY })).resolves.toEqual({
-      defaultBranch: "main"
+      defaultBranch: "main",
+      providerRequests: 1
     });
     expect(http.calls[0]).toEqual({
       kind: "json",
@@ -142,7 +143,8 @@ describe("GitHubRemoteCiAdapter", () => {
       checks: [],
       runs: [],
       providerPageLimited: false,
-      summaryLimitReached: false
+      summaryLimitReached: false,
+      providerRequests: 2
     });
   });
 

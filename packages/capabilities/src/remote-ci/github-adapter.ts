@@ -33,7 +33,10 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
     this.#http = options.http;
   }
 
-  async repository(input: { repository: CiRepositoryIdentity }): Promise<{ defaultBranch: string | null }> {
+  async repository(input: { repository: CiRepositoryIdentity }): Promise<{
+    defaultBranch: string | null;
+    providerRequests: number;
+  }> {
     const raw = await this.#http.getJson<unknown>(repoPath(input.repository));
     const record = expectRecord(raw);
     const fullName = expectBoundedString(record.full_name, 201);
@@ -46,7 +49,7 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
     const defaultBranch = record.default_branch === null
       ? null
       : expectSafeRef(record.default_branch);
-    return { defaultBranch };
+    return { defaultBranch, providerRequests: 1 };
   }
 
   async statusEvidence(input: {
@@ -66,7 +69,8 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
       checks: checks.items,
       runs: runs.items,
       providerPageLimited: checks.providerPageLimited || runs.providerPageLimited,
-      summaryLimitReached: checks.limitReached || runs.limitReached
+      summaryLimitReached: checks.limitReached || runs.limitReached,
+      providerRequests: checks.providerRequests + runs.providerRequests
     };
   }
 
@@ -102,7 +106,8 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
     return {
       items: limited,
       providerPageLimited: page.providerPageLimited,
-      limitReached: page.limitReached || filtered.length > limited.length
+      limitReached: page.limitReached || filtered.length > limited.length,
+      providerRequests: page.providerRequests
     };
   }
 
@@ -124,7 +129,8 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
       annotations: [],
       providerPageLimited: jobsPage.providerPageLimited,
       jobLimitReached: jobsPage.limitReached,
-      stepLimitReached: jobsPage.stepLimitReached
+      stepLimitReached: jobsPage.stepLimitReached,
+      providerRequests: 1 + jobsPage.providerRequests
     };
   }
 
@@ -164,7 +170,8 @@ function normalizeCheckPage(
   return {
     items: observed,
     providerPageLimited: totalCount > values.length,
-    limitReached: values.length > observed.length
+    limitReached: values.length > observed.length,
+    providerRequests: 1
   };
 }
 
@@ -193,7 +200,8 @@ function normalizeRunPage(
   return {
     items: observed,
     providerPageLimited: totalCount > values.length,
-    limitReached: values.length > observed.length
+    limitReached: values.length > observed.length,
+    providerRequests: 1
   };
 }
 
@@ -238,7 +246,8 @@ function normalizeJobsPage(
     items: normalized.map((value) => value.job),
     providerPageLimited: totalCount > values.length,
     limitReached: values.length > normalized.length,
-    stepLimitReached: normalized.some((value) => value.stepLimitReached)
+    stepLimitReached: normalized.some((value) => value.stepLimitReached),
+    providerRequests: 1
   };
 }
 

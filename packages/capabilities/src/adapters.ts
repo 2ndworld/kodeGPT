@@ -11,6 +11,7 @@ import type {
   GitLocalMutationResult,
   GitRemoteMutationResult
 } from "./contracts.js";
+import type { CapabilityErrorCode } from "./errors.js";
 import type {
   CiAnnotation,
   CiCheckSummary,
@@ -149,10 +150,36 @@ export interface RemoteCiCredentialCommandRunner {
   run(input: RemoteCiCredentialCommandInput): Promise<RemoteCiCredentialCommandResult>;
 }
 
+export interface RemoteCiWorkspaceRootAdapter {
+  rootFor(workspaceId: string): Promise<string>;
+}
+
+export type RemoteCiErrorCode = Extract<CapabilityErrorCode, `CI_${string}`>;
+
+export interface RemoteCiAuditInput {
+  workspaceId: string;
+  operationId: string;
+  capability: "ci.repository" | "ci.status" | "ci.runs" | "ci.run" | "ci.failure";
+  phase: "decision" | "success" | "failed";
+  provider: "github";
+  repository: string;
+  credentialSource?: "gh";
+  runId?: string;
+  jobId?: string;
+  errorCode?: RemoteCiErrorCode;
+  truncated?: boolean;
+  durationMs?: number;
+}
+
+export interface RemoteCiAuditAdapter {
+  record(input: RemoteCiAuditInput): Promise<void>;
+}
+
 export interface RemoteCiProviderList<T> {
   items: T[];
   providerPageLimited: boolean;
   limitReached: boolean;
+  providerRequests: number;
 }
 
 export interface RemoteCiStatusEvidence {
@@ -160,6 +187,7 @@ export interface RemoteCiStatusEvidence {
   runs: CiRunSummary[];
   providerPageLimited: boolean;
   summaryLimitReached: boolean;
+  providerRequests: number;
 }
 
 export interface RemoteCiRunDetail {
@@ -169,10 +197,14 @@ export interface RemoteCiRunDetail {
   providerPageLimited: boolean;
   jobLimitReached: boolean;
   stepLimitReached: boolean;
+  providerRequests: number;
 }
 
 export interface RemoteCiAdapter {
-  repository(input: { repository: CiRepositoryIdentity }): Promise<{ defaultBranch: string | null }>;
+  repository(input: { repository: CiRepositoryIdentity }): Promise<{
+    defaultBranch: string | null;
+    providerRequests: number;
+  }>;
   statusEvidence(input: { repository: CiRepositoryIdentity; oid: string }): Promise<RemoteCiStatusEvidence>;
   runs(input: {
     repository: CiRepositoryIdentity;
