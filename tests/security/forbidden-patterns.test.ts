@@ -65,6 +65,33 @@ describe("forbidden product-code patterns", () => {
       "crates/sandbox/src/bubblewrap.rs",
       'command.arg("--ro-bind").arg(host_path).arg("/workspace");\n',
       "host-path-bwrap-bind"
+    ],
+    ...[
+      "github.request",
+      "github.graphql",
+      "github.rest",
+      "gh.run",
+      "ci.logs.raw",
+      "ci.jobs.list",
+      "ci.steps.list",
+      "ci.rerun",
+      "ci.cancel",
+      "ci.dispatch",
+      "provider.list",
+      "provider.tools",
+      "provider.invoke",
+      "skill.run"
+    ].map((name) => [
+      `forbidden Remote-CI surface ${name}`,
+      "packages/mcp-server/src/server.ts",
+      `export const forbidden = ${JSON.stringify(name)};\n`,
+      "remote-ci-forbidden-surface"
+    ]),
+    [
+      "gh api semantic execution",
+      "packages/core/src/runtime.ts",
+      'export const command = "gh api /repos/example/project/actions/runs";\n',
+      "remote-ci-gh-api"
     ]
   ])("rejects %s", async (_label, path, contents, rule) => {
     const root = await fixtureRoot();
