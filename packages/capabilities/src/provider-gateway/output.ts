@@ -40,11 +40,12 @@ export function parseProviderSemanticOutput<T>(
   } catch {
     throw responseInvalid("Provider response is not valid JSON");
   }
-  const normalized = normalizeProviderValue(parsedJson);
-  let semanticValue = normalized;
-  if (options.mapOutput !== undefined) {
+  let semanticValue: unknown;
+  if (options.mapOutput === undefined) {
+    semanticValue = normalizeProviderValue(parsedJson);
+  } else {
     try {
-      semanticValue = options.mapOutput(normalized, options.semanticInput);
+      semanticValue = options.mapOutput(parsedJson, options.semanticInput);
     } catch {
       throw responseInvalid("Provider response mapping failed");
     }

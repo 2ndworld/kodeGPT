@@ -65,6 +65,22 @@ describe("provider output normalization", () => {
     })).toEqual({ repository: "2ndworld/kodeGPT", label: "é\nnext" });
   });
 
+  it("lets a reviewed mapper select bounded semantic fields before generic structural limits reject irrelevant provider extras", () => {
+    const schema = z.object({ id: z.string(), label: z.string() }).strict();
+    const raw = Buffer.from(JSON.stringify({
+      id: "record_42",
+      label: "kept",
+      irrelevant: Array.from({ length: 1_001 }, (_, index) => ({ index }))
+    }), "utf8");
+
+    expect(parseProviderSemanticOutput(raw, schema, {
+      mapOutput(providerValue) {
+        const provider = providerValue as { id: string; label: string };
+        return { id: provider.id, label: provider.label };
+      }
+    })).toEqual({ id: "record_42", label: "kept" });
+  });
+
   it("normalizes output mapper failures without leaking mapper error text", () => {
     const schema = z.object({ id: z.string() }).strict();
     const run = () => parseProviderSemanticOutput(Buffer.from(JSON.stringify({ id: "provider-id" })), schema, {

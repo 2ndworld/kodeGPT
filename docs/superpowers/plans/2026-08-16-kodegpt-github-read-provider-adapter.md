@@ -33,7 +33,7 @@ Parent before feature spec: `5fa2866`
 
 ### RED
 
-1. Add output-layer tests proving an optional mapper receives normalized provider JSON plus semantic input and that its mapped result is subsequently validated by the final output schema.
+1. Add output-layer tests proving an optional mapper receives decoded provider JSON plus semantic input, selects a bounded semantic result, and that the mapped result is subsequently normalized and validated by the final output schema.
 2. Add a test proving mapper exceptions are converted to `PROVIDER_RESPONSE_INVALID` and raw parser/provider exception text is not propagated.
 3. Add/extend adapter-registry tests proving `mapOutput`, when present, must be a function, is preserved on the frozen mapping, and existing mappings without it remain valid.
 4. Run:
@@ -55,13 +55,14 @@ mapOutput?: (providerValue: unknown, semanticInput: unknown) => unknown;
 2. Update mapping validation to allow the optional field while retaining deny-unknown-field behavior for every other mapping field.
 3. Freeze/preserve `mapOutput` without changing existing mapping objects' behavior.
 4. Extend `parseProviderSemanticOutput` with a small options object containing optional `semanticInput` and `mapOutput`.
-5. Keep existing sequence:
+5. Keep the response sequence minimal:
    - fatal UTF-8 decode;
-   - JSON parse;
-   - generic structural normalization/bounds;
-   - optional pure mapper;
-   - generic structural normalization/bounds on mapped value;
+   - JSON parse under the existing transport response-byte ceiling;
+   - for mappings without `mapOutput`, preserve generic raw structural normalization/bounds;
+   - for mappings with `mapOutput`, let the pure mapping-owned strict parser select reviewed provider fields before the generic semantic structural ceiling;
+   - generic structural normalization/bounds on the mapped semantic value;
    - final reviewed `outputSchema.safeParse`.
+   Real host acceptance later proved this ordering necessary because valid GitHub repository payloads can exceed 1,000 raw structural elements even when the reviewed semantic result is small; do not raise the global semantic ceiling to accommodate irrelevant provider fields.
 6. Catch mapper/parser exceptions at this boundary and return generic `PROVIDER_RESPONSE_INVALID`; do not leak raw error text.
 7. Pass `mappingInput.data` and `mapping.mapOutput` from `ProviderGatewayServiceImpl.execute`.
 8. Do not change network status mapping or provider error taxonomy.

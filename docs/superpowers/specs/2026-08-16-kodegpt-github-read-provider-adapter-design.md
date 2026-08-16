@@ -85,11 +85,12 @@ mapOutput?: (providerValue: unknown, semanticInput: unknown) => unknown;
 
 Rules:
 
-- existing mappings without `mapOutput` retain identity behavior;
-- the callback receives only already-bounded/decoded/structurally-normalized JSON plus the already-validated semantic input;
-- it has no transport, credential, filesystem, process, registry, or network authority;
+- existing mappings without `mapOutput` retain identity behavior and still structurally normalize raw JSON before final schema validation;
+- a mapping with `mapOutput` receives valid UTF-8/JSON that is already bounded by the existing transport response-byte ceiling plus the already-validated semantic input, then its mapping-owned strict selected-field schema discards irrelevant provider fields before KodeGPT's generic semantic structural limits run;
+- this ordering is required by real host acceptance: GitHub repository REST payloads can legitimately exceed the generic 1,000-element semantic-result ceiling even though the selected KodeGPT result is tiny; raising that global ceiling would be broader and less safe than selecting reviewed fields first;
+- the callback has no transport, credential, filesystem, process, registry, or network authority;
 - callback exceptions are normalized to `PROVIDER_RESPONSE_INVALID` rather than leaking provider/parser details;
-- the mapped value is normalized again and must pass the existing final `outputSchema` before publication;
+- the mapped value is structurally normalized and must pass the existing final `outputSchema` before publication;
 - this is not a generic provider extension mechanism beyond the response-mapping stage already required by the Provider Gateway design.
 
 No generic status mapping change is planned.
