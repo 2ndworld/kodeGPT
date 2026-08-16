@@ -11,3 +11,4 @@ export * from "./inventory.js";
 export * from "./output.js";
 export * from "./lifecycle.js";
 export * from "./operator-service.js";
+export * from "./service.js";
