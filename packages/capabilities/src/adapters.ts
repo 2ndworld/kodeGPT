@@ -16,10 +16,20 @@ import type {
   CiAnnotation,
   CiCheckSummary,
   CiConclusion,
+  CiFailureInput,
+  CiFailureResult,
   CiJobSummary,
   CiRepositoryIdentity,
+  CiRepositoryInput,
+  CiRepositoryResult,
+  CiRunInput,
+  CiRunResult,
+  CiRunsInput,
+  CiRunsResult,
   CiRunStatus,
-  CiRunSummary
+  CiRunSummary,
+  CiStatusInput,
+  CiStatusResult
 } from "./remote-ci/contracts.js";
 
 export type CapabilityTreeEntryKind = "file" | "directory" | "symlink" | "other";
@@ -237,6 +247,14 @@ export interface RemoteCiAdapter {
     jobId: string;
     scanMaxBytes: number;
   }): Promise<{ bytes: Uint8Array; truncated: boolean; providerRequests: number }>;
+}
+
+export interface RemoteCiToolAdapter {
+  repository(input: CiRepositoryInput): Promise<CiRepositoryResult>;
+  status(input: CiStatusInput): Promise<CiStatusResult>;
+  runs(input: CiRunsInput): Promise<CiRunsResult>;
+  run(input: CiRunInput): Promise<CiRunResult>;
+  failure(input: CiFailureInput): Promise<CiFailureResult>;
 }
 
 export interface GitLocalAuthorityAdapter {

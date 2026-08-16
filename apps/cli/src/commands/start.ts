@@ -11,7 +11,12 @@ import {
   createHttpTrustConfig,
   type HttpTrustConfig
 } from "@kodegpt/auth";
-import { NativeCapabilityService } from "@kodegpt/capabilities";
+import {
+  NativeCapabilityService,
+  createGitHubRemoteCiToolAdapter,
+  type GitHubRemoteCiToolAdapterDependencies,
+  type RemoteCiToolAdapter
+} from "@kodegpt/capabilities";
 import {
   ExecutionManager,
   KernelClient,
@@ -77,6 +82,8 @@ export interface ManagerBundle {
       | "gitFetch"
       | "gitPull"
       | "gitPush"
+      | "inspectGitRepositoryIdentity"
+      | "auditRemoteCi"
       | "pathIdentity"
       | "commitPatchFile"
       | "inspectExecutable"
@@ -173,6 +180,7 @@ export interface ProductionServiceStackDependencies {
     kernel: StartKernel;
     trustProfile: TrustProfileBundle;
   }): ManagerBundle;
+  createRemoteCi?(options: GitHubRemoteCiToolAdapterDependencies): RemoteCiToolAdapter;
 }
 
 export interface ProductionServiceStack {
@@ -181,6 +189,7 @@ export interface ProductionServiceStack {
   hello: KernelHello;
   bearerAuthenticator?: BearerAuthenticator;
   toolContext: KodegptToolContext;
+  remoteCi: RemoteCiToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   close(): Promise<void>;
 }
@@ -214,6 +223,33 @@ export async function createProductionServiceStack(
 
     const trustProfile = dependencies.createTrustProfile(stateRoot);
     const managers = dependencies.createManagers({ kernel, trustProfile });
+    const remoteCi = (dependencies.createRemoteCi ?? createGitHubRemoteCiToolAdapter)({
+      selections: {
+        listReady: async () => managers.workspaceManager.listWorkspaces().map(({ id }) => ({ id }))
+      },
+      repository: {
+        inspect: (workspaceId) => managers.workspaceManager.inspectGitRepositoryIdentity(workspaceId)
+      },
+      roots: {
+        rootFor: async (workspaceId) => managers.workspaceManager.requireReady(workspaceId).canonicalRoot
+      },
+      revisions: {
+        resolve: async (workspaceId, revision) => {
+          const resolved = await managers.workspaceManager.gitLog({
+            workspaceId,
+            revision,
+            limit: 1
+          });
+          return {
+            oid: resolved.resolvedOid,
+            branch: revision.kind === "branch" ? revision.name : null
+          };
+        }
+      },
+      audit: {
+        record: (input) => managers.workspaceManager.auditRemoteCi(input)
+      }
+    });
     const executionManager = new ExecutionManager(managers.workspaceManager);
     const artifactStore = new ArtifactStore(kernel);
     const auditReader = new AuditReader(stateRoot);
@@ -364,6 +400,7 @@ export async function createProductionServiceStack(
       hello,
       bearerAuthenticator,
       toolContext,
+      remoteCi,
       extensionRegistry,
       async close(): Promise<void> {
         if (closed) return;
@@ -493,6 +530,7 @@ export const defaultStartDependencies: StartDependencies = {
       trust: trustProfile.trust as WorkspaceTrustStore
     })
   }),
+  createRemoteCi: (options) => createGitHubRemoteCiToolAdapter(options),
   createMcp: (options) => createKodegptNodeHandler(options),
   bindLoopback: ({ mcp, port }) => bindLoopback(mcp, port)
 };

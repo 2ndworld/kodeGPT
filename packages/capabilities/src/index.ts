@@ -99,6 +99,7 @@ export type {
   GitLocalMutationAdapter,
   GitRemoteAuthorityAdapter,
   GitRemoteMutationAdapter,
+  RemoteCiToolAdapter,
   PatchCommitAdapter,
   PatchCommitAdapterInput,
   PatchCommitAdapterResult,

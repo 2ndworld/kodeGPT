@@ -86,6 +86,12 @@ function baseDependencies(events: string[]) {
     gitDiffHistory: async () => {
       throw new Error("not used");
     },
+    inspectGitRepositoryIdentity: async () => ({
+      headOid: "1".repeat(40),
+      branch: "main",
+      remotes: [{ name: "origin", fetchUrl: "https://github.com/2ndworld/kodeGPT.git" }]
+    }),
+    auditRemoteCi: async () => undefined,
     pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
     commitPatchFile: async () => {
       throw new Error("not used");

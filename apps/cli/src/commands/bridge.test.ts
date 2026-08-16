@@ -179,6 +179,12 @@ describe("bridge command unit tests", () => {
           gitShow: async () => ({ schemaVersion: 1 as const, commit: { oid: "1".repeat(40), shortOid: "1".repeat(12), parents: [], authorName: "A", authorTime: 1, committerTime: 1, subject: "s", body: "", messageTruncated: false, encodingLossy: false }, changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: null, truncated: false, truncationReasons: [] }),
           gitRange: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), isAncestor: false, mergeBaseOid: null, ahead: { value: 0, exact: true }, behind: { value: 0, exact: true }, commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
           gitDiffHistory: async () => ({ schemaVersion: 1 as const, baseOid: "1".repeat(40), headOid: "2".repeat(40), changedPaths: [], summary: { filesChanged: 0, insertions: 0, deletions: 0, binaryFiles: 0 }, patch: "", truncated: false, truncationReasons: [] }),
+          inspectGitRepositoryIdentity: async () => ({
+            headOid: "1".repeat(40),
+            branch: "main",
+            remotes: [{ name: "origin", fetchUrl: "https://github.com/2ndworld/kodeGPT.git" }]
+          }),
+          auditRemoteCi: async () => undefined,
           gitDiff: async () => ({
             schemaVersion: 1 as const,
             exitCode: 0,
