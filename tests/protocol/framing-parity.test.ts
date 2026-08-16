@@ -71,6 +71,7 @@ const EXPECTED_METHODS = [
   "file.write",
   "file.edit",
   "file.commit_patch_file",
+  "git.repository_identity",
   "git.status",
   "git.checkpoint",
   "git.checkpoint_patch",

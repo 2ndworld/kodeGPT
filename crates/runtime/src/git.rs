@@ -25,6 +25,9 @@ const GIT_CHECKPOINT_STATUS_MAX_BYTES: usize = 4 * 1024 * 1024;
 const GIT_CHECKPOINT_MAX_HASHED_BYTES: u64 = 64 * 1024 * 1024;
 const GIT_MUTATION_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const GIT_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
+const GIT_REPOSITORY_IDENTITY_TIMEOUT: Duration = Duration::from_secs(5);
+const GIT_REPOSITORY_IDENTITY_MAX_REMOTES: usize = 32;
+const GIT_REPOSITORY_IDENTITY_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const STAGED_PATCH_HEADER: &[u8] = b"=== KODEGPT STAGED DIFF ===\n";
 const WORKTREE_PATCH_HEADER: &[u8] = b"\n=== KODEGPT WORKTREE DIFF ===\n";
 
@@ -106,6 +109,22 @@ pub struct GitInspectionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteIdentity {
+    pub name: String,
+    pub fetch_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepositoryIdentityResult {
+    pub schema_version: u32,
+    pub head_oid: String,
+    pub branch: Option<String>,
+    pub remotes: Vec<GitRemoteIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GitCheckpointRecordType {
     Ordinary,
@@ -164,6 +183,8 @@ pub enum GitInspectionError {
     InvalidMutationInput,
     CommandFailed,
     CheckpointIdentityUnavailable,
+    RepositoryIdentityInvalid,
+    RepositoryIdentityLimitExceeded,
     Timeout,
     OutputLimitExceeded,
     WaitFailed(std::io::Error),
@@ -187,6 +208,12 @@ impl fmt::Display for GitInspectionError {
             Self::CheckpointIdentityUnavailable => {
                 formatter.write_str("Git checkpoint path identity is unavailable")
             }
+            Self::RepositoryIdentityInvalid => {
+                formatter.write_str("Git repository identity is invalid")
+            }
+            Self::RepositoryIdentityLimitExceeded => {
+                formatter.write_str("Git repository identity remote limit exceeded")
+            }
             Self::Timeout => formatter.write_str("Git command timed out"),
             Self::OutputLimitExceeded => formatter.write_str("Git command output limit exceeded"),
             Self::WaitFailed(error) => write!(formatter, "Git wait failed: {error}"),
@@ -206,6 +233,166 @@ impl From<RawSpoolError> for GitInspectionError {
     fn from(error: RawSpoolError) -> Self {
         Self::Spool(error)
     }
+}
+
+pub fn run_git_repository_identity(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitRepositoryIdentityResult, GitInspectionError> {
+    let provider = BubblewrapProvider::discover()?;
+    let program = resolve_trusted_executable("git").map_err(SandboxError::from)?;
+    let budget = GitCommandBudget {
+        wall_timeout: Some(GIT_REPOSITORY_IDENTITY_TIMEOUT),
+        stdout_source_bytes: GIT_REPOSITORY_IDENTITY_MAX_OUTPUT_BYTES,
+        stderr_source_bytes: PREVIEW_MAX_BYTES,
+        preview_bytes: GIT_REPOSITORY_IDENTITY_MAX_OUTPUT_BYTES,
+        overflow_policy: GitOverflowPolicy::Fail,
+    };
+
+    let head = run_hardened_git_command(
+        &provider,
+        &program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        vec!["rev-parse".into(), "--verify".into(), "HEAD".into()],
+        budget,
+        spool,
+        executions,
+        false,
+    )?;
+    if head.exit_code != 0 {
+        return Err(GitInspectionError::CommandFailed);
+    }
+    let head_oid = parse_repository_head_oid(&head.stdout)?;
+
+    let branch_output = run_hardened_git_command(
+        &provider,
+        &program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        vec![
+            "symbolic-ref".into(),
+            "--quiet".into(),
+            "--short".into(),
+            "HEAD".into(),
+        ],
+        budget,
+        spool,
+        executions,
+        false,
+    )?;
+    let branch = match branch_output.exit_code {
+        0 => Some(parse_repository_branch(&branch_output.stdout)?),
+        1 if branch_output.stdout.is_empty() => None,
+        _ => return Err(GitInspectionError::CommandFailed),
+    };
+
+    let remote_output = run_hardened_git_command(
+        &provider,
+        &program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        vec![
+            "config".into(),
+            "--null".into(),
+            "--get-regexp".into(),
+            r"^remote\..*\.url$".into(),
+        ],
+        budget,
+        spool,
+        executions,
+        false,
+    )?;
+    let mut remotes = match remote_output.exit_code {
+        0 => parse_repository_remotes(&remote_output.stdout)?,
+        1 if remote_output.stdout.is_empty() => Vec::new(),
+        _ => return Err(GitInspectionError::CommandFailed),
+    };
+    remotes.sort_by(|left, right| left.name.as_bytes().cmp(right.name.as_bytes()));
+    if remotes.len() > GIT_REPOSITORY_IDENTITY_MAX_REMOTES {
+        return Err(GitInspectionError::RepositoryIdentityLimitExceeded);
+    }
+
+    Ok(GitRepositoryIdentityResult {
+        schema_version: 1,
+        head_oid,
+        branch,
+        remotes,
+    })
+}
+
+fn parse_repository_head_oid(bytes: &[u8]) -> Result<String, GitInspectionError> {
+    let value = std::str::from_utf8(bytes)
+        .map_err(|_| GitInspectionError::RepositoryIdentityInvalid)?
+        .trim_end_matches(['\r', '\n']);
+    if !matches!(value.len(), 40 | 64)
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(GitInspectionError::RepositoryIdentityInvalid);
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_repository_branch(bytes: &[u8]) -> Result<String, GitInspectionError> {
+    let value = std::str::from_utf8(bytes)
+        .map_err(|_| GitInspectionError::RepositoryIdentityInvalid)?
+        .trim_end_matches(['\r', '\n']);
+    if value.is_empty()
+        || value.len() > 1024
+        || value
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
+        return Err(GitInspectionError::RepositoryIdentityInvalid);
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_repository_remotes(bytes: &[u8]) -> Result<Vec<GitRemoteIdentity>, GitInspectionError> {
+    let mut remotes = BTreeMap::<String, String>::new();
+    for record in bytes.split(|byte| *byte == 0).filter(|record| !record.is_empty()) {
+        let separator = record
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or(GitInspectionError::RepositoryIdentityInvalid)?;
+        let key = std::str::from_utf8(&record[..separator])
+            .map_err(|_| GitInspectionError::RepositoryIdentityInvalid)?;
+        let fetch_url = std::str::from_utf8(&record[separator + 1..])
+            .map_err(|_| GitInspectionError::RepositoryIdentityInvalid)?;
+        let name = key
+            .strip_prefix("remote.")
+            .and_then(|value| value.strip_suffix(".url"))
+            .ok_or(GitInspectionError::RepositoryIdentityInvalid)?;
+        if name.is_empty()
+            || name.len() > 128
+            || name.bytes().any(|byte| byte.is_ascii_control())
+            || fetch_url.is_empty()
+            || fetch_url.len() > 8192
+            || fetch_url.bytes().any(|byte| byte.is_ascii_control())
+            || remotes.insert(name.to_owned(), fetch_url.to_owned()).is_some()
+        {
+            return Err(GitInspectionError::RepositoryIdentityInvalid);
+        }
+        if remotes.len() > GIT_REPOSITORY_IDENTITY_MAX_REMOTES {
+            return Err(GitInspectionError::RepositoryIdentityLimitExceeded);
+        }
+    }
+    Ok(remotes
+        .into_iter()
+        .map(|(name, fetch_url)| GitRemoteIdentity { name, fetch_url })
+        .collect())
 }
 
 pub fn run_git_inspection(
@@ -1764,7 +1951,7 @@ mod tests {
         GitOperation, GitOverflowPolicy, GitRemoteMutation, hardened_git_args, hardened_git_spec,
         hardened_git_spec_with_options, parse_checkpoint_status, run_git_checkpoint,
         run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
-        run_git_remote_mutation, run_hardened_git_command,
+        run_git_remote_mutation, run_git_repository_identity, run_hardened_git_command,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -1830,6 +2017,91 @@ mod tests {
         let mut records = Vec::new();
         visit(root, root, &mut records);
         records
+    }
+
+    #[test]
+    fn git_repository_identity_reads_head_branch_and_sorted_remotes() {
+        let workspace = temporary_root("repository-identity");
+        let state = temporary_root("repository-identity-state");
+        git(&workspace, &["init"]);
+        git(&workspace, &["config", "user.email", "test@example.invalid"]);
+        git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        fs::write(workspace.join("tracked.txt"), b"base\n").expect("tracked file");
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "base"]);
+        git(&workspace, &["remote", "add", "upstream", "https://github.com/example/upstream.git"]);
+        git(&workspace, &["remote", "add", "origin", "git@github.com:example/repository.git"]);
+
+        let expected_head = git_stdout(&workspace, &["rev-parse", "--verify", "HEAD"])
+            .trim()
+            .to_owned();
+        let expected_branch = git_stdout(&workspace, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .trim()
+            .to_owned();
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let result = run_git_repository_identity(
+            &root_fd,
+            "kc_repo_identity",
+            "req_repo_identity",
+            "op_repo_identity",
+            &spool,
+            &executions,
+        )
+        .expect("repository identity");
+
+        assert_eq!(result.head_oid, expected_head);
+        assert_eq!(result.branch.as_deref(), Some(expected_branch.as_str()));
+        assert_eq!(
+            result
+                .remotes
+                .iter()
+                .map(|remote| (remote.name.as_str(), remote.fetch_url.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("origin", "git@github.com:example/repository.git"),
+                ("upstream", "https://github.com/example/upstream.git")
+            ]
+        );
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(state);
+    }
+
+    #[test]
+    fn git_repository_identity_rejects_more_than_thirty_two_remotes() {
+        let workspace = temporary_root("repository-identity-limit");
+        let state = temporary_root("repository-identity-limit-state");
+        git(&workspace, &["init"]);
+        git(&workspace, &["config", "user.email", "test@example.invalid"]);
+        git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        fs::write(workspace.join("tracked.txt"), b"base\n").expect("tracked file");
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "base"]);
+        for index in 0..33 {
+            let name = format!("remote{index:02}");
+            let url = format!("https://github.com/example/repository-{index:02}.git");
+            git(&workspace, &["remote", "add", &name, &url]);
+        }
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let error = run_git_repository_identity(
+            &root_fd,
+            "kc_repo_identity_limit",
+            "req_repo_identity_limit",
+            "op_repo_identity_limit",
+            &spool,
+            &executions,
+        )
+        .expect_err("remote observation limit must fail closed");
+        assert!(matches!(error, GitInspectionError::RepositoryIdentityLimitExceeded));
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(state);
     }
 
     #[test]

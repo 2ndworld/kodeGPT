@@ -2,7 +2,9 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use kodegpt_protocol::{MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame};
+use kodegpt_protocol::{
+    GitRepositoryIdentityParams, MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame,
+};
 use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Value {
@@ -137,6 +139,22 @@ fn git_history_params_are_structured_and_reject_unknown_fields() {
             .expect_err("raw git argv must be rejected");
         assert!(error.to_string().contains("unknown field"));
     }
+}
+
+#[test]
+fn git_repository_identity_params_are_closed() {
+    let params = json!({"capabilityId": "kc_repo_identity"});
+    let parsed = serde_json::from_value::<GitRepositoryIdentityParams>(params)
+        .expect("repository identity params deserialize");
+    assert_eq!(parsed.capability_id, "kc_repo_identity");
+
+    let with_raw_argv = json!({
+        "capabilityId": "kc_repo_identity",
+        "argv": ["config", "--list"]
+    });
+    let error = serde_json::from_value::<GitRepositoryIdentityParams>(with_raw_argv)
+        .expect_err("raw git argv must be rejected");
+    assert!(error.to_string().contains("unknown field"));
 }
 
 #[test]

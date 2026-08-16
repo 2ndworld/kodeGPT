@@ -6,8 +6,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
-    GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams, GitShowParams,
-    GitStatusParams, NetworkMode, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
+    GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
+    GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
+    PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
     RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
     SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
@@ -34,7 +35,7 @@ use crate::execution::ExecutionRegistry;
 use crate::git::{
     GitInspectionError, GitLocalMutation, GitOperation, GitRemoteMutation, run_git_checkpoint,
     run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation, run_git_remote_mutation,
-    validate_remote_mutation_input,
+    run_git_repository_identity, validate_remote_mutation_input,
 };
 use crate::git_history::{
     GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GIT_RANGE_MAX_LIMIT, GitHistoryError,
@@ -853,6 +854,23 @@ async fn dispatch_one(
                 },
             )
         }
+        "git.repository_identity" => {
+            let params = match serde_json::from_value::<GitRepositoryIdentityParams>(request.params) {
+                Ok(params) if !params.capability_id.is_empty() => params,
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_git_repository_identity(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                params.capability_id,
+            )
+            .await
+        }
         "git.status" => {
             let params = match serde_json::from_value::<GitStatusParams>(request.params) {
                 Ok(params) if !params.capability_id.is_empty() => params,
@@ -1531,6 +1549,102 @@ where
             audited_skill_source_failure(audit, &context, request_id, code, message)
         }
     }
+}
+
+async fn dispatch_git_repository_identity(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+) -> Value {
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action: AuditAction::GitRepositoryIdentity,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    let root_fd = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root_fd(&capability_id) {
+            Ok(root_fd) => root_fd,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32038,
+            "GIT_REPOSITORY_IDENTITY_UNAVAILABLE",
+        );
+    };
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_repository_identity(
+            &root_fd,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(GitInspectionError::RepositoryIdentityInvalid))
+        | Ok(Err(GitInspectionError::RepositoryIdentityLimitExceeded)) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32064,
+                "GIT_REPOSITORY_IDENTITY_INVALID",
+            );
+        }
+        Ok(Err(_)) | Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32065,
+                "GIT_REPOSITORY_IDENTITY_UNAVAILABLE",
+            );
+        }
+    };
+    if audit.outcome(&context, AuditOutcome::Success).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
 }
 
 async fn dispatch_git_operation(

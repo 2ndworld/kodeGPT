@@ -162,6 +162,16 @@ class FakeKernel implements KernelTransport {
         return { bytesWritten: 11, replacements: 2 } as T;
       case "file.commit_patch_file":
         return this.patchCommitResult as T;
+      case "git.repository_identity":
+        return {
+          schemaVersion: 1,
+          headOid: "1".repeat(40),
+          branch: "main",
+          remotes: [
+            { name: "origin", fetchUrl: "git@github.com:2ndworld/kodeGPT.git" },
+            { name: "upstream", fetchUrl: "https://github.com/example/upstream.git" }
+          ]
+        } as T;
       case "git.status":
         return {
           schemaVersion: 1,
@@ -783,6 +793,31 @@ describe("WorkspaceManager", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe("ws_list");
     expect(JSON.stringify(listed)).not.toContain("kc_fixture");
+  });
+
+  it("inspects private Git repository identity through the retained workspace capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_repo_identity"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const identity = await manager.inspectGitRepositoryIdentity("ws_repo_identity");
+
+    expect(identity).toEqual({
+      headOid: "1".repeat(40),
+      branch: "main",
+      remotes: [
+        { name: "origin", fetchUrl: "git@github.com:2ndworld/kodeGPT.git" },
+        { name: "upstream", fetchUrl: "https://github.com/example/upstream.git" }
+      ]
+    });
+    expect(kernel.calls.at(-1)).toEqual({
+      method: "git.repository_identity",
+      params: { capabilityId: "kc_fixture" }
+    });
   });
 
   it("routes READY public workspace file operations through the private runtime capability", async () => {

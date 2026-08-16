@@ -229,6 +229,12 @@ pub struct GitStatusParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitRepositoryIdentityParams {
+    pub capability_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GitDiffParams {
     pub capability_id: String,
 }
@@ -541,6 +547,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitStatusParams,
+    },
+    #[serde(rename = "git.repository_identity")]
+    GitRepositoryIdentity {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitRepositoryIdentityParams,
     },
     #[serde(rename = "git.checkpoint")]
     GitCheckpoint {

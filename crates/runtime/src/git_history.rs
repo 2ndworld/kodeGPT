@@ -730,6 +730,8 @@ fn map_git_inspection_error(error: GitInspectionError) -> GitHistoryError {
         | GitInspectionError::InvalidMutationInput
         | GitInspectionError::CommandFailed
         | GitInspectionError::CheckpointIdentityUnavailable
+        | GitInspectionError::RepositoryIdentityInvalid
+        | GitInspectionError::RepositoryIdentityLimitExceeded
         | GitInspectionError::WaitFailed(_) => GitHistoryError::GitReadFailed,
     }
 }
