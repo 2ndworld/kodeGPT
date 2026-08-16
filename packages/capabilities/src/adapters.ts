@@ -118,6 +118,28 @@ export interface RemoteCiRepositoryInspectionAdapter {
   inspect(workspaceId: string): Promise<RemoteCiRepositoryInspection>;
 }
 
+export interface RemoteCiCredentialCommandInput {
+  executable: string;
+  argv: readonly string[];
+  env: Readonly<Record<string, string>>;
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  maxStderrBytes: number;
+}
+
+export interface RemoteCiCredentialCommandResult {
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  stdoutOverflow: boolean;
+  stderrOverflow: boolean;
+  timedOut: boolean;
+}
+
+export interface RemoteCiCredentialCommandRunner {
+  run(input: RemoteCiCredentialCommandInput): Promise<RemoteCiCredentialCommandResult>;
+}
+
 export interface GitLocalAuthorityAdapter {
   effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean };
 }
