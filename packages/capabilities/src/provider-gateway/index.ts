@@ -9,3 +9,4 @@ export * from "./network-policy.js";
 export * from "./network-transport.js";
 export * from "./inventory.js";
 export * from "./output.js";
+export * from "./lifecycle.js";
