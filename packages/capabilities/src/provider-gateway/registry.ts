@@ -163,11 +163,11 @@ function parseDocument(value: unknown): ProviderRegistryDocument {
 function parseRecord(value: unknown): ProviderRegistryRecord {
   const result = ProviderRegistryRecordSchema.safeParse(value);
   if (!result.success) throw stateInvalid("Provider registry record is invalid");
-  assertSafeConfig(result.data.nonSecretAdapterConfig);
+  assertProviderNonSecretConfig(result.data.nonSecretAdapterConfig);
   return cloneRecord(result.data);
 }
 
-function assertSafeConfig(value: Record<string, unknown>): void {
+export function assertProviderNonSecretConfig(value: Record<string, unknown>): void {
   const seen = new Set<object>();
   visitJson(value, seen);
 }
