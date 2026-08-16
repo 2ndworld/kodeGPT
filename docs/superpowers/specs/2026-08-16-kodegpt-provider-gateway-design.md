@@ -1,7 +1,7 @@
 # KodeGPT Provider Gateway Security Boundary Design
 
 Date: 2026-08-16
-Status: design-only, awaiting explicit user review/approval before implementation planning
+Status: APPROVED BY USER on 2026-08-16; separate implementation planning is authorized, while production code remains gated on the approved design plus executable implementation plan
 Baseline: canonical `main` after PR #15, source baseline `f6113b3eef12ab6f3d6b8b7b7952aa18d3f4bae1`, runtime `0.1`, MCP protocol `2026-07-28`, semantic surface `0.7`
 
 ## 1. Decision summary

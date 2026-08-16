@@ -25,14 +25,14 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 - Local service lifecycle is operator-only CLI authority. It is not an MCP capability and does not grant workspace/process/filesystem authority.
 - `systemd --user` owns only the outer installed KodeGPT foreground service; KodeGPT's existing managed-zrok path remains the single supervisor for the loopback MCP server, Rust runtime, and zrok child.
 - Installed service releases live outside Git worktrees so deleting a feature worktree cannot invalidate the running executable. The general KodeGPT state root remains `~/.kodegpt`.
-- Provider interoperability is not part of the current shipped authority. The dedicated Provider Gateway design candidate now exists at `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md` and awaits explicit review/approval; production implementation remains prohibited until approval and a separate implementation plan.
+- Provider interoperability is not part of the current shipped authority. The Provider Gateway security design is approved at `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`, and its separate executable plan is `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`; production implementation has not started and the public MCP surface remains `0.7`.
 - CodexPro/Codex/Claude are not KodeGPT runtime dependencies.
 
 ## Deferred authority-bearing work
 
-### Provider interoperability — design candidate awaiting approval; implementation not started
+### Provider interoperability — design approved; implementation plan ready; production implementation not started
 
-Current design candidate: `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`. It changes no public MCP surface and is not production implementation authority until explicitly approved.
+Current authorities are the approved design `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md` and the executable plan `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`. They authorize a private typed Provider Gateway implementation path but do not themselves add provider production capability or public MCP surface.
 
 The following provider actions are **genuinely absent** from the current KodeGPT product/runtime and must not be added opportunistically inside capability, skill, or tunnel maintenance work:
 
@@ -42,18 +42,18 @@ provider.tools
 provider.invoke
 ```
 
-Before any provider code is written, explicit review must confirm that the dedicated Provider Gateway design resolves at least:
+The approved design and implementation plan lock the implementation requirements for:
 
 - provider admission, trust, and durable identity;
-- tool-inventory identity/versioning and capability mapping;
-- credential ownership, storage, rotation, and redaction;
-- process/network authority and how provider calls remain subordinate to KodeGPT policy;
+- tool-inventory identity/versioning and typed semantic capability mapping;
+- external JIT credential ownership, helper identity, and redaction;
+- exact-origin process/network authority subordinate to KodeGPT policy;
 - durable audit ordering and provenance;
-- timeout, cancellation, and child/provider lifecycle behavior;
-- bounded request/output/artifact semantics;
-- host-path, environment, prompt, and secret redaction across every public result/error path.
+- timeout, cancellation, and helper/provider lifecycle behavior;
+- bounded request/output/inventory semantics;
+- host-path, environment, prompt, and secret redaction across every result/error path.
 
-Provider interoperability does **not** imply a generic `skill.run`. GPT Web continues to interpret loaded skill instructions. Any future provider-backed actions must be separately named, typed, bounded actions with their own authority and audit contracts; they must not turn a skill bundle into executable authority. Historical names such as `provider.list`, `provider.tools`, and `provider.invoke` are design inputs, not pre-approved public surface names.
+Provider interoperability does **not** imply a generic `skill.run`. GPT Web continues to interpret loaded skill instructions. Any future provider-backed public action must be separately named, typed, bounded, and reviewed; provider advertisements cannot create KodeGPT authority. Historical names such as `provider.list`, `provider.tools`, and `provider.invoke` are design inputs, not pre-approved public surface names.
 
 ### Superseded transport work
 
