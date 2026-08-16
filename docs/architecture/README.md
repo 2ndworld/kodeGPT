@@ -13,6 +13,7 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 | Hybrid skill interoperability | `docs/superpowers/specs/2026-08-12-kodegpt-hybrid-skill-interoperability-reconciled-design.md` plus current `packages/skills`, `packages/mcp-server`, integration tests, and the capability-quality reconciliation plan |
 | Personal trusted authority | `docs/superpowers/specs/2026-08-15-kodegpt-personal-trusted-authority-design.md`, `docs/superpowers/plans/2026-08-15-kodegpt-personal-trusted-authority.md`, current trust/Git tool source and tests, and merged PR #13 baseline `3e568ead27346d6670ecd9acca991708048431c2` |
 | Bounded Remote-CI Intelligence / current MCP surface `0.7` | `docs/superpowers/specs/2026-08-16-kodegpt-bounded-remote-ci-intelligence-design.md`, `docs/superpowers/plans/2026-08-16-kodegpt-bounded-remote-ci-intelligence.md`, `docs/release/2026-08-16-bounded-remote-ci-readiness.md`, current `ci.*` source/tests, and merged PR #15 baseline `f6113b3eef12ab6f3d6b8b7b7952aa18d3f4bae1` |
+| Provider Gateway private core/operator authority | `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`, `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`, `docs/release/2026-08-16-provider-gateway-readiness.md`, and current `packages/capabilities/src/provider-gateway` + local provider CLI source/tests; production adapter inventory remains empty and public MCP remains `0.7` |
 | ChatGPT compatibility and host evidence contract | `docs/compatibility/chatgpt.md` and `tests/host/README.md`; only observed host behavior may be recorded as observed |
 | Security/runtime invariants | Rust runtime/workspace authority, security tests, protocol tests, isolation tests, and the execution tracker; source/tests take precedence over stale historical prose |
 
@@ -25,16 +26,16 @@ This index points to the current repository authorities for KodeGPT v0.1. It doe
 - Local service lifecycle is operator-only CLI authority. It is not an MCP capability and does not grant workspace/process/filesystem authority.
 - `systemd --user` owns only the outer installed KodeGPT foreground service; KodeGPT's existing managed-zrok path remains the single supervisor for the loopback MCP server, Rust runtime, and zrok child.
 - Installed service releases live outside Git worktrees so deleting a feature worktree cannot invalidate the running executable. The general KodeGPT state root remains `~/.kodegpt`.
-- Provider interoperability is not part of the current shipped authority. The Provider Gateway security design is approved at `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`, and its separate executable plan is `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`; production implementation has not started and the public MCP surface remains `0.7`.
+- Provider Gateway core/operator authority is implemented privately and locally under the approved design/plan, with readiness evidence at `docs/release/2026-08-16-provider-gateway-readiness.md`. It does not add shipped provider-backed semantic capability: `PRODUCTION_PROVIDER_MANIFESTS` remains empty, there is no public `provider.*` MCP tool, and the public MCP surface remains `0.7`.
 - CodexPro/Codex/Claude are not KodeGPT runtime dependencies.
 
 ## Deferred authority-bearing work
 
-### Provider interoperability — design approved; implementation plan ready; production implementation not started
+### Provider interoperability — private core verified; production adapters and public provider capabilities deferred
 
-Current authorities are the approved design `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md` and the executable plan `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`. They authorize a private typed Provider Gateway implementation path but do not themselves add provider production capability or public MCP surface.
+Current authorities are the approved design `docs/superpowers/specs/2026-08-16-kodegpt-provider-gateway-design.md`, executable plan `docs/superpowers/plans/2026-08-16-kodegpt-provider-gateway.md`, and local-core readiness evidence `docs/release/2026-08-16-provider-gateway-readiness.md`. The private typed gateway, local operator admission/reapproval, JIT credential/helper boundary, bounded semantic transport, structural inventory identity, lifecycle limits, and global private audit path are implemented and verified. They still do not constitute a production provider-backed semantic capability: the production compiled-adapter inventory is empty and no public MCP surface was added.
 
-The following provider actions are **genuinely absent** from the current KodeGPT product/runtime and must not be added opportunistically inside capability, skill, or tunnel maintenance work:
+The following **public/generic** provider actions remain genuinely absent and must not be added opportunistically inside capability, skill, or tunnel maintenance work:
 
 ```text
 provider.list
