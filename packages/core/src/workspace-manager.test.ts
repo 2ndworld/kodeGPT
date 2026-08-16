@@ -101,6 +101,7 @@ class FakeKernel implements KernelTransport {
   readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   inspectRootError: unknown;
   trustAuditErrorPhase: "decision" | "success" | "failed" | undefined;
+  ciAuditError = false;
   profileRead: Promise<{ contents: string | null }> = Promise.resolve({ contents: null });
   activateResult: unknown = { ok: true };
   cancel: Promise<{ ok: true }> = Promise.resolve({ ok: true });
@@ -136,6 +137,9 @@ class FakeKernel implements KernelTransport {
         } as T;
       case "trust.audit":
         if (params.phase === this.trustAuditErrorPhase) throw new Error("trust audit failed");
+        return { ok: true } as T;
+      case "ci.audit":
+        if (this.ciAuditError) throw new KernelRpcError(-32010, "AUDIT_UNAVAILABLE");
         return { ok: true } as T;
       case "workspace.register":
         return { capabilityId: "kc_fixture" } as T;
@@ -793,6 +797,75 @@ describe("WorkspaceManager", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe("ws_list");
     expect(JSON.stringify(listed)).not.toContain("kc_fixture");
+  });
+
+  it("records private Remote-CI audit metadata through the retained workspace capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_ci_audit"
+    });
+    await manager.openWorkspace("/workspace");
+
+    await manager.auditRemoteCi({
+      workspaceId: "ws_ci_audit",
+      operationId: "op_ci_audit_1",
+      capability: "ci.status",
+      phase: "failed",
+      provider: "github",
+      repository: "2ndworld/kodeGPT",
+      credentialSource: "gh",
+      runId: "123",
+      jobId: "456",
+      errorCode: "CI_RATE_LIMITED",
+      truncated: true,
+      durationMs: 42
+    });
+
+    expect(kernel.calls.at(-1)).toEqual({
+      method: "ci.audit",
+      params: {
+        capabilityId: "kc_fixture",
+        operationId: "op_ci_audit_1",
+        ciCapability: "ci.status",
+        phase: "failed",
+        provider: "github",
+        repository: "2ndworld/kodeGPT",
+        credentialSource: "gh",
+        runId: "123",
+        jobId: "456",
+        errorCode: "CI_RATE_LIMITED",
+        truncated: true,
+        durationMs: 42
+      }
+    });
+  });
+
+  it("normalizes private Remote-CI audit sink failure without exposing RPC details", async () => {
+    const kernel = new FakeKernel();
+    kernel.ciAuditError = true;
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_ci_audit_failure"
+    });
+    await manager.openWorkspace("/workspace");
+
+    await expect(
+      manager.auditRemoteCi({
+        workspaceId: "ws_ci_audit_failure",
+        operationId: "op_ci_audit_failure",
+        capability: "ci.repository",
+        phase: "decision",
+        provider: "github",
+        repository: "2ndworld/kodeGPT"
+      })
+    ).rejects.toMatchObject({
+      name: "WorkspaceManagerError",
+      code: "CI_AUDIT_UNAVAILABLE",
+      message: "Remote-CI durable audit is unavailable"
+    });
   });
 
   it("inspects private Git repository identity through the retained workspace capability", async () => {

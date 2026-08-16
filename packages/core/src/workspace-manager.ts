@@ -234,6 +234,45 @@ export interface WorkspaceGitRepositoryIdentity {
   }>;
 }
 
+export type WorkspaceRemoteCiCapability =
+  | "ci.repository"
+  | "ci.status"
+  | "ci.runs"
+  | "ci.run"
+  | "ci.failure";
+
+export type WorkspaceRemoteCiErrorCode =
+  | "CI_WORKSPACE_AMBIGUOUS"
+  | "CI_AUDIT_UNAVAILABLE"
+  | "CI_AUTH_REQUIRED"
+  | "CI_AUTH_FAILED"
+  | "CI_REPOSITORY_UNAVAILABLE"
+  | "CI_REPOSITORY_MISMATCH"
+  | "CI_REMOTE_UNSUPPORTED"
+  | "CI_NOT_FOUND"
+  | "CI_PERMISSION_DENIED"
+  | "CI_RATE_LIMITED"
+  | "CI_PROVIDER_UNAVAILABLE"
+  | "CI_RESPONSE_INVALID"
+  | "CI_RESPONSE_LIMIT_EXCEEDED"
+  | "CI_LOG_UNAVAILABLE"
+  | "CI_LOG_LIMIT_EXCEEDED";
+
+export interface WorkspaceRemoteCiAuditInput {
+  workspaceId: string;
+  operationId: string;
+  capability: WorkspaceRemoteCiCapability;
+  phase: "decision" | "success" | "failed";
+  provider: "github";
+  repository: string;
+  credentialSource?: "gh";
+  runId?: string;
+  jobId?: string;
+  errorCode?: WorkspaceRemoteCiErrorCode;
+  truncated?: boolean;
+  durationMs?: number;
+}
+
 export type WorkspaceGitMutationOperation =
   | "stage"
   | "commit"
@@ -870,6 +909,43 @@ export class WorkspaceManager {
     } catch (error) {
       if (error instanceof KernelRpcError && GIT_HISTORY_ERROR_CODES.has(error.message)) {
         throw new WorkspaceManagerError(error.message, `${method} failed`);
+      }
+      throw error;
+    }
+  }
+
+  async auditRemoteCi(input: WorkspaceRemoteCiAuditInput): Promise<void> {
+    const state = this.#requireReadyState(input.workspaceId);
+    const params: Record<string, unknown> = {
+      capabilityId: state.capabilityId,
+      operationId: input.operationId,
+      ciCapability: input.capability,
+      phase: input.phase,
+      provider: input.provider,
+      repository: input.repository,
+      ...(input.credentialSource === undefined ? {} : { credentialSource: input.credentialSource }),
+      ...(input.runId === undefined ? {} : { runId: input.runId }),
+      ...(input.jobId === undefined ? {} : { jobId: input.jobId }),
+      ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+      ...(input.truncated === undefined ? {} : { truncated: input.truncated }),
+      ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs })
+    };
+    try {
+      const result = await this.#kernel.request<unknown>("ci.audit", params);
+      if (!isRecord(result) || result.ok !== true || Object.keys(result).length !== 1) {
+        throw new WorkspaceManagerError(
+          "RUNTIME_PROTOCOL_INVALID",
+          "ci.audit returned an invalid acknowledgement"
+        );
+      }
+    } catch (error) {
+      if (error instanceof WorkspaceManagerError) throw error;
+      if (error instanceof KernelRpcError && error.message === "AUDIT_UNAVAILABLE") {
+        throw new WorkspaceManagerError(
+          "CI_AUDIT_UNAVAILABLE",
+          "Remote-CI durable audit is unavailable",
+          { cause: error }
+        );
       }
       throw error;
     }

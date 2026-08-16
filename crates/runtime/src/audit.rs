@@ -48,6 +48,11 @@ pub enum AuditAction {
     GitCommitInspect,
     GitHistoryRange,
     GitHistoryDiff,
+    CiRepository,
+    CiStatus,
+    CiRuns,
+    CiRun,
+    CiFailure,
     ProcessInspectExecutable,
     VerifyRun,
     ProcessRun,
@@ -87,6 +92,18 @@ pub struct AuditContext {
     pub operation_id: String,
     pub capability_id: Option<String>,
     pub action: AuditAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiAuditMetadata {
+    pub provider: String,
+    pub repository: String,
+    pub credential_source: Option<String>,
+    pub run_id: Option<String>,
+    pub job_id: Option<String>,
+    pub error_code: Option<String>,
+    pub truncated: Option<bool>,
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +185,22 @@ struct AuditRecord {
     reason: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     outcome: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
 }
 
 impl AuditSink {
@@ -269,6 +302,31 @@ impl AuditSink {
         ref_name: &str,
     ) -> Result<(), AuditError> {
         let record = AuditRecord::outcome_with_git_remote(context, outcome, remote, ref_name);
+        self.append(record, AuditPhase::Outcome)
+    }
+
+    pub fn decision_with_ci(
+        &self,
+        context: &AuditContext,
+        decision: AuditDecision,
+        reason: AuditReason,
+        metadata: &CiAuditMetadata,
+    ) -> Result<(), AuditError> {
+        validate_ci_audit_metadata(metadata)?;
+        let mut record = AuditRecord::decision(context, decision, reason);
+        record.set_ci_metadata(metadata);
+        self.append(record, AuditPhase::Decision)
+    }
+
+    pub fn outcome_with_ci(
+        &self,
+        context: &AuditContext,
+        outcome: AuditOutcome,
+        metadata: &CiAuditMetadata,
+    ) -> Result<(), AuditError> {
+        validate_ci_audit_metadata(metadata)?;
+        let mut record = AuditRecord::outcome(context, outcome);
+        record.set_ci_metadata(metadata);
         self.append(record, AuditPhase::Outcome)
     }
 
@@ -472,7 +530,26 @@ impl AuditRecord {
             decision,
             reason,
             outcome,
+            provider: None,
+            repository: None,
+            credential_source: None,
+            run_id: None,
+            job_id: None,
+            error_code: None,
+            truncated: None,
+            duration_ms: None,
         }
+    }
+
+    fn set_ci_metadata(&mut self, metadata: &CiAuditMetadata) {
+        self.provider = Some(metadata.provider.clone());
+        self.repository = Some(metadata.repository.clone());
+        self.credential_source = metadata.credential_source.clone();
+        self.run_id = metadata.run_id.clone();
+        self.job_id = metadata.job_id.clone();
+        self.error_code = metadata.error_code.clone();
+        self.truncated = metadata.truncated;
+        self.duration_ms = metadata.duration_ms;
     }
 }
 
@@ -514,6 +591,11 @@ impl AuditAction {
             Self::GitCommitInspect => "git_commit_inspect",
             Self::GitHistoryRange => "git_history_range",
             Self::GitHistoryDiff => "git_history_diff",
+            Self::CiRepository => "ci_repository",
+            Self::CiStatus => "ci_status",
+            Self::CiRuns => "ci_runs",
+            Self::CiRun => "ci_run",
+            Self::CiFailure => "ci_failure",
             Self::ProcessInspectExecutable => "process_inspect_executable",
             Self::VerifyRun => "verify_run",
             Self::ProcessRun => "process_run",
@@ -556,6 +638,63 @@ impl AuditOutcome {
             Self::Failed => "failed",
         }
     }
+}
+
+fn validate_ci_audit_metadata(metadata: &CiAuditMetadata) -> Result<(), AuditError> {
+    if metadata.provider != "github"
+        || !valid_ci_repository(&metadata.repository)
+        || metadata.credential_source.as_deref().is_some_and(|value| value != "gh")
+        || metadata.run_id.as_deref().is_some_and(|value| !valid_ci_decimal_id(value))
+        || metadata.job_id.as_deref().is_some_and(|value| !valid_ci_decimal_id(value))
+        || metadata.error_code.as_deref().is_some_and(|value| !valid_ci_error_code(value))
+    {
+        return Err(AuditError::unavailable("AUDIT_UNAVAILABLE"));
+    }
+    Ok(())
+}
+
+fn valid_ci_repository(value: &str) -> bool {
+    if value.len() < 3 || value.len() > 201 || value.matches('/').count() != 1 {
+        return false;
+    }
+    let mut parts = value.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    !owner.is_empty()
+        && !name.is_empty()
+        && owner.len() <= 100
+        && name.len() <= 100
+        && !owner.bytes().any(|byte| byte.is_ascii_control())
+        && !name.bytes().any(|byte| byte.is_ascii_control())
+        && !owner.contains([':', '@'])
+        && !name.contains([':', '@'])
+}
+
+fn valid_ci_decimal_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn valid_ci_error_code(value: &str) -> bool {
+    matches!(
+        value,
+        "CI_WORKSPACE_AMBIGUOUS"
+            | "CI_AUDIT_UNAVAILABLE"
+            | "CI_AUTH_REQUIRED"
+            | "CI_AUTH_FAILED"
+            | "CI_REPOSITORY_UNAVAILABLE"
+            | "CI_REPOSITORY_MISMATCH"
+            | "CI_REMOTE_UNSUPPORTED"
+            | "CI_NOT_FOUND"
+            | "CI_PERMISSION_DENIED"
+            | "CI_RATE_LIMITED"
+            | "CI_PROVIDER_UNAVAILABLE"
+            | "CI_RESPONSE_INVALID"
+            | "CI_RESPONSE_LIMIT_EXCEEDED"
+            | "CI_LOG_UNAVAILABLE"
+            | "CI_LOG_LIMIT_EXCEEDED"
+    )
 }
 
 fn initialize_file(directory: &Path, path: &Path) -> Result<(File, u64), std::io::Error> {
@@ -620,7 +759,8 @@ mod tests {
 
     use super::{
         AuditAction, AuditContext, AuditDecision, AuditFaults, AuditOutcome, AuditReason,
-        AuditSink, AuditSinkConfig, DEFAULT_AUDIT_ROTATION_BYTES, DEFAULT_AUDIT_ROTATIONS,
+        AuditSink, AuditSinkConfig, CiAuditMetadata, DEFAULT_AUDIT_ROTATION_BYTES,
+        DEFAULT_AUDIT_ROTATIONS,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -651,6 +791,56 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).expect("every audit line is valid JSON"))
             .collect()
+    }
+
+    #[test]
+    fn ci_audit_metadata_is_bounded_and_sanitized() {
+        let root = temporary_root("ci-metadata");
+        let sink = AuditSink::open(&root);
+        let context = AuditContext {
+            request_id: "req_ci_audit_1".into(),
+            operation_id: "op_ci_audit_1".into(),
+            capability_id: Some("kc_ci_audit".into()),
+            action: AuditAction::CiStatus,
+        };
+        let metadata = CiAuditMetadata {
+            provider: "github".into(),
+            repository: "2ndworld/kodeGPT".into(),
+            credential_source: Some("gh".into()),
+            run_id: Some("123".into()),
+            job_id: Some("456".into()),
+            error_code: Some("CI_RATE_LIMITED".into()),
+            truncated: Some(true),
+            duration_ms: Some(42),
+        };
+
+        sink.decision_with_ci(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+            &metadata,
+        )
+        .expect("CI decision persists");
+        sink.outcome_with_ci(&context, AuditOutcome::Failed, &metadata)
+            .expect("CI outcome persists");
+
+        let lines = parse_lines(sink.path());
+        assert_eq!(lines.len(), 2);
+        for record in &lines {
+            assert_eq!(record["action"], "ci_status");
+            assert_eq!(record["provider"], "github");
+            assert_eq!(record["repository"], "2ndworld/kodeGPT");
+            assert_eq!(record["credentialSource"], "gh");
+            assert_eq!(record["runId"], "123");
+            assert_eq!(record["jobId"], "456");
+            assert_eq!(record["errorCode"], "CI_RATE_LIMITED");
+            assert_eq!(record["truncated"], true);
+            assert_eq!(record["durationMs"], 42);
+            let serialized = record.to_string();
+            assert!(!serialized.contains("Authorization"));
+            assert!(!serialized.contains("https://github.com"));
+        }
+        fs::remove_dir_all(root).expect("temporary root removed");
     }
 
     #[test]

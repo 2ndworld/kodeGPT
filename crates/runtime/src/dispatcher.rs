@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
-    ArtifactReadParams, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
+    ArtifactReadParams, CiAuditParams, CiAuditPhase, CiCapability, CiCredentialSource, CiErrorCode,
+    CiProvider, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
     GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
     GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
@@ -29,7 +30,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use crate::audit::{
-    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink,
+    AuditAction, AuditContext, AuditDecision, AuditOutcome, AuditReason, AuditSink, CiAuditMetadata,
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
@@ -66,6 +67,26 @@ fn valid_audit_operation_id(value: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     })
+}
+
+fn ci_error_code_str(value: CiErrorCode) -> &'static str {
+    match value {
+        CiErrorCode::WorkspaceAmbiguous => "CI_WORKSPACE_AMBIGUOUS",
+        CiErrorCode::AuditUnavailable => "CI_AUDIT_UNAVAILABLE",
+        CiErrorCode::AuthRequired => "CI_AUTH_REQUIRED",
+        CiErrorCode::AuthFailed => "CI_AUTH_FAILED",
+        CiErrorCode::RepositoryUnavailable => "CI_REPOSITORY_UNAVAILABLE",
+        CiErrorCode::RepositoryMismatch => "CI_REPOSITORY_MISMATCH",
+        CiErrorCode::RemoteUnsupported => "CI_REMOTE_UNSUPPORTED",
+        CiErrorCode::NotFound => "CI_NOT_FOUND",
+        CiErrorCode::PermissionDenied => "CI_PERMISSION_DENIED",
+        CiErrorCode::RateLimited => "CI_RATE_LIMITED",
+        CiErrorCode::ProviderUnavailable => "CI_PROVIDER_UNAVAILABLE",
+        CiErrorCode::ResponseInvalid => "CI_RESPONSE_INVALID",
+        CiErrorCode::ResponseLimitExceeded => "CI_RESPONSE_LIMIT_EXCEEDED",
+        CiErrorCode::LogUnavailable => "CI_LOG_UNAVAILABLE",
+        CiErrorCode::LogLimitExceeded => "CI_LOG_LIMIT_EXCEEDED",
+    }
 }
 
 #[cfg(feature = "runtime-test-methods")]
@@ -289,6 +310,57 @@ async fn dispatch_one(
                 ),
                 TrustAuditPhase::Success => audit.outcome(&audit_context, AuditOutcome::Success),
                 TrustAuditPhase::Failed => audit.outcome(&audit_context, AuditOutcome::Failed),
+            };
+            if recorded.is_err() {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request.id, json!({ "ok": true }))
+        }
+        "ci.audit" => {
+            let params = match serde_json::from_value::<CiAuditParams>(request.params) {
+                Ok(params)
+                    if !params.capability_id.is_empty()
+                        && valid_audit_operation_id(&params.operation_id) => params,
+                _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+            };
+            let action = match params.ci_capability {
+                CiCapability::Repository => AuditAction::CiRepository,
+                CiCapability::Status => AuditAction::CiStatus,
+                CiCapability::Runs => AuditAction::CiRuns,
+                CiCapability::Run => AuditAction::CiRun,
+                CiCapability::Failure => AuditAction::CiFailure,
+            };
+            let metadata = CiAuditMetadata {
+                provider: match params.provider { CiProvider::Github => "github" }.into(),
+                repository: params.repository,
+                credential_source: params.credential_source.map(|value| match value {
+                    CiCredentialSource::Gh => "gh".to_owned(),
+                }),
+                run_id: params.run_id,
+                job_id: params.job_id,
+                error_code: params.error_code.map(ci_error_code_str).map(str::to_owned),
+                truncated: params.truncated,
+                duration_ms: params.duration_ms,
+            };
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: params.operation_id,
+                capability_id: Some(params.capability_id),
+                action,
+            };
+            let recorded = match params.phase {
+                CiAuditPhase::Decision => audit.decision_with_ci(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                    &metadata,
+                ),
+                CiAuditPhase::Success => {
+                    audit.outcome_with_ci(&audit_context, AuditOutcome::Success, &metadata)
+                }
+                CiAuditPhase::Failed => {
+                    audit.outcome_with_ci(&audit_context, AuditOutcome::Failed, &metadata)
+                }
             };
             if recorded.is_err() {
                 return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
@@ -3308,6 +3380,106 @@ mod tests {
             .expect("response channel open");
         dispatcher.await.expect("dispatcher task joins");
         response
+    }
+
+    async fn ci_audit_once(
+        audit: Arc<AuditSink>,
+        id: &str,
+        operation_id: &str,
+        phase: &str,
+    ) -> Value {
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
+        request_tx
+            .send(request(
+                id,
+                "ci.audit",
+                json!({
+                    "capabilityId": "kc_ci_audit",
+                    "operationId": operation_id,
+                    "ciCapability": "ci.status",
+                    "phase": phase,
+                    "provider": "github",
+                    "repository": "2ndworld/kodeGPT",
+                    "credentialSource": "gh",
+                    "runId": "123",
+                    "jobId": "456",
+                    "errorCode": "CI_RATE_LIMITED",
+                    "truncated": true,
+                    "durationMs": 42
+                }),
+            ))
+            .expect("CI audit request accepted");
+        drop(request_tx);
+
+        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+            .await
+            .expect("CI audit response arrives")
+            .expect("response channel open");
+        dispatcher.await.expect("dispatcher task joins");
+        response
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ci_audit_routes_sanitized_records_through_the_single_rust_sink() {
+        let (audit, audit_root) = audit_sink("ci-control-plane");
+
+        let decision = ci_audit_once(
+            Arc::clone(&audit),
+            "req_ci_decision",
+            "op_ci_control_plane",
+            "decision",
+        )
+        .await;
+        assert_eq!(decision["result"]["ok"], true);
+
+        let outcome = ci_audit_once(
+            Arc::clone(&audit),
+            "req_ci_failed",
+            "op_ci_control_plane",
+            "failed",
+        )
+        .await;
+        assert_eq!(outcome["result"]["ok"], true);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert_eq!(audit_text.lines().count(), 2);
+        assert!(audit_text.contains("ci_status"));
+        assert!(audit_text.contains("2ndworld/kodeGPT"));
+        assert!(audit_text.contains("CI_RATE_LIMITED"));
+        assert!(!audit_text.contains("https://github.com"));
+        assert!(!audit_text.contains("Authorization"));
+
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ci_audit_fails_closed_when_the_single_rust_sink_is_unavailable() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-ci-audit-fault-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+
+        let response = ci_audit_once(
+            Arc::clone(&audit),
+            "req_ci_fault",
+            "op_ci_fault",
+            "decision",
+        )
+        .await;
+
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

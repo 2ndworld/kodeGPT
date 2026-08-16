@@ -3,7 +3,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use kodegpt_protocol::{
-    GitRepositoryIdentityParams, MAX_FRAME_BYTES, RuntimeRequest, read_frame, write_frame,
+    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, RuntimeRequest, read_frame,
+    write_frame,
 };
 use serde_json::{Value, json};
 
@@ -155,6 +156,66 @@ fn git_repository_identity_params_are_closed() {
     let error = serde_json::from_value::<GitRepositoryIdentityParams>(with_raw_argv)
         .expect_err("raw git argv must be rejected");
     assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn ci_audit_params_are_closed_and_typed() {
+    let valid = json!({
+        "capabilityId": "kc_ci_audit",
+        "operationId": "op_ci_audit_1",
+        "ciCapability": "ci.status",
+        "phase": "decision",
+        "provider": "github",
+        "repository": "2ndworld/kodeGPT",
+        "credentialSource": "gh",
+        "runId": "12345678901234567890",
+        "jobId": "98765432109876543210",
+        "errorCode": "CI_RATE_LIMITED",
+        "truncated": true,
+        "durationMs": 42
+    });
+    serde_json::from_value::<CiAuditParams>(valid).expect("valid CI audit params");
+
+    for invalid in [
+        json!({
+            "capabilityId": "kc_ci_audit",
+            "operationId": "op_ci_audit_1",
+            "ciCapability": "ci.status",
+            "phase": "decision",
+            "provider": "github",
+            "repository": "https://github.com/2ndworld/kodeGPT"
+        }),
+        json!({
+            "capabilityId": "kc_ci_audit",
+            "operationId": "op_ci_audit_1",
+            "ciCapability": "ci.status",
+            "phase": "decision",
+            "provider": "github",
+            "repository": "2ndworld/kodeGPT",
+            "credentialSource": "other"
+        }),
+        json!({
+            "capabilityId": "kc_ci_audit",
+            "operationId": "op_ci_audit_1",
+            "ciCapability": "ci.status",
+            "phase": "decision",
+            "provider": "github",
+            "repository": "2ndworld/kodeGPT",
+            "runId": "1e3"
+        }),
+        json!({
+            "capabilityId": "kc_ci_audit",
+            "operationId": "op_ci_audit_1",
+            "ciCapability": "ci.status",
+            "phase": "decision",
+            "provider": "github",
+            "repository": "2ndworld/kodeGPT",
+            "secretMaterial": "forbidden"
+        })
+    ] {
+        serde_json::from_value::<CiAuditParams>(invalid)
+            .expect_err("unsafe CI audit params must be rejected");
+    }
 }
 
 #[test]
