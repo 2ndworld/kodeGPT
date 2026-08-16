@@ -9,7 +9,11 @@ const REPOSITORY = { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kod
 class FakeHttp {
   responses: unknown[] = [];
   calls: Array<{ kind: "json" | "log"; path: string; query?: string; maxBytes?: number }> = [];
-  logResult: GitHubLogRead = { bytes: new TextEncoder().encode("log"), truncated: false };
+  logResult: GitHubLogRead = {
+    bytes: new TextEncoder().encode("log"),
+    truncated: false,
+    providerRequests: 2
+  };
 
   async getJson<T>(path: string, query?: URLSearchParams): Promise<T> {
     this.calls.push({ kind: "json", path, ...(query === undefined ? {} : { query: query.toString() }) });
@@ -52,6 +56,7 @@ function jobFixture(overrides: Record<string, unknown> = {}) {
     started_at: "2026-08-16T01:00:02Z",
     completed_at: "2026-08-16T01:00:50Z",
     html_url: "https://github.com/2ndworld/kodeGPT/runs/10/jobs/20",
+    check_run_url: "https://api.github.com/repos/2ndworld/kodeGPT/check-runs/30",
     steps: [
       {
         number: 1,
@@ -260,9 +265,79 @@ describe("GitHubRemoteCiAdapter", () => {
     await expectCode(adapter.run({ repository: REPOSITORY, runId: "10" }), "CI_RESPONSE_INVALID");
   });
 
+  it("loads annotations only for the selected failure job and keeps request count bounded", async () => {
+    const http = new FakeHttp();
+    http.responses.push(
+      runFixture({ conclusion: "failure" }),
+      { total_count: 1, jobs: [jobFixture()] },
+      [
+        {
+          path: "src/index.ts",
+          start_line: 10,
+          end_line: 10,
+          start_column: 2,
+          end_column: 8,
+          annotation_level: "failure",
+          message: "assertion failed",
+          title: "Test failure"
+        }
+      ]
+    );
+    const adapter = new GitHubRemoteCiAdapter({ http });
+    const result = await adapter.failureMetadata({
+      repository: REPOSITORY,
+      runId: "10",
+      selectJob: (jobs) => jobs[0]!.id
+    });
+
+    expect(result).toMatchObject({
+      selectedJobId: "20",
+      providerRequests: 3,
+      annotationLimitReached: false,
+      jobLimitReached: false,
+      stepLimitReached: false
+    });
+    expect(result.annotations).toEqual([
+      {
+        path: "src/index.ts",
+        startLine: 10,
+        endLine: 10,
+        startColumn: 2,
+        endColumn: 8,
+        level: "FAILURE",
+        message: "assertion failed",
+        title: "Test failure"
+      }
+    ]);
+    expect(http.calls.map((call) => call.path)).toEqual([
+      "/repos/2ndworld/kodeGPT/actions/runs/10",
+      "/repos/2ndworld/kodeGPT/actions/runs/10/jobs",
+      "/repos/2ndworld/kodeGPT/check-runs/30/annotations"
+    ]);
+  });
+
+  it("rejects an internal failure selector that returns a job outside the observed run", async () => {
+    const http = new FakeHttp();
+    http.responses.push(runFixture({ conclusion: "failure" }), { total_count: 1, jobs: [jobFixture()] });
+    const adapter = new GitHubRemoteCiAdapter({ http });
+    await expectCode(
+      adapter.failureMetadata({
+        repository: REPOSITORY,
+        runId: "10",
+        selectJob: () => "999"
+      }),
+      "CI_RESPONSE_INVALID"
+    );
+    expect(http.calls).toHaveLength(2);
+  });
+
   it("uses only the fixed selected-job log endpoint", async () => {
     const http = new FakeHttp();
-    http.logResult = { bytes: new TextEncoder().encode("bounded evidence"), truncated: true };
+    http.logResult = {
+      bytes: new TextEncoder().encode("bounded evidence"),
+      truncated: true,
+      providerRequests: 2
+    };
     const adapter = new GitHubRemoteCiAdapter({ http });
     await expect(
       adapter.failureLog({ repository: REPOSITORY, jobId: "20", scanMaxBytes: 512 * 1024 })

@@ -10,12 +10,18 @@ import type {
 } from "../adapters.js";
 import { CapabilityError, type CapabilityErrorCode } from "../errors.js";
 import {
+  CI_LOG_EXCERPT_DEFAULT_BYTES,
+  CI_LOG_SCAN_MAX_BYTES,
   CI_REQUEST_BUDGETS,
+  CI_TRUNCATION_REASONS,
   DEFAULT_CI_RUNS_LIMIT,
   MAX_CI_STATUS_FAILURE_SUMMARIES,
   MAX_CI_STATUS_SUMMARIES,
-  type CiCheckSummary,
+  type CiAnnotation,
+  type CiFailureInput,
+  type CiFailureResult,
   type CiFailureSummary,
+  type CiJobSummary,
   type CiOverallState,
   type CiRepositoryInput,
   type CiRepositoryResult,
@@ -25,13 +31,17 @@ import {
   type CiRunsResult,
   type CiRunSummary,
   type CiStatusInput,
+  type CiStepSummary,
   type CiStatusResult,
   type CiTruncationReason
 } from "./contracts.js";
 import type { GitHubCredential, GitHubCredentialProvider } from "./credential-provider.js";
-import { fitCiResult } from "./response-budget.js";
+import { redactCiText } from "./redaction.js";
+import { fitCiResult, utf8Prefix } from "./response-budget.js";
 import type { ResolvedCiRepository } from "./repository-resolver.js";
 import {
+  CiFailureInputSchema,
+  CiFailureResultSchema,
   CiRepositoryInputSchema,
   CiRepositoryResultSchema,
   CiRunInputSchema,
@@ -242,6 +252,105 @@ export class RemoteCiService {
     }
   }
 
+  async failure(input: CiFailureInput): Promise<CiFailureResult> {
+    const parsed = parseInput(CiFailureInputSchema, input);
+    const resolved = await this.#resolve(parsed.workspaceId);
+    const operation = this.#operation("ci.failure", resolved, {
+      runId: parsed.runId,
+      ...(parsed.jobId === undefined ? {} : { jobId: parsed.jobId })
+    });
+    await this.#decision(operation);
+
+    let credentialSource: "gh" | undefined;
+    try {
+      const root = await this.#roots.rootFor(resolved.workspaceId);
+      const credential = await this.#credentialProvider.getCredential({ workspaceRoot: root });
+      credentialSource = credential.source;
+      const adapter = this.#adapterFactory.create(credential);
+      const metadata = await adapter.failureMetadata({
+        repository: publicRepository(resolved),
+        runId: parsed.runId,
+        selectJob: (jobs) => selectFailureJob(jobs, parsed.jobId)
+      });
+      if (
+        !Number.isSafeInteger(metadata.providerRequests) ||
+        metadata.providerRequests < 2 ||
+        metadata.providerRequests > 3
+      ) {
+        throw new CapabilityError("CI_RESPONSE_INVALID", "Remote-CI failure metadata request budget was exceeded");
+      }
+      const selectedJob = metadata.jobs.find((job) => job.id === metadata.selectedJobId);
+      if (selectedJob === undefined) {
+        throw new CapabilityError("CI_RESPONSE_INVALID", "Remote-CI selected an invalid failure job");
+      }
+      operation.jobId = selectedJob.id;
+      const failedStep = selectedJob.steps.find((step) => isFailLikeConclusion(step.conclusion)) ?? null;
+
+      const log = await adapter.failureLog({
+        repository: publicRepository(resolved),
+        jobId: selectedJob.id,
+        scanMaxBytes: CI_LOG_SCAN_MAX_BYTES
+      });
+      if (
+        !Number.isSafeInteger(log.providerRequests) ||
+        log.providerRequests < 1 ||
+        log.providerRequests > 2
+      ) {
+        throw new CapabilityError("CI_RESPONSE_INVALID", "Remote-CI failure log request budget was exceeded");
+      }
+      enforceProviderBudget("failure", metadata.providerRequests + log.providerRequests);
+      if (log.bytes.byteLength > CI_LOG_SCAN_MAX_BYTES) {
+        throw new CapabilityError("CI_LOG_LIMIT_EXCEEDED", "CI log exceeded the safe scan limit");
+      }
+
+      let decodedLog: string;
+      try {
+        decodedLog = new TextDecoder("utf-8", { fatal: true }).decode(log.bytes);
+      } catch {
+        throw new CapabilityError("CI_LOG_LIMIT_EXCEEDED", "CI log could not be decoded safely");
+      }
+      const redactedLog = redactCiText(decodedLog, credential.token);
+      const excerpt = extractFailureExcerpt(
+        redactedLog,
+        [failedStep?.name, selectedJob.name, "error", "fail"].filter(
+          (value): value is string => value !== undefined && value.length > 0
+        )
+      );
+      const logClipped =
+        log.truncated ||
+        Buffer.byteLength(redactedLog, "utf8") > Buffer.byteLength(excerpt, "utf8");
+
+      const reasons = canonicalReasons([
+        ...(metadata.jobLimitReached ? ["JOB_LIMIT" as const] : []),
+        ...(metadata.stepLimitReached ? ["STEP_LIMIT" as const] : []),
+        ...(metadata.annotationLimitReached ? ["ANNOTATION_LIMIT" as const] : []),
+        ...(logClipped ? ["LOG_BYTE_LIMIT" as const] : []),
+        ...(metadata.providerPageLimited ? ["PROVIDER_PAGE_LIMIT" as const] : [])
+      ]);
+      const result = this.#finalizeFailure({
+        schemaVersion: 1,
+        workspaceId: resolved.workspaceId,
+        provider: "github",
+        repository: publicRepository(resolved),
+        runId: parsed.runId,
+        job: redactJob(selectedJob, credential.token),
+        failedStep: failedStep === null ? null : redactStep(failedStep, credential.token),
+        reason: failedStep === null ? "JOB_FAILURE" : "STEP_FAILURE",
+        annotations: metadata.annotations.map((annotation) => redactAnnotation(annotation, credential.token)),
+        logExcerpt: excerpt.length === 0 ? null : excerpt,
+        truncated: reasons.length > 0,
+        truncationReasons: reasons
+      });
+      await this.#success(operation, result.truncated, credentialSource);
+      return result;
+    } catch (error) {
+      const normalized = normalizeOperationError(error);
+      if (normalized.code === "CI_AUDIT_UNAVAILABLE") throw normalized;
+      await this.#failed(operation, normalized, credentialSource);
+      throw normalized;
+    }
+  }
+
   async runs(input: CiRunsInput): Promise<CiRunsResult> {
     const parsed = parseInput(CiRunsInputSchema, input);
     const resolved = await this.#resolve(parsed.workspaceId);
@@ -409,6 +518,10 @@ export class RemoteCiService {
     }
   }
 
+  #finalizeFailure(value: CiFailureResult): CiFailureResult {
+    return parseResult(CiFailureResultSchema, fitCiResult(value));
+  }
+
   #finalizeRepository(value: CiRepositoryResult): CiRepositoryResult {
     return parseResult(CiRepositoryResultSchema, fitCiResult(value));
   }
@@ -517,6 +630,100 @@ function isSafeGitRef(value: string): boolean {
       !part.endsWith(".")
     )
   );
+}
+
+function selectFailureJob(jobs: readonly CiJobSummary[], explicitJobId?: string): string {
+  if (explicitJobId !== undefined) {
+    const selected = jobs.find((job) => job.id === explicitJobId);
+    if (selected === undefined || !isFailLikeConclusion(selected.conclusion)) {
+      throw new CapabilityError("CI_NOT_FOUND", "Requested failed CI job was not found in the run");
+    }
+    return selected.id;
+  }
+
+  const candidates = jobs
+    .map((job, providerIndex) => ({
+      job,
+      providerIndex,
+      hasFailedStep: job.steps.some((step) => isFailLikeConclusion(step.conclusion))
+    }))
+    .filter((candidate) => isFailLikeConclusion(candidate.job.conclusion));
+  if (candidates.length === 0) {
+    throw new CapabilityError("CI_NOT_FOUND", "No failed CI job was found in the bounded run observation");
+  }
+  candidates.sort((left, right) => {
+    if (left.hasFailedStep !== right.hasFailedStep) return left.hasFailedStep ? -1 : 1;
+    if (left.providerIndex !== right.providerIndex) return left.providerIndex - right.providerIndex;
+    const leftStart = timestampOrder(left.job.startedAt);
+    const rightStart = timestampOrder(right.job.startedAt);
+    if (leftStart !== rightStart) return leftStart - rightStart;
+    const leftId = BigInt(left.job.id);
+    const rightId = BigInt(right.job.id);
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
+  return candidates[0]!.job.id;
+}
+
+function isFailLikeConclusion(value: CiJobSummary["conclusion"] | CiStepSummary["conclusion"]): boolean {
+  return (
+    value === "FAILURE" ||
+    value === "TIMED_OUT" ||
+    value === "ACTION_REQUIRED" ||
+    value === "STARTUP_FAILURE"
+  );
+}
+
+function timestampOrder(value: string | null): number {
+  if (value === null) return Number.MAX_SAFE_INTEGER;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function extractFailureExcerpt(text: string, markers: readonly string[]): string {
+  if (text.length === 0) return "";
+  const lower = text.toLowerCase();
+  let markerIndex = -1;
+  for (const marker of markers) {
+    const index = lower.indexOf(marker.toLowerCase());
+    if (index >= 0) {
+      markerIndex = index;
+      break;
+    }
+  }
+  if (markerIndex < 0) return utf8Prefix(text, CI_LOG_EXCERPT_DEFAULT_BYTES);
+  const beforePoints = Array.from(text.slice(0, markerIndex)).length;
+  const points = Array.from(text);
+  const start = Math.max(0, beforePoints - Math.floor(CI_LOG_EXCERPT_DEFAULT_BYTES / 2));
+  return utf8Prefix(points.slice(start).join(""), CI_LOG_EXCERPT_DEFAULT_BYTES);
+}
+
+function canonicalReasons(reasons: readonly CiTruncationReason[]): CiTruncationReason[] {
+  const unique = new Set(reasons);
+  return CI_TRUNCATION_REASONS.filter((reason) => unique.has(reason));
+}
+
+function redactStep(step: CiStepSummary, credential: string): CiStepSummary {
+  return {
+    ...step,
+    name: redactCiText(step.name, credential)
+  };
+}
+
+function redactJob(job: CiJobSummary, credential: string): CiJobSummary {
+  return {
+    ...job,
+    name: redactCiText(job.name, credential),
+    steps: job.steps.map((step) => redactStep(step, credential))
+  };
+}
+
+function redactAnnotation(annotation: CiAnnotation, credential: string): CiAnnotation {
+  return {
+    ...annotation,
+    path: annotation.path === null ? null : redactCiText(annotation.path, credential),
+    message: redactCiText(annotation.message, credential),
+    title: annotation.title === null ? null : redactCiText(annotation.title, credential)
+  };
 }
 
 function parseInput<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): T {

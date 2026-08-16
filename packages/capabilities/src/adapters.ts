@@ -207,6 +207,11 @@ export interface RemoteCiRunDetail {
   providerRequests: number;
 }
 
+export interface RemoteCiFailureMetadata extends RemoteCiRunDetail {
+  selectedJobId: string;
+  annotationLimitReached: boolean;
+}
+
 export interface RemoteCiAdapter {
   repository(input: { repository: CiRepositoryIdentity }): Promise<{
     defaultBranch: string | null;
@@ -222,12 +227,16 @@ export interface RemoteCiAdapter {
     limit: number;
   }): Promise<RemoteCiProviderList<CiRunSummary>>;
   run(input: { repository: CiRepositoryIdentity; runId: string }): Promise<RemoteCiRunDetail>;
-  failureMetadata(input: { repository: CiRepositoryIdentity; runId: string }): Promise<RemoteCiRunDetail>;
+  failureMetadata(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+    selectJob(jobs: readonly CiJobSummary[]): string;
+  }): Promise<RemoteCiFailureMetadata>;
   failureLog(input: {
     repository: CiRepositoryIdentity;
     jobId: string;
     scanMaxBytes: number;
-  }): Promise<{ bytes: Uint8Array; truncated: boolean }>;
+  }): Promise<{ bytes: Uint8Array; truncated: boolean; providerRequests: number }>;
 }
 
 export interface GitLocalAuthorityAdapter {

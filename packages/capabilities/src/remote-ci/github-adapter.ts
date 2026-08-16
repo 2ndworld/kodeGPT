@@ -1,15 +1,18 @@
 import type {
   RemoteCiAdapter,
+  RemoteCiFailureMetadata,
   RemoteCiProviderList,
   RemoteCiRunDetail,
   RemoteCiStatusEvidence
 } from "../adapters.js";
 import { CapabilityError } from "../errors.js";
 import {
+  MAX_CI_ANNOTATIONS,
   MAX_CI_JOB_STEPS,
   MAX_CI_RUN_JOBS,
   MAX_CI_RUNS_LIMIT,
   MAX_CI_STATUS_SUMMARIES,
+  type CiAnnotation,
   type CiCheckSummary,
   type CiConclusion,
   type CiJobSummary,
@@ -141,8 +144,49 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
   async failureMetadata(input: {
     repository: CiRepositoryIdentity;
     runId: string;
-  }): Promise<RemoteCiRunDetail> {
-    return await this.run(input);
+    selectJob(jobs: readonly CiJobSummary[]): string;
+  }): Promise<RemoteCiFailureMetadata> {
+    const runId = expectDecimalId(input.runId);
+    const runRaw = await this.#http.getJson<unknown>(`${repoPath(input.repository)}/actions/runs/${runId}`);
+    const run = normalizeRun(runRaw, input.repository);
+    if (run.id !== runId) throw invalidResponse();
+
+    const query = new URLSearchParams({ per_page: String(MAX_CI_RUN_JOBS) });
+    const jobsRaw = await this.#http.getJson<unknown>(
+      `${repoPath(input.repository)}/actions/runs/${runId}/jobs`,
+      query
+    );
+    const page = normalizeFailureJobsPage(jobsRaw, input.repository, runId);
+    const selectedJobId = expectDecimalId(input.selectJob(page.items.map((item) => item.job)));
+    const selected = page.items.find((item) => item.job.id === selectedJobId);
+    if (selected === undefined) throw invalidResponse();
+
+    let annotations: CiAnnotation[] = [];
+    let annotationLimitReached = false;
+    let providerRequests = 2;
+    if (selected.checkRunId !== null) {
+      const annotationsQuery = new URLSearchParams({ per_page: String(MAX_CI_ANNOTATIONS) });
+      const raw = await this.#http.getJson<unknown>(
+        `${repoPath(input.repository)}/check-runs/${selected.checkRunId}/annotations`,
+        annotationsQuery
+      );
+      const values = expectArray(raw);
+      annotations = values.slice(0, MAX_CI_ANNOTATIONS).map(normalizeAnnotation);
+      annotationLimitReached = values.length >= MAX_CI_ANNOTATIONS;
+      providerRequests += 1;
+    }
+
+    return {
+      run,
+      jobs: page.items.map((item) => item.job),
+      selectedJobId,
+      annotations,
+      providerPageLimited: page.providerPageLimited,
+      jobLimitReached: page.jobLimitReached,
+      stepLimitReached: page.stepLimitReached,
+      annotationLimitReached,
+      providerRequests
+    };
   }
 
   async failureLog(input: {
@@ -252,6 +296,41 @@ function normalizeJobsPage(
     limitReached: values.length > normalized.length,
     stepLimitReached: normalized.some((value) => value.stepLimitReached),
     providerRequests: 1
+  };
+}
+
+interface NormalizedFailureJobsPage {
+  items: Array<{
+    job: CiJobSummary;
+    checkRunId: string | null;
+    stepLimitReached: boolean;
+  }>;
+  providerPageLimited: boolean;
+  jobLimitReached: boolean;
+  stepLimitReached: boolean;
+}
+
+function normalizeFailureJobsPage(
+  raw: unknown,
+  repository: CiRepositoryIdentity,
+  runId: string
+): NormalizedFailureJobsPage {
+  const record = expectRecord(raw);
+  const totalCount = expectSafeCount(record.total_count);
+  const values = expectArray(record.jobs);
+  const items = values.slice(0, MAX_CI_RUN_JOBS).map((value) => {
+    const normalized = normalizeJob(value, repository, runId);
+    const rawRecord = expectRecord(value);
+    return {
+      ...normalized,
+      checkRunId: normalizeCheckRunId(rawRecord.check_run_url, repository)
+    };
+  });
+  return {
+    items,
+    providerPageLimited: totalCount > values.length,
+    jobLimitReached: values.length > items.length,
+    stepLimitReached: items.some((item) => item.stepLimitReached)
   };
 }
 
@@ -430,6 +509,84 @@ function safeRepositoryUrl(value: unknown, repository: CiRepositoryIdentity): st
     return null;
   }
   return url.toString();
+}
+
+function normalizeCheckRunId(
+  value: unknown,
+  repository: CiRepositoryIdentity
+): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || value.length > 2048 || hasControl(value)) throw invalidResponse();
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalidResponse();
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "api.github.com" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) throw invalidResponse();
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 5 || parts[0] !== "repos" || parts[3] !== "check-runs") throw invalidResponse();
+  let owner: string;
+  let name: string;
+  try {
+    owner = decodeURIComponent(parts[1]!);
+    name = decodeURIComponent(parts[2]!);
+  } catch {
+    throw invalidResponse();
+  }
+  if (
+    owner.toLowerCase() !== repository.owner.toLowerCase() ||
+    name.toLowerCase() !== repository.name.toLowerCase()
+  ) throw invalidResponse();
+  return expectDecimalId(parts[4]);
+}
+
+function normalizeAnnotation(raw: unknown): CiAnnotation {
+  const record = expectRecord(raw);
+  return {
+    path: nullableString(record.path, 4096),
+    startLine: nullablePositiveInteger(record.start_line),
+    endLine: nullablePositiveInteger(record.end_line),
+    startColumn: nullablePositiveInteger(record.start_column),
+    endColumn: nullablePositiveInteger(record.end_column),
+    level: normalizeAnnotationLevel(record.annotation_level),
+    message: boundedString(record.message, 16 * 1024),
+    title: nullableString(record.title, 1024)
+  };
+}
+
+function normalizeAnnotationLevel(value: unknown): CiAnnotation["level"] {
+  if (typeof value !== "string") return "UNKNOWN";
+  switch (value.toLowerCase()) {
+    case "notice": return "NOTICE";
+    case "warning": return "WARNING";
+    case "failure": return "FAILURE";
+    default: return "UNKNOWN";
+  }
+}
+
+function nullablePositiveInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) throw invalidResponse();
+  return value as number;
+}
+
+function nullableString(value: unknown, max: number): string | null {
+  if (value === null || value === undefined) return null;
+  return boundedString(value, max);
+}
+
+function boundedString(value: unknown, max: number): string {
+  if (typeof value !== "string" || value.length > max || hasControl(value)) throw invalidResponse();
+  return value;
 }
 
 function normalizeTimestamp(value: unknown): string | null {

@@ -37,6 +37,24 @@ const RUN = {
   startedAt: "2026-08-16T01:00:01.000Z",
   updatedAt: "2026-08-16T01:01:00.000Z"
 };
+const FAILED_STEP = {
+  number: 2,
+  name: "Run tests",
+  status: "COMPLETED" as const,
+  conclusion: "FAILURE" as const,
+  startedAt: "2026-08-16T01:00:10.000Z",
+  completedAt: "2026-08-16T01:00:20.000Z"
+};
+const FAILED_JOB = {
+  id: "20",
+  name: "test",
+  status: "COMPLETED" as const,
+  conclusion: "FAILURE" as const,
+  startedAt: "2026-08-16T01:00:02.000Z",
+  completedAt: "2026-08-16T01:00:50.000Z",
+  url: "https://github.com/2ndworld/kodeGPT/runs/10/jobs/20",
+  steps: [FAILED_STEP]
+};
 
 class Fixture {
   events: string[] = [];
@@ -60,6 +78,26 @@ class Fixture {
   runPageLimited = false;
   jobLimitReached = false;
   stepLimitReached = false;
+  failureJobs: Awaited<ReturnType<RemoteCiAdapter["failureMetadata"]>>["jobs"] = [FAILED_JOB];
+  failureAnnotations = [{
+    path: "src/index.ts",
+    startLine: 10,
+    endLine: 10,
+    startColumn: null,
+    endColumn: null,
+    level: "FAILURE" as const,
+    message: "fixture assertion failed",
+    title: "Failure"
+  }];
+  failureMetadataRequests = 3;
+  failureAnnotationLimitReached = false;
+  failurePageLimited = false;
+  failureJobLimitReached = false;
+  failureStepLimitReached = false;
+  failureLogBytes = new TextEncoder().encode("error: fixture\nRun tests failed\n");
+  failureLogTruncated = false;
+  failureLogRequests = 2;
+  selectedFailureJobId: string | undefined;
   providerError: Error | undefined;
 
   resolver = {
@@ -139,16 +177,32 @@ class Fixture {
         providerRequests: this.runRequests
       };
     },
-    failureMetadata: async () => ({
-      run: RUN,
-      jobs: [],
-      annotations: [],
-      providerPageLimited: false,
-      jobLimitReached: false,
-      stepLimitReached: false,
-      providerRequests: 2
-    }),
-    failureLog: async () => ({ bytes: new Uint8Array(), truncated: false })
+    failureMetadata: async (input) => {
+      this.events.push("provider-failure-metadata");
+      if (this.providerError !== undefined) throw this.providerError;
+      const selectedJobId = input.selectJob(this.failureJobs);
+      this.selectedFailureJobId = selectedJobId;
+      return {
+        run: { ...RUN, conclusion: "FAILURE" as const },
+        jobs: this.failureJobs,
+        selectedJobId,
+        annotations: this.failureAnnotations,
+        providerPageLimited: this.failurePageLimited,
+        jobLimitReached: this.failureJobLimitReached,
+        stepLimitReached: this.failureStepLimitReached,
+        annotationLimitReached: this.failureAnnotationLimitReached,
+        providerRequests: this.failureMetadataRequests
+      };
+    },
+    failureLog: async () => {
+      this.events.push("provider-failure-log");
+      if (this.providerError !== undefined) throw this.providerError;
+      return {
+        bytes: this.failureLogBytes,
+        truncated: this.failureLogTruncated,
+        providerRequests: this.failureLogRequests
+      };
+    }
   };
 
   service() {
@@ -300,6 +354,107 @@ describe("RemoteCiService status", () => {
       phase: "failed",
       errorCode: "CI_RESPONSE_INVALID"
     });
+  });
+});
+
+describe("RemoteCiService failure", () => {
+  it("selects a failed job deterministically, redacts evidence, and audits the selected job", async () => {
+    const fixture = new Fixture();
+    fixture.failureJobs = [
+      {
+        ...FAILED_JOB,
+        id: "20",
+        steps: [{ ...FAILED_STEP, conclusion: "SUCCESS" as const }]
+      },
+      { ...FAILED_JOB, id: "21", name: "preferred-failure" },
+      { ...FAILED_JOB, id: "22", name: "later-failure" }
+    ];
+
+    const result = await fixture.service().failure({ runId: "10" });
+
+    expect(result).toMatchObject({
+      runId: "10",
+      job: { id: "21", name: "preferred-failure" },
+      failedStep: { name: "Run tests", conclusion: "FAILURE" },
+      reason: "STEP_FAILURE"
+    });
+    expect(result.annotations[0]?.message).not.toContain("fixture");
+    expect(result.logExcerpt).not.toContain("fixture");
+    expect(fixture.selectedFailureJobId).toBe("21");
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "success",
+      runId: "10",
+      jobId: "21"
+    });
+    expect(fixture.events).toEqual([
+      "resolve-repository",
+      "audit-decision",
+      "credential",
+      "provider-failure-metadata",
+      "provider-failure-log",
+      "audit-success"
+    ]);
+  });
+
+  it("requires an explicit jobId to belong to the observed run", async () => {
+    const fixture = new Fixture();
+    await expectCode(fixture.service().failure({ runId: "10", jobId: "999" }), "CI_NOT_FOUND");
+    expect(fixture.events).not.toContain("provider-failure-log");
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "failed",
+      runId: "10",
+      jobId: "999",
+      errorCode: "CI_NOT_FOUND"
+    });
+  });
+
+  it("returns CI_NOT_FOUND when the bounded observation contains no failed job", async () => {
+    const fixture = new Fixture();
+    fixture.failureJobs = [{
+      ...FAILED_JOB,
+      conclusion: "SUCCESS",
+      steps: [{ ...FAILED_STEP, conclusion: "SUCCESS" }]
+    }];
+    await expectCode(fixture.service().failure({ runId: "10" }), "CI_NOT_FOUND");
+    expect(fixture.events).not.toContain("provider-failure-log");
+  });
+
+  it("fails closed when the combined metadata/log request count exceeds five", async () => {
+    const fixture = new Fixture();
+    fixture.failureMetadataRequests = 3;
+    fixture.failureLogRequests = 3;
+    await expectCode(fixture.service().failure({ runId: "10" }), "CI_RESPONSE_INVALID");
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "failed",
+      errorCode: "CI_RESPONSE_INVALID"
+    });
+  });
+
+  it("rejects a log representation that cannot be decoded safely inside the scan budget", async () => {
+    const fixture = new Fixture();
+    fixture.failureLogBytes = Uint8Array.from([0xff, 0xfe, 0xfd]);
+    await expectCode(fixture.service().failure({ runId: "10" }), "CI_LOG_LIMIT_EXCEEDED");
+  });
+
+  it("emits canonical hard-bound truncation reasons and a 64 KiB maximum excerpt", async () => {
+    const fixture = new Fixture();
+    fixture.failureJobLimitReached = true;
+    fixture.failureStepLimitReached = true;
+    fixture.failureAnnotationLimitReached = true;
+    fixture.failurePageLimited = true;
+    fixture.failureLogBytes = new TextEncoder().encode("error: " + "x".repeat(100 * 1024));
+    fixture.failureLogTruncated = true;
+
+    const result = await fixture.service().failure({ runId: "10" });
+
+    expect(result.truncationReasons).toEqual([
+      "JOB_LIMIT",
+      "STEP_LIMIT",
+      "ANNOTATION_LIMIT",
+      "LOG_BYTE_LIMIT",
+      "PROVIDER_PAGE_LIMIT"
+    ]);
+    expect(Buffer.byteLength(result.logExcerpt ?? "", "utf8")).toBeLessThanOrEqual(64 * 1024);
   });
 });
 

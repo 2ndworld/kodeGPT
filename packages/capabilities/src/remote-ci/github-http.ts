@@ -9,6 +9,7 @@ const GITHUB_USER_AGENT = "KodeGPT/0.1 Remote-CI";
 export interface GitHubLogRead {
   bytes: Uint8Array;
   truncated: boolean;
+  providerRequests: number;
 }
 
 export class GitHubHttp {
@@ -45,7 +46,7 @@ export class GitHubHttp {
     const first = await this.#request(firstUrl, true);
 
     if (first.status === 200) {
-      return await readBoundedLog(first, scanMaxBytes);
+      return { ...(await readBoundedLog(first, scanMaxBytes)), providerRequests: 1 };
     }
     if (!isRedirect(first.status)) {
       this.#throwForProviderStatus(first);
@@ -61,7 +62,7 @@ export class GitHubHttp {
     if (second.status < 200 || second.status >= 300) {
       throw new CapabilityError("CI_LOG_UNAVAILABLE", "CI log is unavailable");
     }
-    return await readBoundedLog(second, scanMaxBytes);
+    return { ...(await readBoundedLog(second, scanMaxBytes)), providerRequests: 2 };
   }
 
   async #request(url: URL, authenticated: boolean): Promise<Response> {
@@ -211,7 +212,10 @@ async function readBoundedBody(
   return concatenate(chunks, total);
 }
 
-async function readBoundedLog(response: Response, scanMaxBytes: number): Promise<GitHubLogRead> {
+async function readBoundedLog(
+  response: Response,
+  scanMaxBytes: number
+): Promise<Omit<GitHubLogRead, "providerRequests">> {
   const body = response.body;
   if (body === null) return { bytes: new Uint8Array(), truncated: false };
   const reader = body.getReader();
