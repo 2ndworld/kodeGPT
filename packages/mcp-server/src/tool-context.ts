@@ -32,7 +32,7 @@ import type {
   GitRangeResult,
   GitDiffHistoryInput,
   GitDiffHistoryResult,
-  type GitHubReadToolAdapter,
+  GitHubReadToolAdapter,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,

@@ -334,6 +334,13 @@ function makeContext(): KodegptToolContext {
       run: async () => ({} as never),
       failure: async () => ({} as never)
     },
+    github: {
+      repositoryInspect: async () => ({} as never),
+      prInspect: async () => ({} as never),
+      prList: async () => ({} as never),
+      issueInspect: async () => ({} as never),
+      issueList: async () => ({} as never)
+    },
     skill: {
       list: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
       inspect: async () => ({} as never),
