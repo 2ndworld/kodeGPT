@@ -18,6 +18,7 @@ export const PROVIDER_ERROR_CODES = Object.freeze([
   "PROVIDER_TOOL_UNAVAILABLE",
   "PROVIDER_INVENTORY_CHANGED",
   "PROVIDER_REQUEST_FAILED",
+  "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
   "PROVIDER_AUDIT_UNAVAILABLE"
 ] as const);
 
@@ -38,7 +39,7 @@ export const PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS = 10_000;
 export const PROVIDER_OPERATION_TIMEOUT_MS = 30_000;
 export const PROVIDER_MAX_REQUESTS = 8;
 
-export const PROVIDER_EFFECT_CLASSES = Object.freeze(["REMOTE_READ"] as const);
+export const PROVIDER_EFFECT_CLASSES = Object.freeze(["REMOTE_READ", "REMOTE_MUTATION"] as const);
 export const PROVIDER_WORKSPACE_BINDINGS = Object.freeze(["REQUIRED", "OPTIONAL", "NONE"] as const);
 export const PROVIDER_INVENTORY_MODES = Object.freeze(["STATIC", "DYNAMIC"] as const);
 export const PROVIDER_AUDIT_PHASES = Object.freeze(["decision", "success", "failed"] as const);
@@ -147,7 +148,7 @@ export type ProviderCredentialBrokerPolicy =
 
 export interface ProviderOperationDefinition {
   id: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   origin: string;
   pathTemplate: string;
   allowedQueryKeys: readonly string[];

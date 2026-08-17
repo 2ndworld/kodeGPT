@@ -67,8 +67,8 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
   ): Promise<ProviderSemanticExecutionResult> {
     const parsed = parseSemanticInput(input);
     const mapping = this.#deps.adapters.requireMapping(parsed.semanticCapabilityId);
-    if (mapping.effect !== "REMOTE_READ") {
-      throw new CapabilityError("PROVIDER_TOOL_UNAVAILABLE", "Provider semantic mapping is not a remote read");
+    if (mapping.effect !== "REMOTE_READ" && mapping.effect !== "REMOTE_MUTATION") {
+      throw new CapabilityError("PROVIDER_TOOL_UNAVAILABLE", "Provider semantic mapping effect is unavailable");
     }
     const mappingInput = mapping.inputSchema.safeParse(parsed.input);
     if (!mappingInput.success) {
@@ -106,6 +106,8 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
       maxRequests: mapping.maxProviderRequests
     });
     let decisionRecorded = false;
+    let mutationRequestStarted = false;
+    let mutationResponseReceived = false;
     try {
       await this.#deps.audit.record({
         operationId,
@@ -126,7 +128,9 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
         await this.#verifyDynamicInventory(provider, manifest, credential, budget.signal);
       }
 
+      mutationRequestStarted = mapping.effect === "REMOTE_MUTATION";
       const response = await this.#request(mapping, manifest, mappingInput.data, credential, budget);
+      mutationResponseReceived = mapping.effect === "REMOTE_MUTATION";
       const semanticValue = parseProviderSemanticOutput(response.body, mapping.outputSchema, {
         semanticInput: mappingInput.data,
         mapOutput: mapping.mapOutput
@@ -152,6 +156,15 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
       return result;
     } catch (error) {
       const failure = asProviderFailure(error);
+      if (
+        mapping.effect === "REMOTE_MUTATION" &&
+        decisionRecorded &&
+        (mutationResponseReceived || (mutationRequestStarted && isAmbiguousMutationFailure(failure)))
+      ) {
+        const unknown = mutationOutcomeUnknown();
+        await this.#recordMutationOutcomeUnknown({ operationId, provider, mapping });
+        throw unknown;
+      }
       if (decisionRecorded) {
         await this.#recordFailure({
           operationId,
@@ -278,6 +291,26 @@ export class ProviderGatewayServiceImpl implements ProviderGatewayService {
     }
   }
 
+  async #recordMutationOutcomeUnknown(input: {
+    operationId: string;
+    provider: ProviderRegistryRecord;
+    mapping: ProviderSemanticMappingDefinition;
+  }): Promise<void> {
+    try {
+      await this.#deps.audit.record({
+        operationId: input.operationId,
+        operation: "execute",
+        phase: "failed",
+        providerInstanceId: input.provider.providerInstanceId,
+        adapterId: input.provider.adapterId,
+        semanticCapabilityId: input.mapping.semanticCapabilityId,
+        errorCode: "PROVIDER_MUTATION_OUTCOME_UNKNOWN"
+      });
+    } catch {
+      // The remote mutation may already have happened. Preserve outcome-unknown for reconciliation.
+    }
+  }
+
   #operationId(): string {
     const value = this.#deps.generateOperationId?.() ?? `op_${randomBytes(18).toString("base64url")}`;
     if (!ProviderOperationIdSchema.safeParse(value).success) {
@@ -316,4 +349,17 @@ function providerErrorCode(error: CapabilityError): ProviderErrorCode {
 function isRetryable(error: unknown): boolean {
   if (!(error instanceof CapabilityError)) return false;
   return error.code === "PROVIDER_UNAVAILABLE" || error.code === "PROVIDER_TIMEOUT";
+}
+
+function isAmbiguousMutationFailure(error: CapabilityError): boolean {
+  return error.code === "PROVIDER_UNAVAILABLE"
+    || error.code === "PROVIDER_TIMEOUT"
+    || error.code === "PROVIDER_CANCELLED";
+}
+
+function mutationOutcomeUnknown(): CapabilityError {
+  return new CapabilityError(
+    "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
+    "Provider mutation outcome is unknown; inspect remote state before retrying"
+  );
 }

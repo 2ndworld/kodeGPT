@@ -4,6 +4,7 @@ import { NATIVE_CAPABILITY_IDS } from "../contracts.js";
 import { CapabilityError, toPublicCapabilityError } from "../errors.js";
 import {
   PROVIDER_CREDENTIAL_TIMEOUT_MS,
+  PROVIDER_EFFECT_CLASSES,
   PROVIDER_ERROR_CODES,
   PROVIDER_MAX_CANONICAL_INVENTORY_BYTES,
   PROVIDER_MAX_HELPER_STDERR_BYTES,
@@ -72,8 +73,10 @@ describe("Provider Gateway private contracts", () => {
       "PROVIDER_TOOL_UNAVAILABLE",
       "PROVIDER_INVENTORY_CHANGED",
       "PROVIDER_REQUEST_FAILED",
+      "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
       "PROVIDER_AUDIT_UNAVAILABLE"
     ]);
+    expect(PROVIDER_EFFECT_CLASSES).toEqual(["REMOTE_READ", "REMOTE_MUTATION"]);
     expect({
       PROVIDER_MAX_TOOLS,
       PROVIDER_MAX_TOOL_INPUT_SCHEMA_BYTES,

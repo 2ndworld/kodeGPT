@@ -45,12 +45,45 @@ function manifest(): ProviderAdapterManifest {
   };
 }
 
-function record(): ProviderRegistryRecord {
+function mutationManifest(): ProviderAdapterManifest {
+  return {
+    adapterId: "test.fixture.write.v1",
+    adapterContractVersion: "1",
+    implementationDigest: "c".repeat(64),
+    inventoryMode: "STATIC",
+    networkPolicy: { kind: "internet", origins: ["https://fixture.example"], redirect: null },
+    credentialBroker: { kind: "none" },
+    operations: [{
+      id: "record.mutate",
+      method: "PUT" as never,
+      origin: "https://fixture.example",
+      pathTemplate: "/records/{id}",
+      allowedQueryKeys: [],
+      fixedHeaders: {},
+      inputSchema: z.object({ id: z.string() }).strict(),
+      encodeRequest: (input) => ({ pathParameters: { id: (input as { id: string }).id } })
+    }],
+    mappings: [{
+      semanticCapabilityId: "test.fixture.record.mutate",
+      adapterId: "test.fixture.write.v1",
+      adapterOperationId: "record.mutate",
+      effect: "REMOTE_MUTATION" as never,
+      workspaceBinding: "NONE",
+      inputSchema: z.object({ id: z.string() }).strict(),
+      outputSchema: z.object({ ok: z.literal(true) }).strict(),
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["id"]
+    }]
+  };
+}
+
+function record(adapterId = "test.fixture.read.v1"): ProviderRegistryRecord {
   return {
     schemaVersion: 1,
     providerInstanceId: providerId,
     operatorName: "Fixture provider",
-    adapterId: "test.fixture.read.v1",
+    adapterId,
     adapterContractVersion: "1",
     enabled: true,
     implementationFingerprint,
@@ -63,15 +96,21 @@ function record(): ProviderRegistryRecord {
   };
 }
 
-function fixture() {
-  const selectedManifest = manifest();
-  const selectedRecord = record();
+function fixture(input: { mutation?: boolean } = {}) {
+  const selectedManifest = input.mutation ? mutationManifest() : manifest();
+  const selectedRecord = record(selectedManifest.adapterId);
   const state = {
     network: "unrestricted" as "deny" | "unrestricted",
     credentialCalls: 0,
     transportCalls: 0,
     inventoryCalls: 0,
     failDecisionAudit: false,
+    failSuccessAudit: false,
+    failFailedAudit: false,
+    transportError: null as CapabilityError | null,
+    responseBody: input.mutation
+      ? Buffer.from(JSON.stringify({ ok: true }))
+      : Buffer.from(JSON.stringify({ id: "123", value: "ok" })),
     events: [] as string[]
   };
   const deps: ProviderGatewayServiceDependencies = {
@@ -94,6 +133,12 @@ function fixture() {
         state.events.push(`audit-${metadata.phase}`);
         if (metadata.phase === "decision" && state.failDecisionAudit) {
           throw new CapabilityError("PROVIDER_AUDIT_UNAVAILABLE", "audit unavailable");
+        }
+        if (metadata.phase === "success" && state.failSuccessAudit) {
+          throw new CapabilityError("PROVIDER_AUDIT_UNAVAILABLE", "success audit unavailable");
+        }
+        if (metadata.phase === "failed" && state.failFailedAudit) {
+          throw new CapabilityError("PROVIDER_AUDIT_UNAVAILABLE", "failed audit unavailable");
         }
       }
     },
@@ -120,10 +165,11 @@ function fixture() {
         state.transportCalls += 1;
         state.events.push("transport");
         input.budget.claimRequest();
+        if (state.transportError !== null) throw state.transportError;
         return {
           statusCode: 200,
           headers: {},
-          body: Buffer.from(JSON.stringify({ id: "123", value: "ok" })),
+          body: state.responseBody,
           finalOrigin: "https://fixture.example"
         };
       }
@@ -146,6 +192,14 @@ function execInput(workspaceId = "ws_1") {
     semanticCapabilityId: "test.fixture.record.read",
     providerInstanceId: providerId,
     workspaceId,
+    input: { id: "123" }
+  };
+}
+
+function mutationExecInput() {
+  return {
+    semanticCapabilityId: "test.fixture.record.mutate",
+    providerInstanceId: providerId,
     input: { id: "123" }
   };
 }
@@ -222,5 +276,67 @@ describe("ProviderGatewayServiceImpl", () => {
     await expect(fx.service.execute({ ...execInput(), input: { id: "x".repeat(70 * 1024) } }))
       .rejects.toMatchObject({ code: "PROVIDER_INPUT_INVALID" });
     expect(fx.state.events).toEqual([]);
+  });
+
+  it("executes a reviewed mutation exactly once after durable decision", async () => {
+    const fx = fixture({ mutation: true });
+    await expect(fx.service.execute(mutationExecInput())).resolves.toMatchObject({
+      semanticCapabilityId: "test.fixture.record.mutate",
+      value: { ok: true }
+    });
+    expect(fx.state.transportCalls).toBe(1);
+    expect(fx.state.events).toEqual(["audit-decision", "credential", "transport", "audit-success"]);
+  });
+
+  it("keeps mutation effects blocked when decision audit is unavailable", async () => {
+    const fx = fixture({ mutation: true });
+    fx.state.failDecisionAudit = true;
+    await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
+      code: "PROVIDER_AUDIT_UNAVAILABLE"
+    });
+    expect(fx.state.credentialCalls).toBe(0);
+    expect(fx.state.transportCalls).toBe(0);
+  });
+
+  it.each(["PROVIDER_TIMEOUT", "PROVIDER_UNAVAILABLE", "PROVIDER_CANCELLED"] as const)(
+    "reports %s during mutation transport as outcome unknown without retry",
+    async (code) => {
+      const fx = fixture({ mutation: true });
+      fx.state.transportError = new CapabilityError(code, "transport failed");
+      await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
+        code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN"
+      });
+      expect(fx.state.transportCalls).toBe(1);
+      expect(fx.state.events.filter((event) => event === "transport")).toHaveLength(1);
+      expect(fx.state.events.at(-1)).toBe("audit-failed");
+    }
+  );
+
+  it("keeps a deterministic provider rejection as an ordinary mutation failure", async () => {
+    const fx = fixture({ mutation: true });
+    fx.state.transportError = new CapabilityError("PROVIDER_REQUEST_FAILED", "provider rejected request");
+    await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
+      code: "PROVIDER_REQUEST_FAILED"
+    });
+    expect(fx.state.transportCalls).toBe(1);
+  });
+
+  it("reports invalid output after a successful mutation response as outcome unknown", async () => {
+    const fx = fixture({ mutation: true });
+    fx.state.responseBody = Buffer.from(JSON.stringify({ ok: false }));
+    await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
+      code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN"
+    });
+    expect(fx.state.transportCalls).toBe(1);
+  });
+
+  it("preserves outcome-unknown when success or failure outcome audit becomes unavailable", async () => {
+    const fx = fixture({ mutation: true });
+    fx.state.failSuccessAudit = true;
+    fx.state.failFailedAudit = true;
+    await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
+      code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN"
+    });
+    expect(fx.state.transportCalls).toBe(1);
   });
 });
