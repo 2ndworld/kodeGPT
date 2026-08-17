@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PRODUCT_ROOTS = ["apps", "packages", "crates"];
 const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".json", ".toml"]);
+const APPROVED_REMOTE_CI_MUTATION_SURFACE_FILES = new Set([
+  "packages/capabilities/src/adapters.ts",
+  "packages/capabilities/src/contracts.ts",
+  "packages/capabilities/src/remote-ci/service.ts",
+  "packages/capabilities/src/skill-metadata.ts",
+  "packages/core/src/workspace-manager.ts",
+  "packages/mcp-server/src/tool-context.ts",
+  "packages/mcp-server/src/tools.ts"
+]);
 
 const violations = [];
 const root = parseRoot(process.argv.slice(2));
@@ -61,8 +70,18 @@ function scanFile(path, source) {
       path,
       source,
       "remote-ci-forbidden-surface",
-      /["'](?:github\.request|github\.graphql|github\.rest|gh\.run|ci\.logs\.raw|ci\.jobs\.list|ci\.steps\.list|ci\.rerun|ci\.cancel|ci\.dispatch|provider\.list|provider\.tools|provider\.invoke|skill\.run)["']/
+      /["'](?:github\.request|github\.graphql|github\.rest|gh\.run|ci\.logs\.raw|ci\.jobs\.list|ci\.steps\.list|provider\.list|provider\.tools|provider\.invoke|skill\.run)["']/
     );
+    if (
+      /["']ci\.(?:rerun|cancel|dispatch)["']/.test(source) &&
+      !APPROVED_REMOTE_CI_MUTATION_SURFACE_FILES.has(path)
+    ) {
+      add(
+        "remote-ci-forbidden-surface",
+        path,
+        "typed CI mutation ids are allowed only in the reviewed capability/core/MCP wiring files"
+      );
+    }
     forbid(path, source, "remote-ci-gh-api", /\bgh\s+api\b/i);
     forbid(
       path,

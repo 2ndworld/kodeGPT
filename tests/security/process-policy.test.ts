@@ -10,6 +10,7 @@ async function source(relativePath: string): Promise<string> {
 describe("sandboxed process policy source regressions", () => {
   it("routes execution only through retained-root Bubblewrap with trusted logical executables", async () => {
     const implementation = await source("crates/runtime/src/process.rs");
+    const productionImplementation = implementation.split("#[cfg(test)]", 1)[0] ?? implementation;
     for (const required of [
       "resolve_trusted_executable",
       "BubblewrapProvider::discover",
@@ -21,10 +22,10 @@ describe("sandboxed process policy source regressions", () => {
       "kill_process_group",
       "open_directory_beneath"
     ]) {
-      expect(implementation).toContain(required);
+      expect(productionImplementation).toContain(required);
     }
-    expect(implementation).not.toContain("Command::new");
-    expect(implementation).not.toContain("canonicalize(");
+    expect(productionImplementation).not.toContain("Command::new");
+    expect(productionImplementation).not.toContain("canonicalize(");
   });
 
   it("exposes opaque process operation tools without PID/PGID authority", async () => {

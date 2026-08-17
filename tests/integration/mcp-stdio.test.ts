@@ -27,6 +27,20 @@ const remoteCiReadOnlyAnnotations = {
   openWorldHint: true
 };
 
+const remoteCiMutationAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true
+};
+
+const remoteCiCancelAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+};
+
 const remoteGitHubCreateAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,
@@ -272,6 +286,10 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(remoteGitHubCreateAnnotations);
         } else if (tool.name === "github.pr.merge") {
           expect(tool.annotations).toEqual(remoteGitHubMergeAnnotations);
+        } else if (tool.name === "ci.rerun" || tool.name === "ci.dispatch") {
+          expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
+        } else if (tool.name === "ci.cancel") {
+          expect(tool.annotations).toEqual(remoteCiCancelAnnotations);
         } else if (tool.name.startsWith("ci.") || tool.name.startsWith("github.")) {
           expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
         } else {
