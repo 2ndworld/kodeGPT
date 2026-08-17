@@ -23,6 +23,7 @@ const CHILD_TOOL_ROOT: &str = "/opt/kodegpt-toolchain";
 const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const RUNTIME_SYSTEM_PATHS: [&str; 5] = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
+const RESOLVER_RUNTIME_DIRECTORY: &str = "/run/systemd/resolve";
 const RESERVED_ENV: [&str; 5] = ["COREPACK_HOME", "HOME", "PATH", "TMPDIR", "PWD"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +186,19 @@ impl BubblewrapProvider {
             fcntl_setfd(root_fd, FdFlags::empty())
                 .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
         }
+        let resolver_mount = if spec.network == SandboxNetworkMode::Unrestricted {
+            let resolved_resolv_conf = fs::canonicalize("/etc/resolv.conf")?;
+            resolver_runtime_directory(&resolved_resolv_conf)
+                .map(fs::File::open)
+                .transpose()?
+                .map(OwnedFd::from)
+        } else {
+            None
+        };
+        if let Some(root_fd) = &resolver_mount {
+            fcntl_setfd(root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
         let (status_reader, status_writer) = UnixStream::pair()?;
         status_reader.set_read_timeout(Some(Duration::from_secs(3)))?;
         fcntl_setfd(&status_writer, FdFlags::empty())
@@ -195,6 +209,7 @@ impl BubblewrapProvider {
             Some(status_writer.as_raw_fd()),
             &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
+            resolver_mount.as_ref().map(AsRawFd::as_raw_fd),
             spec,
         )?;
         self.executable.revalidate()?;
@@ -236,6 +251,7 @@ impl BubblewrapProvider {
         status_fd: Option<i32>,
         explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
+        resolver_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
         if matches!(
@@ -281,6 +297,17 @@ impl BubblewrapProvider {
             if fs::metadata(system_path).is_ok() {
                 command.args(["--ro-bind", system_path, system_path]);
             }
+        }
+        if let Some(resolver_fd) = resolver_fd {
+            command.args([
+                "--dir",
+                "/run",
+                "--dir",
+                "/run/systemd",
+                "--ro-bind-fd",
+                &resolver_fd.to_string(),
+                RESOLVER_RUNTIME_DIRECTORY,
+            ]);
         }
 
         command.args([
@@ -358,6 +385,14 @@ impl BubblewrapProvider {
             .unwrap_or_else(|| spec.program.canonical_path().to_path_buf());
         command.arg("--").arg(child_program).args(&spec.args);
         Ok(command)
+    }
+}
+
+fn resolver_runtime_directory(resolved_resolv_conf: &Path) -> Option<&'static Path> {
+    if resolved_resolv_conf.starts_with(RESOLVER_RUNTIME_DIRECTORY) {
+        Some(Path::new(RESOLVER_RUNTIME_DIRECTORY))
+    } else {
+        None
     }
 }
 
@@ -452,9 +487,7 @@ mod tests {
     #[test]
     fn systemd_resolved_target_requires_only_the_systemd_resolver_runtime_directory() {
         assert_eq!(
-            super::resolver_runtime_directory(Path::new(
-                "/run/systemd/resolve/stub-resolv.conf",
-            )),
+            super::resolver_runtime_directory(Path::new("/run/systemd/resolve/stub-resolv.conf",)),
             Some(Path::new("/run/systemd/resolve"))
         );
         assert_eq!(
@@ -709,7 +742,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, &[], None, &spec),
+                provider.build_command(3, None, &[], None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }
