@@ -49,9 +49,18 @@ export async function analyzeRepository(
   if (candidates.length > selected.length) warnings.add("INSPECT_ANALYSIS_FILE_LIMIT_REACHED");
 
   for (const path of selected) {
+    const remainingBytes = MAX_ANALYSIS_TOTAL_BYTES - totalBytes;
+    if (remainingBytes <= 0) {
+      warnings.add("INSPECT_ANALYSIS_BYTE_LIMIT_REACHED");
+      break;
+    }
+
     let read: Awaited<ReturnType<WorkspaceInspectionAdapter["readFile"]>>;
     try {
-      read = await workspace.readFile(workspaceId, path, { offset: 0, maxBytes: MAX_ANALYSIS_FILE_BYTES });
+      read = await workspace.readFile(workspaceId, path, {
+        offset: 0,
+        maxBytes: Math.min(MAX_ANALYSIS_FILE_BYTES, remainingBytes)
+      });
     } catch {
       warnings.add("INSPECT_ANALYSIS_FILE_SKIPPED");
       continue;
@@ -65,6 +74,7 @@ export async function analyzeRepository(
 
     if (!read.eof) {
       warnings.add("INSPECT_ANALYSIS_FILE_SKIPPED");
+      if (totalBytes >= MAX_ANALYSIS_TOTAL_BYTES) warnings.add("INSPECT_ANALYSIS_BYTE_LIMIT_REACHED");
       continue;
     }
 

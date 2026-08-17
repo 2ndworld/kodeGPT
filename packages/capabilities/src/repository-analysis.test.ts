@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
 import { analyzeRepository } from "./repository-analysis.js";
 
-function adapter(files: Record<string, string>, options: { fail?: Set<string> } = {}): WorkspaceInspectionAdapter {
+function adapter(
+  files: Record<string, string>,
+  options: { fail?: Set<string>; onRead?: (maxBytes: number) => void } = {}
+): WorkspaceInspectionAdapter {
   return {
     async readFile(_workspaceId, path, readOptions) {
       if (options.fail?.has(path)) throw new Error("unreadable");
       const contents = files[path] ?? "";
       const maxBytes = readOptions?.maxBytes ?? Number.MAX_SAFE_INTEGER;
+      options.onRead?.(maxBytes);
       const encoded = Buffer.from(contents);
       const chunk = encoded.subarray(0, maxBytes).toString("utf8");
       return { contents: chunk, bytesRead: Buffer.byteLength(chunk), eof: encoded.byteLength <= maxBytes };
@@ -93,12 +97,18 @@ describe("repository analysis", () => {
     expect(result.warnings).toContain("INSPECT_ANALYSIS_FILE_LIMIT_REACHED");
   });
 
-  it("bounds total analyzed source bytes", async () => {
+  it("bounds total source bytes requested from the workspace adapter", async () => {
     const paths = Array.from({ length: 33 }, (_, index) => `src/f${String(index).padStart(2, "0")}.ts`);
     const files = Object.fromEntries(paths.map((path) => [path, " ".repeat(128 * 1024)]));
+    let requestedBytes = 0;
 
-    const result = await analyzeRepository(adapter(files), "ws_1", entries(paths));
+    const result = await analyzeRepository(
+      adapter(files, { onRead: (maxBytes) => (requestedBytes += maxBytes) }),
+      "ws_1",
+      entries(paths)
+    );
 
+    expect(requestedBytes).toBe(4 * 1024 * 1024);
     expect(result.warnings).toContain("INSPECT_ANALYSIS_BYTE_LIMIT_REACHED");
   });
 
