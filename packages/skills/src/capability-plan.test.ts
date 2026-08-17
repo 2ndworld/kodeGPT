@@ -364,6 +364,34 @@ describe("resolveSkillCapabilityPlan", () => {
     expect(resolved.missingCapabilities).toEqual(["example.missing"]);
   });
 
+  it("never promotes a truncated missing-capability plan to NATIVE", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    const truncatedPlan: TestPlan = {
+      schemaVersion: 1,
+      classification: "PARTIAL",
+      nativeCapabilities: [],
+      missingCapabilities: ["external-cli:npx"],
+      externalRequirements: [],
+      blockedSemantics: [],
+      guidance: [],
+      truncated: true,
+      truncationReasons: ["MISSING_CAPABILITIES"]
+    };
+
+    const resolved = await resolve!(truncatedPlan, {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
+    });
+
+    expect(resolved.missingCapabilities).toEqual([]);
+    expect(resolved.classification).toBe("PARTIAL");
+    expect(resolved.truncated).toBe(true);
+    expect(resolved.truncationReasons).toContain("MISSING_CAPABILITIES");
+  });
+
   it("never promotes provider-required or unsupported plans", async () => {
     const resolve = resolver();
     expect(resolve).toBeTypeOf("function");

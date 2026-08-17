@@ -137,7 +137,11 @@ export async function resolveSkillCapabilityPlan(
 
   return Object.freeze({
     ...plan,
-    classification: effectiveClassification(plan.classification, missingCapabilities.length),
+    classification: effectiveClassification(
+      plan.classification,
+      missingCapabilities.length,
+      plan.truncationReasons.includes("MISSING_CAPABILITIES")
+    ),
     nativeCapabilities,
     missingCapabilities,
     guidance,
@@ -147,10 +151,12 @@ export async function resolveSkillCapabilityPlan(
 
 function effectiveClassification(
   classification: SkillCompatibility,
-  remainingMissingCapabilities: number
+  remainingMissingCapabilities: number,
+  missingCapabilitiesTruncated: boolean
 ): SkillCompatibility {
   if (classification === "UNSUPPORTED" || classification === "PROVIDER_REQUIRED") return classification;
-  return remainingMissingCapabilities === 0 ? "NATIVE" : "PARTIAL";
+  if (remainingMissingCapabilities > 0 || missingCapabilitiesTruncated) return "PARTIAL";
+  return "NATIVE";
 }
 
 function containsSemanticAlias(instructions: string, alias: string): boolean {
