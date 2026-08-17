@@ -33,6 +33,7 @@ import type {
   GitDiffHistoryInput,
   GitDiffHistoryResult,
   GitHubReadToolAdapter,
+  GitHubWriteToolAdapter,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -203,7 +204,7 @@ export interface CiToolContext {
   failure(input: CiFailureInput): Promise<CiFailureResult>;
 }
 
-export interface GitHubToolContext extends GitHubReadToolAdapter {}
+export interface GitHubToolContext extends GitHubReadToolAdapter, GitHubWriteToolAdapter {}
 
 export interface SkillToolContext {
   list(input: {
@@ -308,6 +309,7 @@ export function createKodegptToolContext(options: {
   nativeCapabilities?: NativeCapabilityToolAdapter;
   remoteCi?: CiToolContext;
   githubRead?: GitHubReadToolAdapter;
+  githubWrite?: GitHubWriteToolAdapter;
   skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
@@ -316,6 +318,7 @@ export function createKodegptToolContext(options: {
   const native = options.nativeCapabilities ?? unavailableNativeCapabilities();
   const remoteCi = options.remoteCi ?? unavailableRemoteCi();
   const githubRead = options.githubRead ?? unavailableGitHubRead();
+  const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -412,7 +415,10 @@ export function createKodegptToolContext(options: {
       run: (input) => remoteCi.run(input),
       failure: (input) => remoteCi.failure(input)
     },
-    github: githubRead,
+    github: {
+      ...githubRead,
+      ...githubWrite
+    },
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
@@ -462,6 +468,13 @@ function unavailableGitHubRead(): GitHubReadToolAdapter {
     prList: () => unavailable("github.pr.list"),
     issueInspect: () => unavailable("github.issue.inspect"),
     issueList: () => unavailable("github.issue.list")
+  };
+}
+
+function unavailableGitHubWrite(): GitHubWriteToolAdapter {
+  return {
+    prCreate: () => unavailable("github.pr.create"),
+    prMerge: () => unavailable("github.pr.merge")
   };
 }
 
