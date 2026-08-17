@@ -239,7 +239,10 @@ export type WorkspaceRemoteCiCapability =
   | "ci.status"
   | "ci.runs"
   | "ci.run"
-  | "ci.failure";
+  | "ci.failure"
+  | "ci.rerun"
+  | "ci.cancel"
+  | "ci.dispatch";
 
 export type WorkspaceRemoteCiErrorCode =
   | "CI_WORKSPACE_AMBIGUOUS"
@@ -256,7 +259,8 @@ export type WorkspaceRemoteCiErrorCode =
   | "CI_RESPONSE_INVALID"
   | "CI_RESPONSE_LIMIT_EXCEEDED"
   | "CI_LOG_UNAVAILABLE"
-  | "CI_LOG_LIMIT_EXCEEDED";
+  | "CI_LOG_LIMIT_EXCEEDED"
+  | "CI_MUTATION_OUTCOME_UNKNOWN";
 
 export interface WorkspaceRemoteCiAuditInput {
   workspaceId: string;

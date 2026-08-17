@@ -38,6 +38,45 @@ export class GitHubHttp {
     return parsed as T;
   }
 
+  async postMutation(
+    path: string,
+    expectedStatus: 200 | 201 | 202,
+    body?: Record<string, unknown>
+  ): Promise<void> {
+    const url = apiUrl(path);
+    const headers = authenticatedHeaders(this.#credential);
+    let serializedBody: string | undefined;
+    if (body !== undefined) {
+      serializedBody = JSON.stringify(body);
+      if (Buffer.byteLength(serializedBody, "utf8") > 32 * 1024) {
+        throw new CapabilityError("CAPABILITY_LIMIT_EXCEEDED", "GitHub mutation body exceeded the bounded request size");
+      }
+      headers.set("Content-Type", "application/json");
+    }
+
+    let response: Response;
+    try {
+      response = await this.#fetch(url.toString(), {
+        method: "POST",
+        redirect: "manual",
+        headers,
+        ...(serializedBody === undefined ? {} : { body: serializedBody })
+      });
+    } catch {
+      throw new CapabilityError(
+        "CI_MUTATION_OUTCOME_UNKNOWN",
+        "GitHub mutation outcome is unknown; inspect current CI state before retrying"
+      );
+    }
+
+    if (isRedirect(response.status)) {
+      throw new CapabilityError("CI_RESPONSE_INVALID", "GitHub returned an unexpected mutation redirect");
+    }
+    if (response.status === expectedStatus) return;
+    this.#throwForProviderStatus(response);
+    throw new CapabilityError("CI_RESPONSE_INVALID", "GitHub returned an unexpected mutation response");
+  }
+
   async getJobLog(path: string, scanMaxBytes: number): Promise<GitHubLogRead> {
     if (!Number.isSafeInteger(scanMaxBytes) || scanMaxBytes <= 0) {
       throw new CapabilityError("CI_LOG_LIMIT_EXCEEDED", "CI log scan bound is invalid");
@@ -66,14 +105,7 @@ export class GitHubHttp {
   }
 
   async #request(url: URL, authenticated: boolean): Promise<Response> {
-    const headers = new Headers({
-      Accept: GITHUB_ACCEPT,
-      "User-Agent": GITHUB_USER_AGENT,
-      "X-GitHub-Api-Version": GITHUB_API_VERSION
-    });
-    if (authenticated) {
-      headers.set("Authorization", `Bearer ${this.#credential}`);
-    }
+    const headers = authenticated ? authenticatedHeaders(this.#credential) : baseHeaders();
     try {
       return await this.#fetch(url.toString(), {
         method: "GET",
@@ -108,6 +140,20 @@ export class GitHubHttp {
     }
     throw new CapabilityError("CI_RESPONSE_INVALID", "GitHub returned an invalid response");
   }
+}
+
+function baseHeaders(): Headers {
+  return new Headers({
+    Accept: GITHUB_ACCEPT,
+    "User-Agent": GITHUB_USER_AGENT,
+    "X-GitHub-Api-Version": GITHUB_API_VERSION
+  });
+}
+
+function authenticatedHeaders(credential: string): Headers {
+  const headers = baseHeaders();
+  headers.set("Authorization", `Bearer ${credential}`);
+  return headers;
 }
 
 function apiUrl(path: string, query?: URLSearchParams): URL {

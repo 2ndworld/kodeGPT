@@ -3,12 +3,14 @@ export {
   DEFAULT_CONTEXT_MAX_BYTES,
   DEFAULT_INSPECT_MAX_ENTRIES,
   DEFAULT_SEARCH_MAX_RESULTS,
+  DEFAULT_IMPACT_MAX_RESULTS,
   MAX_CONTEXT_MAX_BYTES,
   MAX_INSPECT_MAX_ENTRIES,
   MAX_PATCH_BYTES,
   MAX_PATCH_FILES,
   MAX_PATCH_HUNKS,
   MAX_SEARCH_MAX_RESULTS,
+  MAX_IMPACT_MAX_RESULTS,
   DEFAULT_GIT_LOG_LIMIT,
   MAX_GIT_LOG_LIMIT,
   DEFAULT_GIT_RANGE_LIMIT,
@@ -25,6 +27,12 @@ export {
 } from "./contracts.js";
 export type {
   CapabilityArtifactMetadata,
+  CodeImpactDependent,
+  CodeImpactInput,
+  CodeImpactRelationship,
+  CodeImpactResult,
+  CodeImpactTargetKind,
+  CodeImpactTruncationReason,
   CodeSearchInput,
   CodeSearchMatch,
   CodeSearchMode,
@@ -124,6 +132,8 @@ export type { NativeCapabilitySemanticMetadata } from "./skill-metadata.js";
 export { CapabilityNotImplementedError, NativeCapabilityService } from "./native-capability-service.js";
 export type { NativeCapabilityDependencies, NativeCapabilityName } from "./native-capability-service.js";
 export {
+  CodeImpactInputSchema,
+  CodeImpactResultSchema,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
   ContextBuildInputSchema,

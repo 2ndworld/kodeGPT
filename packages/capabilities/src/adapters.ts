@@ -14,14 +14,18 @@ import type {
 import type { CapabilityErrorCode } from "./errors.js";
 import type {
   CiAnnotation,
+  CiCancelInput,
   CiCheckSummary,
   CiConclusion,
+  CiDispatchInput,
   CiFailureInput,
   CiFailureResult,
   CiJobSummary,
+  CiMutationResult,
   CiRepositoryIdentity,
   CiRepositoryInput,
   CiRepositoryResult,
+  CiRerunInput,
   CiRunInput,
   CiRunResult,
   CiRunsInput,
@@ -176,7 +180,15 @@ export type RemoteCiErrorCode = Extract<CapabilityErrorCode, `CI_${string}`>;
 export interface RemoteCiAuditInput {
   workspaceId: string;
   operationId: string;
-  capability: "ci.repository" | "ci.status" | "ci.runs" | "ci.run" | "ci.failure";
+  capability:
+    | "ci.repository"
+    | "ci.status"
+    | "ci.runs"
+    | "ci.run"
+    | "ci.failure"
+    | "ci.rerun"
+    | "ci.cancel"
+    | "ci.dispatch";
   phase: "decision" | "success" | "failed";
   provider: "github";
   repository: string;
@@ -227,6 +239,21 @@ export interface RemoteCiAdapter {
     defaultBranch: string | null;
     providerRequests: number;
   }>;
+  rerun(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+    failedOnly: boolean;
+  }): Promise<{ providerRequests: number }>;
+  cancel(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+  }): Promise<{ providerRequests: number }>;
+  dispatch(input: {
+    repository: CiRepositoryIdentity;
+    workflow: string;
+    ref: string;
+    inputs?: Record<string, string>;
+  }): Promise<{ providerRequests: number }>;
   statusEvidence(input: { repository: CiRepositoryIdentity; oid: string }): Promise<RemoteCiStatusEvidence>;
   runs(input: {
     repository: CiRepositoryIdentity;
@@ -255,6 +282,9 @@ export interface RemoteCiToolAdapter {
   runs(input: CiRunsInput): Promise<CiRunsResult>;
   run(input: CiRunInput): Promise<CiRunResult>;
   failure(input: CiFailureInput): Promise<CiFailureResult>;
+  rerun(input: CiRerunInput): Promise<CiMutationResult>;
+  cancel(input: CiCancelInput): Promise<CiMutationResult>;
+  dispatch(input: CiDispatchInput): Promise<CiMutationResult>;
 }
 
 export interface GitLocalAuthorityAdapter {

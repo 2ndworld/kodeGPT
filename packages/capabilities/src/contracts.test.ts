@@ -80,6 +80,7 @@ describe("capability contracts", () => {
     expect(NATIVE_CAPABILITY_IDS).toEqual([
       "workspace.inspect",
       "code.search",
+      "code.impact",
       "file.read",
       "file.write",
       "file.edit",
@@ -104,6 +105,9 @@ describe("capability contracts", () => {
       "ci.runs",
       "ci.run",
       "ci.failure",
+      "ci.rerun",
+      "ci.cancel",
+      "ci.dispatch",
       "process.run",
       "verify.list",
       "verify.run",

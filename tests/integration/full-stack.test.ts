@@ -644,7 +644,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
           {
             workspaceId: openedA.id,
             logicalExecutable: "bash",
-            argv: ["-lc", trustedShellScript],
+            argv: ["--noprofile", "--norc", "-c", trustedShellScript],
             background: false
           },
           "req_full_process_trusted_shell"
@@ -654,7 +654,9 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(trustedShell.exitCode, JSON.stringify(trustedShell)).toBe(0);
       expect(trustedShell.stdoutPreview).toContain("git version");
       expect(trustedShell.stdoutPreview).toContain("HOME=/home/kodegpt");
-      expect(trustedShell.stdoutPreview).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
+      expect(trustedShell.stdoutPreview).toContain(
+        "PATH=/opt/kodegpt-toolchain/bin:/opt/kodegpt-toolchain-1/bin:/usr/local/bin:/usr/bin:/bin"
+      );
       expect(await readFile(join(workspaceA, "shell-created.txt"), "utf8")).toBe("shell-write\n");
 
       const artifact = textJson(

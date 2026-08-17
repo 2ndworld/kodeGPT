@@ -5,6 +5,8 @@ export const DEFAULT_INSPECT_MAX_ENTRIES = 2_000;
 export const MAX_INSPECT_MAX_ENTRIES = 10_000;
 export const DEFAULT_SEARCH_MAX_RESULTS = 100;
 export const MAX_SEARCH_MAX_RESULTS = 500;
+export const DEFAULT_IMPACT_MAX_RESULTS = 50;
+export const MAX_IMPACT_MAX_RESULTS = 200;
 export const MAX_PATCH_BYTES = 1024 * 1024;
 export const MAX_PATCH_FILES = 64;
 export const MAX_PATCH_HUNKS = 256;
@@ -23,6 +25,7 @@ export const MAX_GIT_REMOTE_NAME = 128;
 export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "workspace.inspect",
   "code.search",
+  "code.impact",
   "file.read",
   "file.write",
   "file.edit",
@@ -47,6 +50,9 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "ci.runs",
   "ci.run",
   "ci.failure",
+  "ci.rerun",
+  "ci.cancel",
+  "ci.dispatch",
   "process.run",
   "verify.list",
   "verify.run",
@@ -180,6 +186,43 @@ export interface CodeSearchResult {
   matches: CodeSearchMatch[];
   truncated: boolean;
   truncationReasons: CodeSearchTruncationReason[];
+}
+
+export type CodeImpactTargetKind = "file" | "symbol" | "auto";
+export type CodeImpactRelationship = "imports" | "module" | "reference";
+export type CodeImpactTruncationReason =
+  | "TARGET_LIMIT"
+  | "DEPENDENT_LIMIT"
+  | "TEST_LIMIT"
+  | "AREA_LIMIT"
+  | "SEARCH_LIMIT";
+
+export interface CodeImpactInput {
+  workspaceId: string;
+  target: string;
+  kind?: CodeImpactTargetKind;
+  path?: string;
+  maxResults?: number;
+}
+
+export interface CodeImpactDependent {
+  path: string;
+  relationship: CodeImpactRelationship;
+  line?: number;
+}
+
+export interface CodeImpactResult {
+  schemaVersion: 1;
+  target: {
+    kind: Exclude<CodeImpactTargetKind, "auto">;
+    value: string;
+    resolvedPaths: string[];
+  };
+  dependents: CodeImpactDependent[];
+  relatedTests: string[];
+  affectedAreas: string[];
+  truncated: boolean;
+  truncationReasons: CodeImpactTruncationReason[];
 }
 
 export type GitRevision =

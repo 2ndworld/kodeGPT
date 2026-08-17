@@ -12,13 +12,21 @@ export const CI_LOG_EXCERPT_DEFAULT_BYTES = 64 * 1024;
 export const CI_LOG_EXCERPT_MAX_BYTES = 256 * 1024;
 export const MAX_CI_RESPONSE_BYTES = 512 * 1024;
 export const MAX_CI_PROVIDER_METADATA_BYTES = 1024 * 1024;
+export const MAX_CI_DISPATCH_INPUTS = 20;
+export const MAX_CI_DISPATCH_INPUT_KEY = 64;
+export const MAX_CI_DISPATCH_INPUT_VALUE = 1024;
+export const MAX_CI_WORKFLOW = 256;
+export const MAX_CI_REF = 128;
 
 export const CI_REQUEST_BUDGETS = Object.freeze({
   repository: 1,
   status: 6,
   runs: 1,
   run: 2,
-  failure: 5
+  failure: 5,
+  rerun: 1,
+  cancel: 1,
+  dispatch: 1
 } as const);
 
 export const CI_TRUNCATION_REASONS = Object.freeze([
@@ -212,4 +220,36 @@ export interface CiFailureResult {
   logExcerpt: string | null;
   truncated: boolean;
   truncationReasons: CiTruncationReason[];
+}
+
+export interface CiRerunInput {
+  workspaceId?: string;
+  runId: CiId;
+  failedOnly?: boolean;
+}
+
+export interface CiCancelInput {
+  workspaceId?: string;
+  runId: CiId;
+}
+
+export interface CiDispatchInput {
+  workspaceId?: string;
+  workflow: string;
+  ref: string;
+  inputs?: Record<string, string>;
+}
+
+export type CiMutationOperation = "rerun" | "rerun_failed" | "cancel" | "dispatch";
+
+export interface CiMutationResult {
+  schemaVersion: 1;
+  workspaceId: string;
+  provider: "github";
+  repository: CiRepositoryIdentity;
+  operation: CiMutationOperation;
+  target:
+    | { kind: "run"; runId: CiId }
+    | { kind: "workflow"; workflow: string; ref: string };
+  accepted: true;
 }

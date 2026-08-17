@@ -12,6 +12,7 @@ import {
   MAX_CI_STATUS_FAILURE_SUMMARIES,
   MAX_CI_STATUS_SUMMARIES
 } from "./contracts.js";
+import * as remoteCiSchemas from "./schemas.js";
 import {
   CiFailureInputSchema,
   CiRepositoryInputSchema,
@@ -22,14 +23,40 @@ import {
 } from "./schemas.js";
 
 describe("Remote-CI v1 public contracts", () => {
-  it("adds exactly the five approved native CI capability ids", () => {
+  it("adds exactly the eight approved native CI capability ids", () => {
     expect(NATIVE_CAPABILITY_IDS.filter((id) => id.startsWith("ci."))).toEqual([
       "ci.repository",
       "ci.status",
       "ci.runs",
       "ci.run",
-      "ci.failure"
+      "ci.failure",
+      "ci.rerun",
+      "ci.cancel",
+      "ci.dispatch"
     ]);
+  });
+
+  it("defines strict bounded typed schemas for rerun, cancel, and workflow dispatch only", () => {
+    const schemas = remoteCiSchemas as unknown as Record<string, { parse(input: unknown): unknown } | undefined>;
+    expect(schemas.CiRerunInputSchema).toBeDefined();
+    expect(schemas.CiCancelInputSchema).toBeDefined();
+    expect(schemas.CiDispatchInputSchema).toBeDefined();
+    expect(schemas.CiMutationResultSchema).toBeDefined();
+
+    expect(schemas.CiRerunInputSchema?.parse({ runId: "123", failedOnly: true })).toEqual({
+      runId: "123",
+      failedOnly: true
+    });
+    expect(schemas.CiCancelInputSchema?.parse({ runId: "123" })).toEqual({ runId: "123" });
+    expect(schemas.CiDispatchInputSchema?.parse({
+      workflow: "ci.yml",
+      ref: "main",
+      inputs: { target: "smoke" }
+    })).toEqual({ workflow: "ci.yml", ref: "main", inputs: { target: "smoke" } });
+
+    expect(() => schemas.CiRerunInputSchema?.parse({ runId: "123", method: "POST" })).toThrow();
+    expect(() => schemas.CiCancelInputSchema?.parse({ runId: "123", url: "https://example.invalid" })).toThrow();
+    expect(() => schemas.CiDispatchInputSchema?.parse({ workflow: "ci.yml", ref: "main", headers: {} })).toThrow();
   });
 
   it("rejects repository/provider/url/page override fields", () => {
@@ -65,7 +92,16 @@ describe("Remote-CI v1 public contracts", () => {
       MAX_CI_RESPONSE_BYTES: 512 * 1024,
       MAX_CI_PROVIDER_METADATA_BYTES: 1024 * 1024
     });
-    expect(CI_REQUEST_BUDGETS).toEqual({ repository: 1, status: 6, runs: 1, run: 2, failure: 5 });
+    expect(CI_REQUEST_BUDGETS).toEqual({
+      repository: 1,
+      status: 6,
+      runs: 1,
+      run: 2,
+      failure: 5,
+      rerun: 1,
+      cancel: 1,
+      dispatch: 1
+    });
     expect(CI_TRUNCATION_REASONS).toEqual([
       "SUMMARY_LIMIT",
       "RUN_LIMIT",

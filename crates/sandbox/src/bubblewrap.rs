@@ -42,6 +42,7 @@ pub enum WorkspaceAccess {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLaunchSpec {
     pub program: TrustedExecutable,
+    pub auxiliary_programs: Vec<TrustedExecutable>,
     pub args: Vec<OsString>,
     pub env: BTreeMap<String, String>,
     pub cwd: PathBuf,
@@ -53,6 +54,7 @@ impl SandboxLaunchSpec {
     pub fn new(program: TrustedExecutable) -> Self {
         Self {
             program,
+            auxiliary_programs: Vec::new(),
             args: Vec::new(),
             env: BTreeMap::new(),
             cwd: PathBuf::from(CHILD_WORKSPACE),
@@ -153,12 +155,28 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
-        let explicit_mount = spec.program.open_explicit_mount()?;
-        if let Some(mount) = &explicit_mount {
+
+        let mut explicit_mounts = Vec::new();
+        for program in std::iter::once(&spec.program).chain(spec.auxiliary_programs.iter()) {
+            let Some(mount) = program.open_explicit_mount()? else {
+                continue;
+            };
+            if explicit_mounts
+                .iter()
+                .any(|existing: &ExplicitExecutableMount| {
+                    existing.root_canonical_path == mount.root_canonical_path
+                })
+            {
+                continue;
+            }
             fcntl_setfd(&mount.root_fd, FdFlags::empty())
                 .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+            explicit_mounts.push(mount);
         }
-        let corepack_mount = if spec.program.uses_node_toolchain() {
+        let corepack_mount = if std::iter::once(&spec.program)
+            .chain(spec.auxiliary_programs.iter())
+            .any(TrustedExecutable::uses_node_toolchain)
+        {
             open_explicit_directory_from_env("KODEGPT_HOST_COREPACK_HOME")?
         } else {
             None
@@ -175,12 +193,15 @@ impl BubblewrapProvider {
         let mut command = self.build_command(
             inherited_workspace_fd.as_raw_fd(),
             Some(status_writer.as_raw_fd()),
-            explicit_mount.as_ref(),
+            &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
             spec,
         )?;
         self.executable.revalidate()?;
         spec.program.revalidate()?;
+        for auxiliary in &spec.auxiliary_programs {
+            auxiliary.revalidate()?;
+        }
         let mut child = command.spawn()?;
         drop(status_writer);
         drop(inherited_workspace_fd);
@@ -213,7 +234,7 @@ impl BubblewrapProvider {
         &self,
         workspace_fd: i32,
         status_fd: Option<i32>,
-        explicit_mount: Option<&ExplicitExecutableMount>,
+        explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
@@ -267,13 +288,14 @@ impl BubblewrapProvider {
             "--dir", "/home", "--dir", CHILD_HOME, "--chmod", "0700", CHILD_HOME,
         ]);
 
-        if let Some(mount) = explicit_mount {
+        if !explicit_mounts.is_empty() {
+            command.args(["--dir", "/opt"]);
+        }
+        for (index, mount) in explicit_mounts.iter().enumerate() {
             command.args([
-                "--dir",
-                "/opt",
                 "--ro-bind-fd",
                 &mount.root_fd.as_raw_fd().to_string(),
-                CHILD_TOOL_ROOT,
+                &child_tool_root(index),
             ]);
         }
         if let Some(corepack_fd) = corepack_fd {
@@ -295,10 +317,16 @@ impl BubblewrapProvider {
             }
         }
 
-        let child_path = if explicit_mount.is_some() {
-            format!("{CHILD_TOOL_ROOT}/bin:{FIXED_PATH}")
-        } else {
+        let child_path = if explicit_mounts.is_empty() {
             FIXED_PATH.to_owned()
+        } else {
+            explicit_mounts
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("{}/bin", child_tool_root(index)))
+                .chain(std::iter::once(FIXED_PATH.to_owned()))
+                .collect::<Vec<_>>()
+                .join(":")
         };
         command.args([
             "--setenv",
@@ -319,11 +347,25 @@ impl BubblewrapProvider {
         }
 
         command.arg("--chdir").arg(&spec.cwd);
-        let child_program = explicit_mount
-            .map(|mount| Path::new(CHILD_TOOL_ROOT).join(&mount.relative_program))
+        let child_program = explicit_mounts
+            .first()
+            .filter(|mount| {
+                spec.program
+                    .canonical_path()
+                    .starts_with(&mount.root_canonical_path)
+            })
+            .map(|mount| Path::new(&child_tool_root(0)).join(&mount.relative_program))
             .unwrap_or_else(|| spec.program.canonical_path().to_path_buf());
         command.arg("--").arg(child_program).args(&spec.args);
         Ok(command)
+    }
+}
+
+fn child_tool_root(index: usize) -> String {
+    if index == 0 {
+        CHILD_TOOL_ROOT.to_owned()
+    } else {
+        format!("{CHILD_TOOL_ROOT}-{index}")
     }
 }
 
@@ -624,7 +666,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, None, None, &spec),
+                provider.build_command(3, None, &[], None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

@@ -210,7 +210,10 @@ function dependencies(
       status: async () => { throw new Error("not used"); },
       runs: async () => { throw new Error("not used"); },
       run: async () => { throw new Error("not used"); },
-      failure: async () => { throw new Error("not used"); }
+      failure: async () => { throw new Error("not used"); },
+      rerun: async () => { throw new Error("not used"); },
+      cancel: async () => { throw new Error("not used"); },
+      dispatch: async () => { throw new Error("not used"); }
     }),
     createMcp: () => {
       events.push("mcp");

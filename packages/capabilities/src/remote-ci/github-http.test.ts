@@ -179,6 +179,43 @@ describe("GitHubHttp", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("sends one authenticated mutation request and never retries an ambiguous outcome", async () => {
+    const calls: FetchCall[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      throw new Error("connection reset after request write");
+    };
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl }) as GitHubHttp & {
+      postMutation(path: string, expectedStatus: 200 | 201 | 202, body?: Record<string, unknown>): Promise<void>;
+    };
+
+    await expect(http.postMutation("/repos/owner/repository/actions/runs/123/rerun", 201)).rejects.toMatchObject({
+      code: "CI_MUTATION_OUTCOME_UNKNOWN"
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.github.com/repos/owner/repository/actions/runs/123/rerun");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.redirect).toBe("manual");
+    expect(new Headers(calls[0]?.init.headers).get("authorization")).toBe(`Bearer ${FAKE_CREDENTIAL}`);
+  });
+
+  it("accepts only the expected definitive mutation status and sends bounded JSON when present", async () => {
+    const fake = fakeFetch([new Response(JSON.stringify({ workflow_run_id: 1 }), { status: 200 })]);
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl }) as GitHubHttp & {
+      postMutation(path: string, expectedStatus: 200 | 201 | 202, body?: Record<string, unknown>): Promise<void>;
+    };
+
+    await expect(
+      http.postMutation("/repos/owner/repository/actions/workflows/ci.yml/dispatches", 200, {
+        ref: "main",
+        inputs: { target: "smoke" }
+      })
+    ).resolves.toBeUndefined();
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]?.init.body).toBe(JSON.stringify({ ref: "main", inputs: { target: "smoke" } }));
+    expect(new Headers(fake.calls[0]?.init.headers).get("content-type")).toBe("application/json");
+  });
+
   it("maps fetch failures to sanitized provider errors", async () => {
     const fetchImpl: typeof fetch = async () => {
       throw new Error("network provider detail must not surface");

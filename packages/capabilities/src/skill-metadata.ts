@@ -34,6 +34,13 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "find reference",
     "find definition"
   ]),
+  "code.impact": entry("code.impact", "Find bounded dependents, references, tests, and affected repository areas.", [
+    "impact analysis",
+    "find dependents",
+    "affected tests",
+    "affected areas",
+    "dependency impact"
+  ]),
   "file.read": entry("file.read", "Read bounded file content.", [
     "read file",
     "inspect file",
@@ -156,6 +163,21 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "ci failure",
     "why ci failed",
     "github actions failure"
+  ]),
+  "ci.rerun": entry("ci.rerun", "Re-run one GitHub Actions workflow run through bounded CI mutation authority.", [
+    "rerun ci",
+    "rerun workflow",
+    "rerun failed jobs"
+  ]),
+  "ci.cancel": entry("ci.cancel", "Cancel one GitHub Actions workflow run through bounded CI mutation authority.", [
+    "cancel ci",
+    "cancel workflow",
+    "stop workflow run"
+  ]),
+  "ci.dispatch": entry("ci.dispatch", "Dispatch one configured GitHub Actions workflow through bounded CI mutation authority.", [
+    "dispatch workflow",
+    "run workflow",
+    "workflow dispatch"
   ]),
   "process.run": entry("process.run", "Run a policy-approved process through native process controls.", [
     "run process",

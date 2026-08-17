@@ -25,7 +25,7 @@ describe("native capability semantic metadata", () => {
     expect(Object.isFrozen(registry)).toBe(true);
   });
 
-  it("describes exactly the five Remote-CI capabilities as bounded read-only semantics", () => {
+  it("describes five read-only and three bounded mutation Remote-CI semantics", () => {
     const registry = capabilities.NATIVE_CAPABILITY_SEMANTICS;
     const ciEntries = Object.values(registry).filter(({ id }) => id.startsWith("ci."));
 
@@ -34,12 +34,21 @@ describe("native capability semantic metadata", () => {
       "ci.status",
       "ci.runs",
       "ci.run",
-      "ci.failure"
+      "ci.failure",
+      "ci.rerun",
+      "ci.cancel",
+      "ci.dispatch"
     ]);
-    for (const metadata of ciEntries) {
+    for (const metadata of ciEntries.slice(0, 5)) {
       expect(metadata.purpose.toLowerCase()).toContain("bounded");
       expect(metadata.purpose.toLowerCase()).toContain("read-only");
       expect(metadata.semanticAliases.some((alias) => alias.startsWith("ci "))).toBe(true);
+    }
+    for (const metadata of ciEntries.slice(5)) {
+      expect(metadata.purpose.toLowerCase()).toContain("bounded");
+      expect(metadata.purpose.toLowerCase()).toContain("mutation");
+      expect(metadata.purpose.toLowerCase()).not.toContain("read-only");
+      expect(metadata.semanticAliases.some((alias) => alias.includes("workflow") || alias.startsWith("ci "))).toBe(true);
     }
   });
 

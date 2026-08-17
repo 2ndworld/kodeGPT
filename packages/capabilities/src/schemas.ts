@@ -5,6 +5,7 @@ import {
   MAX_INSPECT_MAX_ENTRIES,
   MAX_PATCH_BYTES,
   MAX_SEARCH_MAX_RESULTS,
+  MAX_IMPACT_MAX_RESULTS,
   MAX_GIT_LOG_LIMIT,
   MAX_GIT_RANGE_LIMIT,
   MAX_GIT_PATCH_BYTES,
@@ -15,6 +16,8 @@ import {
   MAX_GIT_REMOTE_NAME,
   type CodeSearchInput,
   type CodeSearchResult,
+  type CodeImpactInput,
+  type CodeImpactResult,
   type ContextBuildInput,
   type ContextBuildResult,
   type FilePatchInput,
@@ -181,6 +184,55 @@ export const CodeSearchResultSchema: z.ZodType<CodeSearchResult> = z
     truncationReasons: z.array(codeSearchTruncationReasonSchema)
   })
   .strict();
+
+const codeImpactTargetKindSchema = z.enum(["file", "symbol", "auto"]);
+const codeImpactRelationshipSchema = z.enum(["imports", "module", "reference"]);
+const codeImpactTruncationReasonSchema = z.enum([
+  "TARGET_LIMIT",
+  "DEPENDENT_LIMIT",
+  "TEST_LIMIT",
+  "AREA_LIMIT",
+  "SEARCH_LIMIT"
+]);
+
+export const CodeImpactInputSchema: z.ZodType<CodeImpactInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    target: z.string().min(1).max(512),
+    kind: codeImpactTargetKindSchema.optional(),
+    path: workspaceInspectRelativePathSchema.optional(),
+    maxResults: z.number().int().positive().max(MAX_IMPACT_MAX_RESULTS).safe().optional()
+  })
+  .strict();
+
+export const CodeImpactResultSchema: z.ZodType<CodeImpactResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    target: z
+      .object({
+        kind: z.enum(["file", "symbol"]),
+        value: z.string().min(1).max(512),
+        resolvedPaths: z.array(workspaceInspectRelativePathSchema).max(MAX_IMPACT_MAX_RESULTS)
+      })
+      .strict(),
+    dependents: z
+      .array(
+        z
+          .object({
+            path: workspaceInspectRelativePathSchema,
+            relationship: codeImpactRelationshipSchema,
+            line: z.number().int().positive().safe().optional()
+          })
+          .strict()
+      )
+      .max(MAX_IMPACT_MAX_RESULTS),
+    relatedTests: z.array(workspaceInspectRelativePathSchema).max(MAX_IMPACT_MAX_RESULTS),
+    affectedAreas: z.array(workspaceInspectRelativePathSchema).max(MAX_IMPACT_MAX_RESULTS),
+    truncated: z.boolean(),
+    truncationReasons: z.array(codeImpactTruncationReasonSchema)
+  })
+  .strict()
+  .refine((value) => value.truncated === (value.truncationReasons.length > 0));
 
 export const FilePatchInputSchema: z.ZodType<FilePatchInput> = z
   .object({
