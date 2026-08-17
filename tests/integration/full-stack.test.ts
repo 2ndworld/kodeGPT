@@ -146,6 +146,9 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     const stateRoot = await tempRoot("kodegpt-task23-state-");
     const workspaceA = await tempRoot("kodegpt-task23-a-");
     const workspaceB = await tempRoot("kodegpt-task23-b-");
+    const hostOnlyRoot = await tempRoot("kodegpt-task23-host-only-");
+    const hostOnlySecret = join(hostOnlyRoot, "secret.txt");
+    await writeFile(hostOnlySecret, "must-not-be-visible\n");
     await mkdir(join(workspaceA, "nested"));
     await mkdir(join(workspaceA, "src"));
     await mkdir(join(workspaceA, "frontend"));
@@ -626,6 +629,33 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         expect(result.exitCode, JSON.stringify(result)).toBe(0);
         expect(result.stdoutPreview).toContain(smoke.marker);
       }
+
+      const trustedShellScript = [
+        "git --version",
+        "printf 'shell-write\\n' > shell-created.txt",
+        "printf 'HOME=%s\\nPATH=%s\\n' \"$HOME\" \"$PATH\"",
+        `test ! -e ${JSON.stringify(hostOnlySecret)}`
+      ].join("; ");
+      const trustedShell = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.run",
+          {
+            workspaceId: openedA.id,
+            logicalExecutable: "bash",
+            argv: ["-lc", trustedShellScript],
+            background: false
+          },
+          "req_full_process_trusted_shell"
+        )
+      );
+      expect(trustedShell.state, JSON.stringify(trustedShell)).toBe("completed");
+      expect(trustedShell.exitCode, JSON.stringify(trustedShell)).toBe(0);
+      expect(trustedShell.stdoutPreview).toContain("git version");
+      expect(trustedShell.stdoutPreview).toContain("HOME=/home/kodegpt");
+      expect(trustedShell.stdoutPreview).toContain("PATH=/usr/local/bin:/usr/bin:/bin");
+      expect(await readFile(join(workspaceA, "shell-created.txt"), "utf8")).toBe("shell-write\n");
 
       const artifact = textJson(
         await callTool(
