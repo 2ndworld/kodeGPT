@@ -117,6 +117,12 @@ pub enum CiCapability {
     Run,
     #[serde(rename = "ci.failure")]
     Failure,
+    #[serde(rename = "ci.rerun")]
+    Rerun,
+    #[serde(rename = "ci.cancel")]
+    Cancel,
+    #[serde(rename = "ci.dispatch")]
+    Dispatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +177,8 @@ pub enum CiErrorCode {
     LogUnavailable,
     #[serde(rename = "CI_LOG_LIMIT_EXCEEDED")]
     LogLimitExceeded,
+    #[serde(rename = "CI_MUTATION_OUTCOME_UNKNOWN")]
+    MutationOutcomeUnknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
