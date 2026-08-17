@@ -426,7 +426,7 @@ mod tests {
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -447,6 +447,49 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("temporary root");
         root
+    }
+
+    #[test]
+    fn systemd_resolved_target_requires_only_the_systemd_resolver_runtime_directory() {
+        assert_eq!(
+            super::resolver_runtime_directory(Path::new(
+                "/run/systemd/resolve/stub-resolv.conf",
+            )),
+            Some(Path::new("/run/systemd/resolve"))
+        );
+        assert_eq!(
+            super::resolver_runtime_directory(Path::new("/etc/static-resolv.conf")),
+            None
+        );
+    }
+
+    #[test]
+    fn unrestricted_network_mounts_only_the_required_resolver_runtime_directory() {
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("env").expect("trusted env executable"),
+        );
+        spec.network = SandboxNetworkMode::Unrestricted;
+        let command = provider
+            .build_command(3, None, &[], None, Some(9), &spec)
+            .expect("unrestricted command construction");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(args.windows(2).any(|window| window == ["--dir", "/run"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--dir", "/run/systemd"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--ro-bind-fd", "9", "/run/systemd/resolve"])
+        );
+        assert!(!args.windows(3).any(|window| {
+            matches!(window, [flag, source, target] if flag == "--ro-bind" && source == "/run" && target == "/run")
+        }));
     }
 
     #[test]
