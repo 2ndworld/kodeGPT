@@ -18,6 +18,16 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitHubIssueInspectInputSchema,
+  GitHubIssueInspectResultSchema,
+  GitHubIssueListInputSchema,
+  GitHubIssueListResultSchema,
+  GitHubPrInspectInputSchema,
+  GitHubPrInspectResultSchema,
+  GitHubPrListInputSchema,
+  GitHubPrListResultSchema,
+  GitHubRepositoryInspectInputSchema,
+  GitHubRepositoryInspectResultSchema,
   GitStageInputSchema,
   GitCommitInputSchema,
   GitBranchInputSchema,
@@ -391,6 +401,127 @@ describe("structured MCP tool results", () => {
 
     const result = (await handlers.get("ci.repository")!({} as never)) as { structuredContent?: unknown };
     expect(result.structuredContent).toEqual(repositoryResult);
+  });
+
+  it("registers exactly five typed GitHub reads with closed schemas and normalized structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const repositoryResult = {
+      repository: "2ndworld/kodeGPT",
+      name: "kodeGPT",
+      owner: "2ndworld",
+      description: "KodeGPT",
+      private: false,
+      defaultBranch: "main",
+      archived: false,
+      fork: false,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT",
+      createdAt: "2026-08-01T00:00:00Z",
+      updatedAt: "2026-08-17T00:00:00Z",
+      pushedAt: "2026-08-17T00:00:00Z"
+    };
+    const prInspectResult = {
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      title: "Skill Capability Resolution v2",
+      state: "closed" as const,
+      authorLogin: "2ndworld",
+      baseBranch: "main",
+      headBranch: "feat/skill-capability-resolution-v2",
+      merged: true,
+      draft: false,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20",
+      createdAt: "2026-08-17T00:00:00Z",
+      updatedAt: "2026-08-17T01:00:00Z",
+      closedAt: "2026-08-17T01:00:00Z",
+      mergedAt: "2026-08-17T01:00:00Z"
+    };
+    const prListResult = {
+      repository: "2ndworld/kodeGPT",
+      items: [{
+        number: 20,
+        title: "Skill Capability Resolution v2",
+        state: "closed" as const,
+        authorLogin: "2ndworld",
+        baseBranch: "main",
+        headBranch: "feat/skill-capability-resolution-v2",
+        draft: false,
+        htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20",
+        createdAt: "2026-08-17T00:00:00Z",
+        updatedAt: "2026-08-17T01:00:00Z"
+      }]
+    };
+    const issueItem = {
+      number: 1,
+      title: "Example issue",
+      state: "open" as const,
+      authorLogin: "2ndworld",
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/issues/1",
+      createdAt: "2026-08-17T00:00:00Z",
+      updatedAt: "2026-08-17T01:00:00Z",
+      closedAt: null,
+      commentsCount: 1,
+      labels: ["bug"],
+      assigneeLogins: ["2ndworld"]
+    };
+    const issueInspectResult = { repository: "2ndworld/kodeGPT", ...issueItem };
+    const issueListResult = { repository: "2ndworld/kodeGPT", items: [issueItem] };
+    const context = Object.assign(makeContext(), {
+      github: {
+        repositoryInspect: async () => repositoryResult,
+        prInspect: async () => prInspectResult,
+        prList: async () => prListResult,
+        issueInspect: async () => issueInspectResult,
+        issueList: async () => issueListResult
+      }
+    }) as KodegptToolContext;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+
+    const specs = [
+      ["github.repository.inspect", GitHubRepositoryInspectInputSchema, GitHubRepositoryInspectResultSchema, { repository: "2ndworld/kodeGPT" }, repositoryResult],
+      ["github.pr.inspect", GitHubPrInspectInputSchema, GitHubPrInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 20 }, prInspectResult],
+      ["github.pr.list", GitHubPrListInputSchema, GitHubPrListResultSchema, { repository: "2ndworld/kodeGPT", state: "closed", limit: 5 }, prListResult],
+      ["github.issue.inspect", GitHubIssueInspectInputSchema, GitHubIssueInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 1 }, issueInspectResult],
+      ["github.issue.list", GitHubIssueListInputSchema, GitHubIssueListResultSchema, { repository: "2ndworld/kodeGPT", state: "open", limit: 5 }, issueListResult]
+    ] as const;
+    expect([...definitions.keys()].filter((name) => name.startsWith("github."))).toEqual(specs.map(([name]) => name));
+
+    for (const [name, inputSchema, outputSchema, input, expected] of specs) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(outputSchema);
+      expect(definition?.annotations).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true
+      });
+      for (const [field, value] of [
+        ["providerId", "github.read.v1"],
+        ["providerInstanceId", "prv_secret"],
+        ["workspaceId", "ws_1"],
+        ["endpoint", "/user"],
+        ["method", "POST"],
+        ["headers", { authorization: "secret" }],
+        ["token", "secret"],
+        ["credential", "secret"]
+      ] as const) {
+        expect(inputSchema.safeParse({ ...input, [field]: value }).success).toBe(false);
+      }
+      const result = (await handlers.get(name)!(input as never)) as { structuredContent?: unknown };
+      expect(result.structuredContent).toEqual(expected);
+      const serialized = JSON.stringify(result.structuredContent);
+      expect(serialized).not.toContain("providerInstanceId");
+      expect(serialized).not.toContain("semanticCapabilityId");
+      expect(serialized).not.toContain("authorization");
+    }
   });
 
   it("registers the small trust control plane without caller-supplied filesystem identity", async () => {

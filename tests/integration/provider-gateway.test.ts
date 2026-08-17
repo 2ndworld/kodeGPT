@@ -219,7 +219,7 @@ describe("Provider Gateway conformance boundary", () => {
     expect(fx.counters.transportCalls).toBe(0);
   });
 
-  it("locks DNS denial classes, operation budgets, one GitHub production adapter, and zero MCP expansion", () => {
+  it("locks DNS denial classes, operation budgets, one GitHub production adapter, and only the typed GitHub MCP expansion", () => {
     for (const address of [
       { address: "127.0.0.1", family: 4 as const },
       { address: "10.0.0.5", family: 4 as const },
@@ -253,8 +253,16 @@ describe("Provider Gateway conformance boundary", () => {
     ]);
 
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(MCP_SURFACE_VERSION).toBe("0.7");
-    expect(names).toHaveLength(51);
+    expect(MCP_SURFACE_VERSION).toBe("0.8");
+    expect(names).toHaveLength(56);
+    expect(names.filter((name) => name.startsWith("github."))).toEqual([
+      "github.issue.inspect",
+      "github.issue.list",
+      "github.pr.inspect",
+      "github.pr.list",
+      "github.repository.inspect"
+    ]);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
+    expect(names.some((name) => /github\..*(create|update|delete|comment|merge|label)/.test(name))).toBe(false);
   });
 });

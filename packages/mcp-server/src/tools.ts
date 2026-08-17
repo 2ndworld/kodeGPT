@@ -17,6 +17,16 @@ import {
   FilePatchResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
+  GitHubIssueInspectInputSchema,
+  GitHubIssueInspectResultSchema,
+  GitHubIssueListInputSchema,
+  GitHubIssueListResultSchema,
+  GitHubPrInspectInputSchema,
+  GitHubPrInspectResultSchema,
+  GitHubPrListInputSchema,
+  GitHubPrListResultSchema,
+  GitHubRepositoryInspectInputSchema,
+  GitHubRepositoryInspectResultSchema,
   GitStageInputSchema,
   GitCommitInputSchema,
   GitBranchInputSchema,
@@ -57,6 +67,7 @@ import {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
   REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
@@ -100,6 +111,11 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "git.show", required: ["workspaceId"] },
   { name: "git.stage", required: ["workspaceId", "paths"] },
   { name: "git.status", required: ["workspaceId"] },
+  { name: "github.issue.inspect", required: ["repository", "number"] },
+  { name: "github.issue.list", required: ["repository"] },
+  { name: "github.pr.inspect", required: ["repository", "number"] },
+  { name: "github.pr.list", required: ["repository"] },
+  { name: "github.repository.inspect", required: ["repository"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
   { name: "process.status", required: ["workspaceId", "operationId"] },
@@ -248,6 +264,72 @@ export function registerKodegptTools(
     },
     async (input) =>
       nativeCapabilityResult(async () => CiFailureResultSchema.parse(await context.ci.failure(input)))
+  );
+
+  server.registerTool(
+    "github.repository.inspect",
+    {
+      description: "Inspect one bounded normalized GitHub repository through the admitted read-only provider.",
+      inputSchema: GitHubRepositoryInspectInputSchema,
+      outputSchema: GitHubRepositoryInspectResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubRepositoryInspectResultSchema.parse(await context.github.repositoryInspect(input))
+      )
+  );
+
+  server.registerTool(
+    "github.pr.inspect",
+    {
+      description: "Inspect one bounded normalized GitHub pull request through the admitted read-only provider.",
+      inputSchema: GitHubPrInspectInputSchema,
+      outputSchema: GitHubPrInspectResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubPrInspectResultSchema.parse(await context.github.prInspect(input))
+      )
+  );
+
+  server.registerTool(
+    "github.pr.list",
+    {
+      description: "List one bounded normalized page of GitHub pull requests through the admitted read-only provider.",
+      inputSchema: GitHubPrListInputSchema,
+      outputSchema: GitHubPrListResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitHubPrListResultSchema.parse(await context.github.prList(input)))
+  );
+
+  server.registerTool(
+    "github.issue.inspect",
+    {
+      description: "Inspect one bounded normalized GitHub issue through the admitted read-only provider.",
+      inputSchema: GitHubIssueInspectInputSchema,
+      outputSchema: GitHubIssueInspectResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubIssueInspectResultSchema.parse(await context.github.issueInspect(input))
+      )
+  );
+
+  server.registerTool(
+    "github.issue.list",
+    {
+      description: "List one bounded normalized page of GitHub issues through the admitted read-only provider.",
+      inputSchema: GitHubIssueListInputSchema,
+      outputSchema: GitHubIssueListResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitHubIssueListResultSchema.parse(await context.github.issueList(input)))
   );
 
   server.registerTool(

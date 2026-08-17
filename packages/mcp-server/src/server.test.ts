@@ -39,6 +39,11 @@ const LOCKED_SURFACE = [
   { name: "git.show", required: ["workspaceId"] },
   { name: "git.stage", required: ["workspaceId", "paths"] },
   { name: "git.status", required: ["workspaceId"] },
+  { name: "github.issue.inspect", required: ["repository", "number"] },
+  { name: "github.issue.list", required: ["repository"] },
+  { name: "github.pr.inspect", required: ["repository", "number"] },
+  { name: "github.pr.list", required: ["repository"] },
+  { name: "github.repository.inspect", required: ["repository"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
   { name: "process.status", required: ["workspaceId", "operationId"] },
@@ -65,10 +70,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.7");
+    expect(MCP_SURFACE_VERSION).toBe("0.8");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(51);
+    expect(surface).toHaveLength(56);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.repository",
@@ -76,6 +81,14 @@ describe("KodeGPT MCP semantic surface", () => {
       "ci.runs",
       "ci.status"
     ]);
+    expect(surface.filter(({ name }) => name.startsWith("github.")).map(({ name }) => name)).toEqual([
+      "github.issue.inspect",
+      "github.issue.list",
+      "github.pr.inspect",
+      "github.pr.list",
+      "github.repository.inspect"
+    ]);
+    expect(surface.some(({ name }) => name.startsWith("provider."))).toBe(false);
   });
 
   it("registers only the locked semantic tool names", () => {
