@@ -793,12 +793,13 @@ export function registerKodegptTools(
       description: "Inspect bounded skill metadata, compatibility, resource inventory, and an advisory plan for relevant native capabilities; actual operations require separate normal KodeGPT tool calls.",
       inputSchema: {
         skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
-        fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional()
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+        workspaceId: z.string().min(1).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ skillId, fingerprint }) =>
-      skillToolResult(() => context.skill.inspect({ skillId, fingerprint }))
+    async ({ skillId, fingerprint, workspaceId }) =>
+      skillToolResult(() => context.skill.inspect({ skillId, fingerprint, workspaceId }))
   );
 
   server.registerTool(

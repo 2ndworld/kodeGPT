@@ -49,12 +49,13 @@ import type {
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
 import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
-import type {
-  SkillCatalogToolAdapter,
-  SkillCompatibility,
-  SkillInspectResult,
-  SkillListResult,
-  SkillLoadResult
+import {
+  resolveSkillCapabilityPlan,
+  type SkillCatalogToolAdapter,
+  type SkillCompatibility,
+  type SkillInspectResult,
+  type SkillListResult,
+  type SkillLoadResult
 } from "@kodegpt/skills";
 import { SkillError } from "@kodegpt/skills/errors";
 
@@ -208,7 +209,7 @@ export interface SkillToolContext {
     compatibility?: SkillCompatibility;
     pinned?: boolean;
   }): Promise<SkillListResult>;
-  inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
+  inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {
     skillId: string;
     fingerprint?: string;
@@ -253,6 +254,7 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "gitBranchCreate"
   | "gitBranchSwitch"
   | "gitBranchDelete"
+  | "inspectExecutable"
   | "search"
   | "tree"
 >;
@@ -406,7 +408,24 @@ export function createKodegptToolContext(options: {
     },
     skill: {
       list: (input) => skill.list(input),
-      inspect: (input) => skill.inspect(input),
+      inspect: async ({ skillId, fingerprint, workspaceId }) => {
+        const inspection = await skill.inspect({ skillId, fingerprint });
+        if (workspaceId === undefined) return inspection;
+        const ready = options.workspaceManager.requireReady(workspaceId);
+        const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {
+          workspaceId,
+          allowProcess: ready.effectivePolicy.allowProcess,
+          allowedExecutableNames: ready.effectivePolicy.allowedExecutableNames,
+          inspectExecutable: async (executable) => {
+            const availability = await options.workspaceManager.inspectExecutable(workspaceId, executable);
+            return {
+              executableAvailable: availability.executableAvailable,
+              sandboxAvailable: availability.sandboxAvailable
+            };
+          }
+        });
+        return { ...inspection, capabilityPlan };
+      },
       load: (input) => skill.load(input)
     }
   };

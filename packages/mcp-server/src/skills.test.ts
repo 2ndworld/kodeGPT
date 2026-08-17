@@ -18,6 +18,7 @@ const FORBIDDEN_SKILL_TOOLS = ["skill.run", "skill.pin", "skill.unpin", "skill.s
 const SOURCE_ID = `ss_${"a".repeat(32)}`;
 const SKILL_ID = `sk_${"b".repeat(64)}`;
 const FINGERPRINT = "c".repeat(64);
+const WORKSPACE_ID = "ws_1";
 const HOST_ROOT = "/private/skill-source";
 
 type Handler = (input: Record<string, unknown>) => Promise<unknown>;
@@ -77,6 +78,30 @@ function inspectResult(): SkillInspectResult {
     instructionBytes: 24,
     bundleBytes: 128
   };
+}
+
+function externalCliInspectResult(): SkillInspectResult {
+  const result = inspectResult();
+  result.skill.compatibility = {
+    classification: "PARTIAL",
+    requiredCapabilities: [],
+    missingCapabilities: ["external-cli:npx"],
+    requiredProviders: [],
+    reasons: ["EXTERNAL_CLI_REQUIRED:npx"],
+    analysisBasis: "static"
+  };
+  result.capabilityPlan = {
+    schemaVersion: 1,
+    classification: "PARTIAL",
+    nativeCapabilities: [],
+    missingCapabilities: ["external-cli:npx"],
+    externalRequirements: [],
+    blockedSemantics: [],
+    guidance: [],
+    truncated: false,
+    truncationReasons: []
+  };
+  return result;
 }
 
 function loadResult(): SkillLoadResult {
@@ -150,7 +175,8 @@ describe("MCP skill surface", () => {
     const inspect = required(tools, "skill.inspect");
     expect(inspect.config.inputSchema?.skillId?.safeParse(SKILL_ID).success).toBe(true);
     expect(inspect.config.inputSchema?.fingerprint?.safeParse(FINGERPRINT).success).toBe(true);
-    await inspect.handler({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
+    expect(inspect.config.inputSchema?.workspaceId?.safeParse(WORKSPACE_ID).success).toBe(true);
+    await inspect.handler({ skillId: SKILL_ID, fingerprint: FINGERPRINT, workspaceId: WORKSPACE_ID });
 
     const load = required(tools, "skill.load");
     expect(load.config.inputSchema?.maxBytes?.safeParse(512 * 1024).success).toBe(true);
@@ -159,8 +185,77 @@ describe("MCP skill surface", () => {
     await load.handler({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
 
     expect(seen).toContainEqual({ limit: 10, sourceId: SOURCE_ID, compatibility: "NATIVE", pinned: true });
-    expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
+    expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, workspaceId: WORKSPACE_ID });
     expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
+  });
+
+  it("resolves external CLI requirements against an explicitly supplied READY workspace", async () => {
+    let probes = 0;
+    let readyChecks = 0;
+    const skillCatalog: SkillCatalogToolAdapter = {
+      list: async () => listResult(),
+      inspect: async () => externalCliInspectResult(),
+      load: async () => loadResult()
+    };
+    const context = createKodegptToolContext({
+      workspaceManager: {
+        requireReady(workspaceId: string) {
+          readyChecks += 1;
+          expect(workspaceId).toBe(WORKSPACE_ID);
+          return {
+            effectivePolicy: {
+              name: "trusted",
+              allowWrite: true,
+              allowProcess: true,
+              network: "unrestricted",
+              allowedExecutableNames: ["npx"],
+              inheritEnv: false,
+              envAllowlist: []
+            }
+          };
+        },
+        async inspectExecutable(workspaceId: string, executable: string) {
+          probes += 1;
+          expect(workspaceId).toBe(WORKSPACE_ID);
+          expect(executable).toBe("npx");
+          return { schemaVersion: 1, executableAvailable: true, sandboxAvailable: true };
+        }
+      } as never,
+      executionManager: {} as never,
+      artifactStore: {} as never,
+      extensionRegistry: {} as never,
+      skillCatalog,
+      inspectProfile: () => ({}),
+      capabilities: () => ({}),
+      health: () => ({})
+    });
+
+    const resolved = await context.skill.inspect({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT,
+      workspaceId: WORKSPACE_ID
+    });
+
+    expect(readyChecks).toBe(1);
+    expect(probes).toBe(1);
+    expect(resolved.skill.compatibility.classification).toBe("PARTIAL");
+    expect(resolved.capabilityPlan.classification).toBe("NATIVE");
+    expect(resolved.capabilityPlan.missingCapabilities).toEqual([]);
+    expect(resolved.capabilityPlan.nativeCapabilities).toContain("process.run");
+    expect(resolved.capabilityPlan.externalCliRequirements).toEqual([
+      {
+        requirement: "external-cli:npx",
+        executable: "npx",
+        status: "available",
+        capability: "process.run"
+      }
+    ]);
+
+    const generic = await context.skill.inspect({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
+    expect(readyChecks).toBe(1);
+    expect(probes).toBe(1);
+    expect(generic.capabilityPlan.classification).toBe("PARTIAL");
+    expect(generic.capabilityPlan.externalCliRequirements).toBeUndefined();
   });
 
   it("returns structured host-path-free results", async () => {
