@@ -260,15 +260,16 @@ pub fn run_process(
     let mut spec = SandboxLaunchSpec::new(program);
     if policy.name == ProfileName::Trusted {
         for candidates in [&["node", "npm", "npx", "pnpm"][..], &["cargo", "rustc"][..]] {
-            let Some(name) = candidates.iter().find(|candidate| {
-                policy
-                    .allowed_executable_names
-                    .iter()
-                    .any(|allowed| allowed == **candidate)
-            }) else {
-                continue;
-            };
-            if let Ok(auxiliary) = resolve_trusted_executable(name) {
+            if let Some(auxiliary) = candidates
+                .iter()
+                .filter(|candidate| {
+                    policy
+                        .allowed_executable_names
+                        .iter()
+                        .any(|allowed| allowed == **candidate)
+                })
+                .find_map(|candidate| resolve_trusted_executable(candidate).ok())
+            {
                 spec.auxiliary_programs.push(auxiliary);
             }
         }
@@ -712,6 +713,18 @@ mod tests {
         }
     }
 
+    fn trusted_toolchain_fallback_policy() -> RuntimePolicy {
+        RuntimePolicy {
+            name: ProfileName::Trusted,
+            allow_write: true,
+            allow_process: true,
+            network: NetworkMode::Deny,
+            allowed_executable_names: vec!["bash".to_owned(), "node".to_owned(), "pnpm".to_owned()],
+            inherit_env: InheritEnvDisabled,
+            env_allowlist: Vec::new(),
+        }
+    }
+
     fn run_python(
         workspace: &PathBuf,
         state: &PathBuf,
@@ -797,6 +810,90 @@ mod tests {
         fs::remove_dir_all(rust_root).expect("rust root cleanup");
         fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn trusted_toolchain_composition_falls_back_to_an_available_allowed_candidate() {
+        let node_root = temporary_root("trusted-node-fallback-root");
+        let workspace = temporary_root("trusted-toolchain-fallback-workspace");
+        let state = temporary_root("trusted-toolchain-fallback-state");
+        fs::create_dir_all(node_root.join("bin")).expect("node fallback bin");
+
+        let pnpm = node_root.join("bin/pnpm");
+        fs::write(&pnpm, b"#!/bin/sh\nprintf 'fallback-pnpm-ok\\n'\n").expect("pnpm fixture");
+        let mut pnpm_permissions = fs::metadata(&pnpm).expect("pnpm metadata").permissions();
+        pnpm_permissions.set_mode(0o755);
+        fs::set_permissions(&pnpm, pnpm_permissions).expect("pnpm executable mode");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "process::tests::trusted_toolchain_fallback_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_NODE_ROOT", &node_root)
+            .env_remove("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT")
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .env("KODEGPT_TEST_STATE", &state)
+            .output()
+            .expect("fallback process test runs");
+
+        assert!(
+            output.status.success(),
+            "trusted toolchain fallback failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        fs::remove_dir_all(node_root).expect("node root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by trusted_toolchain_composition_falls_back_to_an_available_allowed_candidate"]
+    fn trusted_toolchain_fallback_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let state =
+            PathBuf::from(std::env::var_os("KODEGPT_TEST_STATE").expect("state fixture env"));
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = Arc::new(RawSpoolStore::open(&state, audit).expect("spool store"));
+        let executions = Arc::new(Mutex::new(ExecutionRegistry::default()));
+        let operations = Arc::new(ProcessOperationRegistry::default());
+        let view = run_process(
+            root_fd,
+            "kc_toolchain_fallback_fixture".to_owned(),
+            "req_toolchain_fallback_fixture".to_owned(),
+            next_process_operation_id(),
+            trusted_toolchain_fallback_policy(),
+            ProcessLaunchRequest {
+                logical_executable: "bash".to_owned(),
+                argv: vec![
+                    "--noprofile".to_owned(),
+                    "--norc".to_owned(),
+                    "-c".to_owned(),
+                    "pnpm".to_owned(),
+                ],
+                cwd: ".".to_owned(),
+                env: BTreeMap::new(),
+                background: false,
+            },
+            spool,
+            executions,
+            operations,
+        )
+        .expect("trusted bash process starts");
+        assert_eq!(
+            view.state,
+            ProcessState::Completed,
+            "{}",
+            view.stderr_preview
+        );
+        assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
+        assert_eq!(view.stdout_preview, "fallback-pnpm-ok\n");
     }
 
     #[test]
