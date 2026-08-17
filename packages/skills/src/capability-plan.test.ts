@@ -15,14 +15,33 @@ interface TestPlan {
   externalRequirements: readonly string[];
   blockedSemantics: readonly string[];
   guidance: readonly { capability: string; purpose: string }[];
+  externalCliRequirements?: readonly {
+    requirement: string;
+    executable: string;
+    status: "available" | "not-allowed" | "not-installed" | "sandbox-unavailable";
+    capability: "process.run";
+  }[];
   truncated: boolean;
   truncationReasons: readonly string[];
 }
 
 type Planner = (skill: ParsedSkillDocument, compatibility: SkillCompatibilityReport) => TestPlan;
+type Resolver = (
+  plan: TestPlan,
+  context: {
+    workspaceId: string;
+    allowProcess: boolean;
+    allowedExecutableNames: readonly string[];
+    inspectExecutable(executable: string): Promise<{ executableAvailable: boolean; sandboxAvailable: boolean }>;
+  }
+) => Promise<TestPlan>;
 
 function planner(): Planner | undefined {
   return (skills as Record<string, unknown>).buildSkillCapabilityPlan as Planner | undefined;
+}
+
+function resolver(): Resolver | undefined {
+  return (skills as Record<string, unknown>).resolveSkillCapabilityPlan as Resolver | undefined;
 }
 
 function skill(overrides: Partial<ParsedSkillDocument> = {}): ParsedSkillDocument {
@@ -220,5 +239,171 @@ describe("buildSkillCapabilityPlan", () => {
       "EXTERNAL_REQUIREMENTS",
       "MISSING_CAPABILITIES"
     ]);
+  });
+});
+
+describe("resolveSkillCapabilityPlan", () => {
+  function externalCliPlan(extra: Partial<ParsedSkillDocument> = {}): TestPlan {
+    return planFor(
+      skill({
+        instructions: "Run `npx skills add example` to continue.",
+        ...extra
+      })
+    );
+  }
+
+  it("promotes a fully available external CLI requirement to effective NATIVE readiness", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+
+    const resolved = await resolve!(externalCliPlan(), {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async (executable) => {
+        expect(executable).toBe("npx");
+        return { executableAvailable: true, sandboxAvailable: true };
+      }
+    });
+
+    expect(resolved.classification).toBe("NATIVE");
+    expect(resolved.missingCapabilities).not.toContain("external-cli:npx");
+    expect(resolved.externalCliRequirements).toEqual([
+      {
+        requirement: "external-cli:npx",
+        executable: "npx",
+        status: "available",
+        capability: "process.run"
+      }
+    ]);
+    expect(resolved.nativeCapabilities).toContain("process.run");
+    expect(resolved.guidance).toContainEqual(
+      expect.objectContaining({ capability: "process.run" })
+    );
+  });
+
+  it("reports process policy denial without probing the executable", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    let probes = 0;
+
+    const resolved = await resolve!(externalCliPlan(), {
+      workspaceId: "ws_1",
+      allowProcess: false,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => {
+        probes += 1;
+        return { executableAvailable: true, sandboxAvailable: true };
+      }
+    });
+
+    expect(probes).toBe(0);
+    expect(resolved.classification).toBe("PARTIAL");
+    expect(resolved.missingCapabilities).toContain("external-cli:npx");
+    expect(resolved.externalCliRequirements?.[0]?.status).toBe("not-allowed");
+  });
+
+  it("reports executable allowlist denial without probing the executable", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    let probes = 0;
+
+    const resolved = await resolve!(externalCliPlan(), {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["node"],
+      inspectExecutable: async () => {
+        probes += 1;
+        return { executableAvailable: true, sandboxAvailable: true };
+      }
+    });
+
+    expect(probes).toBe(0);
+    expect(resolved.externalCliRequirements?.[0]?.status).toBe("not-allowed");
+  });
+
+  it("distinguishes not-installed from sandbox-unavailable", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+
+    const notInstalled = await resolve!(externalCliPlan(), {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: false, sandboxAvailable: true })
+    });
+    expect(notInstalled.externalCliRequirements?.[0]?.status).toBe("not-installed");
+
+    const noSandbox = await resolve!(externalCliPlan(), {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: false })
+    });
+    expect(noSandbox.externalCliRequirements?.[0]?.status).toBe("sandbox-unavailable");
+  });
+
+  it("keeps unrelated missing capabilities and PARTIAL classification", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    const plan = planFor(
+      skill({
+        metadata: { kodegpt: { requires: { capabilities: ["example.missing"] } } },
+        instructions: "Run `npx skills add example` to continue."
+      })
+    );
+
+    const resolved = await resolve!(plan, {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
+    });
+
+    expect(resolved.classification).toBe("PARTIAL");
+    expect(resolved.missingCapabilities).toEqual(["example.missing"]);
+  });
+
+  it("never promotes provider-required or unsupported plans", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    const context = {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
+    };
+
+    const providerPlan = planFor(
+      skill({
+        metadata: { kodegpt: { requires: { providers: ["figma"] } } },
+        instructions: "Run `npx skills add example` to continue."
+      })
+    );
+    expect((await resolve!(providerPlan, context)).classification).toBe("PROVIDER_REQUIRED");
+
+    const unsupportedPlan = planFor(
+      skill({ instructions: "Run `npx skills add example`, then `codex exec --full-auto`." })
+    );
+    expect((await resolve!(unsupportedPlan, context)).classification).toBe("UNSUPPORTED");
+  });
+
+  it("returns deterministic immutable external CLI resolution evidence", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    const context = {
+      workspaceId: "ws_1",
+      allowProcess: true,
+      allowedExecutableNames: ["npx"],
+      inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
+    };
+
+    const first = await resolve!(externalCliPlan(), context);
+    const second = await resolve!(externalCliPlan(), context);
+
+    expect(first).toEqual(second);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.externalCliRequirements)).toBe(true);
+    expect(first.externalCliRequirements?.every((entry) => Object.isFrozen(entry))).toBe(true);
   });
 });

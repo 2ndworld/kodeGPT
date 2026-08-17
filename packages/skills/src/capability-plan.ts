@@ -11,7 +11,11 @@ import type {
   SkillCapabilityGuidanceStep,
   SkillCapabilityPlan,
   SkillCapabilityPlanTruncationReason,
-  SkillCompatibilityReport
+  SkillCapabilityRuntimeContext,
+  SkillCompatibility,
+  SkillCompatibilityReport,
+  SkillExternalCliResolution,
+  SkillExternalCliStatus
 } from "./contracts.js";
 
 const MAX_PLAN_FINDINGS = 64;
@@ -71,6 +75,82 @@ export function buildSkillCapabilityPlan(
     truncated: orderedTruncationReasons.length > 0,
     truncationReasons: orderedTruncationReasons
   });
+}
+
+const EXTERNAL_CLI_PREFIX = "external-cli:";
+
+export async function resolveSkillCapabilityPlan(
+  plan: SkillCapabilityPlan,
+  context: SkillCapabilityRuntimeContext
+): Promise<SkillCapabilityPlan> {
+  const requirements = sortedUnique(
+    new Set(
+      plan.missingCapabilities.filter(
+        (value) => value.startsWith(EXTERNAL_CLI_PREFIX) && value.length > EXTERNAL_CLI_PREFIX.length
+      )
+    )
+  );
+  if (requirements.length === 0) return plan;
+
+  const allowedExecutables = new Set(context.allowedExecutableNames);
+  const resolvedAvailable = new Set<string>();
+  const resolutions: SkillExternalCliResolution[] = [];
+
+  for (const requirement of requirements) {
+    const executable = requirement.slice(EXTERNAL_CLI_PREFIX.length);
+    let status: SkillExternalCliStatus;
+    if (!context.allowProcess || !allowedExecutables.has(executable)) {
+      status = "not-allowed";
+    } else {
+      const availability = await context.inspectExecutable(executable);
+      status = !availability.executableAvailable
+        ? "not-installed"
+        : !availability.sandboxAvailable
+          ? "sandbox-unavailable"
+          : "available";
+    }
+    if (status === "available") resolvedAvailable.add(requirement);
+    resolutions.push(
+      Object.freeze({
+        requirement,
+        executable,
+        status,
+        capability: "process.run" as const
+      })
+    );
+  }
+
+  const missingCapabilities = Object.freeze(
+    plan.missingCapabilities.filter((value) => !resolvedAvailable.has(value))
+  );
+  const selected = new Set<NativeCapabilityId>(plan.nativeCapabilities);
+  if (resolvedAvailable.size > 0) selected.add("process.run");
+  const nativeCapabilities = Object.freeze(sortedUnique(selected));
+  const guidance = Object.freeze(
+    nativeCapabilities.map((capability) =>
+      Object.freeze({
+        capability,
+        purpose: getNativeCapabilitySemanticMetadata(capability).purpose
+      } satisfies SkillCapabilityGuidanceStep)
+    )
+  );
+
+  return Object.freeze({
+    ...plan,
+    classification: effectiveClassification(plan.classification, missingCapabilities.length),
+    nativeCapabilities,
+    missingCapabilities,
+    guidance,
+    externalCliRequirements: Object.freeze(resolutions),
+  });
+}
+
+function effectiveClassification(
+  classification: SkillCompatibility,
+  remainingMissingCapabilities: number
+): SkillCompatibility {
+  if (classification === "UNSUPPORTED" || classification === "PROVIDER_REQUIRED") return classification;
+  return remainingMissingCapabilities === 0 ? "NATIVE" : "PARTIAL";
 }
 
 function containsSemanticAlias(instructions: string, alias: string): boolean {
