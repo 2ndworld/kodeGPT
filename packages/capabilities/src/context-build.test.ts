@@ -29,6 +29,8 @@ function sources(
       { path: "packages/core/package.json", kind: "node-package" },
       { path: "packages/other/package.json", kind: "node-package" }
     ],
+    symbols: [],
+    relationships: [],
     warnings: [],
     truncated: false
   };
