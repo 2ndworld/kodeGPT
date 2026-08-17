@@ -100,6 +100,8 @@ const typedWorkspaceInspectResult: WorkspaceInspectResult = {
   entrypoints: [{ path: "package.json", kind: "node-manifest" }],
   areas: [{ path: "packages/core", kind: "package" }],
   manifests: [{ path: "package.json", kind: "node-package" }],
+  symbols: [],
+  relationships: [],
   warnings: [],
   truncated: false
 };

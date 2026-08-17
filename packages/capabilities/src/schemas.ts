@@ -53,6 +53,22 @@ const workspaceInspectAreaKindSchema = z.enum([
   "docs",
   "other"
 ]);
+const workspaceInspectSymbolKindSchema = z.enum([
+  "function",
+  "class",
+  "interface",
+  "type",
+  "enum",
+  "variable",
+  "struct",
+  "trait",
+  "module"
+]);
+const workspaceInspectRelationshipKindSchema = z.enum(["imports", "tests", "module"]);
+const workspaceInspectRelativePathSchema = z
+  .string()
+  .min(1)
+  .refine((value) => !value.startsWith("/") && !value.split("/").includes(".."));
 
 export const WorkspaceInspectInputSchema: z.ZodType<WorkspaceInspectInput> = z
   .object({
@@ -97,6 +113,26 @@ export const WorkspaceInspectResultSchema: z.ZodType<WorkspaceInspectResult> = z
         .object({
           path: z.string().min(1),
           kind: z.string().min(1)
+        })
+        .strict()
+    ),
+    symbols: z.array(
+      z
+        .object({
+          name: z.string().min(1),
+          kind: workspaceInspectSymbolKindSchema,
+          path: workspaceInspectRelativePathSchema,
+          line: z.number().int().positive().safe(),
+          exported: z.boolean()
+        })
+        .strict()
+    ),
+    relationships: z.array(
+      z
+        .object({
+          from: workspaceInspectRelativePathSchema,
+          to: workspaceInspectRelativePathSchema,
+          kind: workspaceInspectRelationshipKindSchema
         })
         .strict()
     ),

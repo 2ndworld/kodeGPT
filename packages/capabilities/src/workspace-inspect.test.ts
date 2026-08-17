@@ -65,20 +65,60 @@ describe("workspace.inspect", () => {
     expect(result.areas).toContainEqual({ path: "packages/shared", kind: "package" });
   });
 
+  it("adds source symbols, relationships, and source entrypoints", async () => {
+    const files = {
+      "packages/demo/src/index.ts": 'export { service } from "./service.js";\n',
+      "packages/demo/src/service.ts": "export function service() {}\n",
+      "packages/demo/src/service.test.ts": 'import { service } from "./service.js";\n'
+    };
+    const service = makeService(
+      makeWorkspaceAdapter(
+        [
+          { path: "packages/demo", kind: "directory" },
+          ...Object.keys(files).map((path) => ({ path, kind: "file" as const }))
+        ],
+        { files }
+      )
+    );
+
+    const result = await service.inspectWorkspace({ workspaceId: "ws_repo_intel", path: "packages/demo" });
+
+    expect(result.entrypoints).toContainEqual({
+      path: "packages/demo/src/index.ts",
+      kind: "source-index"
+    });
+    expect(result.symbols).toContainEqual({
+      name: "service",
+      kind: "function",
+      path: "packages/demo/src/service.ts",
+      line: 1,
+      exported: true
+    });
+    expect(result.relationships).toEqual(
+      expect.arrayContaining([
+        { from: "packages/demo/src/index.ts", to: "packages/demo/src/service.ts", kind: "imports" },
+        { from: "packages/demo/src/service.test.ts", to: "packages/demo/src/service.ts", kind: "tests" }
+      ])
+    );
+  });
+
   it("detects a Cargo workspace from Rust manifest evidence", async () => {
     const service = makeService(
       makeWorkspaceAdapter([
         { path: "Cargo.toml", kind: "file" },
         { path: "crates/core", kind: "directory" },
-        { path: "crates/core/src/lib.rs", kind: "file" }
+        { path: "crates/core/src/lib.rs", kind: "file" },
+        { path: "crates/core/src/main.rs", kind: "file" }
       ])
     );
 
     const result = await service.inspectWorkspace({ workspaceId: "ws_rust" });
 
     expect(result.projectTypes).toEqual(["rust-cargo"]);
-    expect(result.languages).toContainEqual({ name: "Rust", fileCount: 1 });
+    expect(result.languages).toContainEqual({ name: "Rust", fileCount: 2 });
     expect(result.areas).toContainEqual({ path: "crates/core", kind: "crate" });
+    expect(result.entrypoints).toContainEqual({ path: "crates/core/src/lib.rs", kind: "rust-lib" });
+    expect(result.entrypoints).toContainEqual({ path: "crates/core/src/main.rs", kind: "rust-main" });
   });
 
   it("detects mixed pnpm and Cargo projects only from explicit tree evidence", async () => {

@@ -129,11 +129,45 @@ describe("capability contracts", () => {
       entrypoints: [{ path: "package.json", kind: "node-manifest" }],
       areas: [{ path: "packages/core", kind: "package" as const }],
       manifests: [{ path: "package.json", kind: "package-json" }],
+      symbols: [
+        {
+          name: "inspectWorkspace",
+          kind: "function" as const,
+          path: "src/workspace-inspect.ts",
+          line: 23,
+          exported: true
+        }
+      ],
+      relationships: [
+        {
+          from: "src/workspace-inspect.test.ts",
+          to: "src/workspace-inspect.ts",
+          kind: "tests" as const
+        }
+      ],
       warnings: [],
       truncated: false
     };
     expect(WorkspaceInspectResultSchema.parse(validResult)).toEqual(validResult);
     expect(() => WorkspaceInspectResultSchema.parse({ ...validResult, truncated: "no" })).toThrow();
+    expect(() =>
+      WorkspaceInspectResultSchema.parse({
+        ...validResult,
+        symbols: [{ ...validResult.symbols[0], kind: "method" }]
+      })
+    ).toThrow();
+    expect(() =>
+      WorkspaceInspectResultSchema.parse({
+        ...validResult,
+        symbols: [{ ...validResult.symbols[0], line: 0 }]
+      })
+    ).toThrow();
+    expect(() =>
+      WorkspaceInspectResultSchema.parse({
+        ...validResult,
+        relationships: [{ ...validResult.relationships[0], kind: "calls" }]
+      })
+    ).toThrow();
   });
 
   it("validates code.search inputs and structured results at runtime", () => {

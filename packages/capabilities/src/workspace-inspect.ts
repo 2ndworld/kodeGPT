@@ -1,4 +1,5 @@
 import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
+import { analyzeRepository } from "./repository-analysis.js";
 import {
   CAPABILITY_SCHEMA_VERSION,
   DEFAULT_INSPECT_MAX_ENTRIES,
@@ -48,8 +49,10 @@ export async function inspectWorkspace(
   );
   const areas = detectAreas(entries, workspaceMemberPatterns);
   const manifests = detectManifests(entries);
+  const analysis = await analyzeRepository(workspace, input.workspaceId, entries);
   const truncated = treeResult.truncated || adapterExceededBound;
 
+  warnings.push(...analysis.warnings);
   if (truncated) warnings.push("INSPECT_MAX_ENTRIES_REACHED");
 
   return {
@@ -61,6 +64,8 @@ export async function inspectWorkspace(
     entrypoints,
     areas,
     manifests,
+    symbols: analysis.symbols,
+    relationships: analysis.relationships,
     warnings,
     truncated
   };
@@ -235,6 +240,10 @@ function entrypointKind(path: string): string | undefined {
   if (name === "package.json") return "node-manifest";
   if (name === "pnpm-workspace.yaml") return "pnpm-workspace";
   if (name === "Cargo.toml") return "cargo-manifest";
+  if (/(^|\/)src\/index\.(?:ts|tsx|js)$/.test(path)) return "source-index";
+  if (/(^|\/)src\/main\.(?:ts|tsx|js)$/.test(path)) return "source-main";
+  if (/(^|\/)src\/lib\.rs$/.test(path)) return "rust-lib";
+  if (/(^|\/)src\/main\.rs$/.test(path)) return "rust-main";
   if (isTypeScriptConfig(name)) return "typescript-config";
   if (isVitestConfig(name)) return "vitest-config";
   if (path.startsWith(".github/workflows/")) return "github-workflow";

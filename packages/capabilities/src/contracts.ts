@@ -80,6 +80,17 @@ export type WorkspaceInspectAreaKind =
   | "config"
   | "docs"
   | "other";
+export type WorkspaceInspectSymbolKind =
+  | "function"
+  | "class"
+  | "interface"
+  | "type"
+  | "enum"
+  | "variable"
+  | "struct"
+  | "trait"
+  | "module";
+export type WorkspaceInspectRelationshipKind = "imports" | "tests" | "module";
 export type FilePatchMode = "check" | "apply";
 export type PatchFileAction = "create" | "update" | "delete";
 
@@ -117,6 +128,20 @@ export interface WorkspaceInspectManifest {
   kind: string;
 }
 
+export interface WorkspaceInspectSymbol {
+  name: string;
+  kind: WorkspaceInspectSymbolKind;
+  path: string;
+  line: number;
+  exported: boolean;
+}
+
+export interface WorkspaceInspectRelationship {
+  from: string;
+  to: string;
+  kind: WorkspaceInspectRelationshipKind;
+}
+
 export interface WorkspaceInspectResult {
   schemaVersion: 1;
   workspaceId: string;
@@ -126,6 +151,8 @@ export interface WorkspaceInspectResult {
   entrypoints: WorkspaceInspectEntrypoint[];
   areas: WorkspaceInspectArea[];
   manifests: WorkspaceInspectManifest[];
+  symbols: WorkspaceInspectSymbol[];
+  relationships: WorkspaceInspectRelationship[];
   warnings: string[];
   truncated: boolean;
 }

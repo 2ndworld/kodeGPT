@@ -36,6 +36,8 @@ describe("native capability public package boundary", () => {
         entrypoints: [],
         areas: [],
         manifests: [],
+        symbols: [],
+        relationships: [],
         warnings: [],
         truncated: false
       })
@@ -125,6 +127,8 @@ describe("native capability public package boundary", () => {
           entrypoints: [],
           areas: [],
           manifests: [],
+          symbols: [],
+          relationships: [],
           warnings: [],
           truncated: false
         },
