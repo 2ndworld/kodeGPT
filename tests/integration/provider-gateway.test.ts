@@ -244,6 +244,13 @@ describe("Provider Gateway conformance boundary", () => {
     expect(PROVIDER_MAX_RESULT_ELEMENTS).toBe(1_000);
     expect(() => createProviderGatewayFixture({ maxProviderRequests: PROVIDER_MAX_REQUESTS + 1 })).toThrow();
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+    expect(PRODUCTION_PROVIDER_MANIFESTS[0]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.repository.inspect",
+      "github.pr.inspect",
+      "github.pr.list",
+      "github.issue.inspect",
+      "github.issue.list"
+    ]);
 
     const names = listSurfaceTools().map(({ name }) => name);
     expect(MCP_SURFACE_VERSION).toBe("0.7");

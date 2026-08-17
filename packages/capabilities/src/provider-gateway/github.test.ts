@@ -71,8 +71,42 @@ function rawPr(overrides: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
+function rawIssue(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    number: 7,
+    title: "Issue read extension",
+    state: "open",
+    user: { login: "octocat" },
+    html_url: "https://github.com/2ndworld/kodeGPT/issues/7",
+    created_at: "2026-08-17T01:00:00Z",
+    updated_at: "2026-08-17T02:00:00Z",
+    closed_at: null,
+    comments: 3,
+    labels: [{ name: "provider" }, { name: "read-only" }],
+    assignees: [{ login: "octocat" }, { login: "hubot" }],
+    body: "must not leak",
+    authorization: "must not leak",
+    ...overrides
+  };
+}
+
 function requestBudget(): ProviderRequestBudget & { claimRequest: ReturnType<typeof vi.fn> } {
   return { claimRequest: vi.fn() };
+}
+
+async function runIssueStatus(statusCode: number) {
+  const transport = new DefaultProviderNetworkTransport({
+    resolver: { lookup: async () => [{ address: "203.0.113.10", family: 4 as const }] },
+    requester: { request: async () => ({ statusCode, headers: {}, body: Buffer.alloc(0) }) }
+  });
+  return transport.request({
+    manifest: GITHUB_READ_PROVIDER_MANIFEST,
+    operationId: "issue.inspect",
+    operationInput: { repository: REPOSITORY, number: 7 },
+    credential: { kind: "bearer", value: "canary" },
+    signal: new AbortController().signal,
+    budget: requestBudget()
+  });
 }
 
 describe("github.read.v1 provider adapter", () => {
@@ -94,7 +128,7 @@ describe("github.read.v1 provider adapter", () => {
     });
   });
 
-  it("compiles exactly three GET operations and exactly three remote-read semantic mappings", () => {
+  it("compiles exactly five GET operations and exactly five remote-read semantic mappings", () => {
     expect(GITHUB_READ_PROVIDER_MANIFEST.operations.map(({ id, method, origin, pathTemplate }) => ({
       id,
       method,
@@ -118,6 +152,18 @@ describe("github.read.v1 provider adapter", () => {
         method: "GET",
         origin: "https://api.github.com",
         pathTemplate: "/repos/{owner}/{repo}/pulls"
+      },
+      {
+        id: "issue.inspect",
+        method: "GET",
+        origin: "https://api.github.com",
+        pathTemplate: "/repos/{owner}/{repo}/issues/{number}"
+      },
+      {
+        id: "issue.list",
+        method: "GET",
+        origin: "https://api.github.com",
+        pathTemplate: "/repos/{owner}/{repo}/issues"
       }
     ]);
 
@@ -152,6 +198,22 @@ describe("github.read.v1 provider adapter", () => {
         workspaceBinding: "NONE",
         maxProviderRequests: 1,
         retry: "none"
+      },
+      {
+        semanticCapabilityId: "github.issue.inspect",
+        adapterOperationId: "issue.inspect",
+        effect: "REMOTE_READ",
+        workspaceBinding: "NONE",
+        maxProviderRequests: 1,
+        retry: "none"
+      },
+      {
+        semanticCapabilityId: "github.issue.list",
+        adapterOperationId: "issue.list",
+        effect: "REMOTE_READ",
+        workspaceBinding: "NONE",
+        maxProviderRequests: 1,
+        retry: "none"
       }
     ]);
   });
@@ -169,6 +231,8 @@ describe("github.read.v1 provider adapter", () => {
     expect(operation("repository.inspect").allowedQueryKeys).toEqual([]);
     expect(operation("pr.inspect").allowedQueryKeys).toEqual([]);
     expect(operation("pr.list").allowedQueryKeys).toEqual(["state", "per_page"]);
+    expect(operation("issue.inspect").allowedQueryKeys).toEqual([]);
+    expect(operation("issue.list").allowedQueryKeys).toEqual(["state", "per_page"]);
   });
 
   it("accepts one bounded owner/name repository and rejects malformed authority-like repository values", () => {
@@ -212,11 +276,33 @@ describe("github.read.v1 provider adapter", () => {
     expect(schema.safeParse({ repository: REPOSITORY, limit: 1.5 }).success).toBe(false);
   });
 
+  it("bounds issue numbers and keeps issue list controls identical to the reviewed PR list pattern", () => {
+    const inspect = mapping("github.issue.inspect").inputSchema;
+    expect(inspect.safeParse({ repository: REPOSITORY, number: 7 }).success).toBe(true);
+    for (const number of [0, -1, 1.5, 2_147_483_648, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(inspect.safeParse({ repository: REPOSITORY, number }).success, String(number)).toBe(false);
+    }
+
+    const list = mapping("github.issue.list").inputSchema;
+    const defaults = list.safeParse({ repository: REPOSITORY });
+    expect(defaults.success).toBe(true);
+    if (!defaults.success) throw new Error("expected issue list defaults to parse");
+    expect(defaults.data).toEqual({ repository: REPOSITORY, state: "open", limit: 30 });
+    expect(list.safeParse({ repository: REPOSITORY, state: "closed", limit: 1 }).success).toBe(true);
+    expect(list.safeParse({ repository: REPOSITORY, state: "all", limit: 50 }).success).toBe(true);
+    expect(list.safeParse({ repository: REPOSITORY, state: "draft" }).success).toBe(false);
+    expect(list.safeParse({ repository: REPOSITORY, limit: 0 }).success).toBe(false);
+    expect(list.safeParse({ repository: REPOSITORY, limit: 51 }).success).toBe(false);
+    expect(list.safeParse({ repository: REPOSITORY, limit: 1.5 }).success).toBe(false);
+  });
+
   it("rejects unknown authority fields before any operation encoder can use them", () => {
     const cases = [
       { semanticCapabilityId: "github.repository.inspect", valid: { repository: REPOSITORY } },
       { semanticCapabilityId: "github.pr.inspect", valid: { repository: REPOSITORY, number: 16 } },
-      { semanticCapabilityId: "github.pr.list", valid: { repository: REPOSITORY, state: "open", limit: 10 } }
+      { semanticCapabilityId: "github.pr.list", valid: { repository: REPOSITORY, state: "open", limit: 10 } },
+      { semanticCapabilityId: "github.issue.inspect", valid: { repository: REPOSITORY, number: 7 } },
+      { semanticCapabilityId: "github.issue.list", valid: { repository: REPOSITORY, state: "open", limit: 10 } }
     ];
     for (const { semanticCapabilityId, valid } of cases) {
       const schema = mapping(semanticCapabilityId).inputSchema;
@@ -237,6 +323,13 @@ describe("github.read.v1 provider adapter", () => {
     expect(operation("pr.list").encodeRequest({ repository: REPOSITORY, state: "closed", limit: 17 })).toEqual({
       pathParameters: { owner: "2ndworld", repo: "kodeGPT" },
       query: { state: "closed", per_page: 17 }
+    });
+    expect(operation("issue.inspect").encodeRequest({ repository: REPOSITORY, number: 7 })).toEqual({
+      pathParameters: { owner: "2ndworld", repo: "kodeGPT", number: "7" }
+    });
+    expect(operation("issue.list").encodeRequest({ repository: REPOSITORY, state: "all", limit: 17 })).toEqual({
+      pathParameters: { owner: "2ndworld", repo: "kodeGPT" },
+      query: { state: "all", per_page: 17 }
     });
   });
 
@@ -275,11 +368,29 @@ describe("github.read.v1 provider adapter", () => {
       signal: new AbortController().signal,
       budget: requestBudget()
     });
+    await transport.request({
+      manifest: GITHUB_READ_PROVIDER_MANIFEST,
+      operationId: "issue.inspect",
+      operationInput: { repository: REPOSITORY, number: 7 },
+      credential,
+      signal: new AbortController().signal,
+      budget: requestBudget()
+    });
+    await transport.request({
+      manifest: GITHUB_READ_PROVIDER_MANIFEST,
+      operationId: "issue.list",
+      operationInput: { repository: REPOSITORY, state: "all", limit: 17 },
+      credential,
+      signal: new AbortController().signal,
+      budget: requestBudget()
+    });
 
     expect(calls.map(({ method, hostname, port, path }) => ({ method, hostname, port, path }))).toEqual([
       { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT" },
       { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/pulls/16" },
-      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/pulls?state=closed&per_page=17" }
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/pulls?state=closed&per_page=17" },
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/issues/7" },
+      { method: "GET", hostname: "api.github.com", port: 443, path: "/repos/2ndworld/kodeGPT/issues?state=all&per_page=17" }
     ]);
     for (const call of calls) {
       expect(call.headers).toMatchObject({
@@ -409,6 +520,131 @@ describe("github.read.v1 provider adapter", () => {
     )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
   });
 
+  it("normalizes issue inspection to reviewed fields and rejects pull request payloads", () => {
+    const value = parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue()
+    );
+    expect(value).toEqual({
+      repository: REPOSITORY,
+      number: 7,
+      title: "Issue read extension",
+      state: "open",
+      authorLogin: "octocat",
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/issues/7",
+      createdAt: "2026-08-17T01:00:00Z",
+      updatedAt: "2026-08-17T02:00:00Z",
+      closedAt: null,
+      commentsCount: 3,
+      labels: ["provider", "read-only"],
+      assigneeLogins: ["octocat", "hubot"]
+    });
+    expect(JSON.stringify(value)).not.toContain("body");
+    expect(JSON.stringify(value)).not.toContain("authorization");
+
+    expect(() => parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue({ pull_request: { url: "https://api.github.com/repos/2ndworld/kodeGPT/pulls/7" } })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+    expect(() => parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue({ number: 8 })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+  });
+
+  it("filters pull requests from issue lists without refilling and preserves bounded issue results", () => {
+    const value = parseSemanticOutput(
+      "github.issue.list",
+      { repository: REPOSITORY, state: "all", limit: 3 },
+      [
+        rawIssue(),
+        rawIssue({
+          number: 8,
+          html_url: "https://github.com/2ndworld/kodeGPT/pull/8",
+          pull_request: { url: "https://api.github.com/repos/2ndworld/kodeGPT/pulls/8" }
+        }),
+        rawIssue({
+          number: 9,
+          title: "Second issue",
+          html_url: "https://github.com/2ndworld/kodeGPT/issues/9",
+          user: null,
+          assignees: []
+        })
+      ]
+    );
+    expect(value).toEqual({
+      repository: REPOSITORY,
+      items: [
+        {
+          number: 7,
+          title: "Issue read extension",
+          state: "open",
+          authorLogin: "octocat",
+          htmlUrl: "https://github.com/2ndworld/kodeGPT/issues/7",
+          createdAt: "2026-08-17T01:00:00Z",
+          updatedAt: "2026-08-17T02:00:00Z",
+          closedAt: null,
+          commentsCount: 3,
+          labels: ["provider", "read-only"],
+          assigneeLogins: ["octocat", "hubot"]
+        },
+        {
+          number: 9,
+          title: "Second issue",
+          state: "open",
+          authorLogin: null,
+          htmlUrl: "https://github.com/2ndworld/kodeGPT/issues/9",
+          createdAt: "2026-08-17T01:00:00Z",
+          updatedAt: "2026-08-17T02:00:00Z",
+          closedAt: null,
+          commentsCount: 3,
+          labels: ["provider", "read-only"],
+          assigneeLogins: []
+        }
+      ]
+    });
+    expect(parseSemanticOutput(
+      "github.issue.list",
+      { repository: REPOSITORY, limit: 5 },
+      []
+    )).toEqual({ repository: REPOSITORY, items: [] });
+  });
+
+  it("rejects issue list over-limit responses and bounds labels and assignees", () => {
+    expect(() => parseSemanticOutput(
+      "github.issue.list",
+      { repository: REPOSITORY, limit: 1 },
+      [rawIssue(), rawIssue({ number: 9, html_url: "https://github.com/2ndworld/kodeGPT/issues/9" })]
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+
+    const twentyLabels = Array.from({ length: 20 }, (_, index) => ({ name: `label-${index}` }));
+    const twentyAssignees = Array.from({ length: 20 }, (_, index) => ({ login: `user-${index}` }));
+    expect(() => parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue({ labels: twentyLabels, assignees: twentyAssignees })
+    )).not.toThrow();
+    expect(() => parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue({ labels: [...twentyLabels, { name: "label-20" }] })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+    expect(() => parseSemanticOutput(
+      "github.issue.inspect",
+      { repository: REPOSITORY, number: 7 },
+      rawIssue({ assignees: [...twentyAssignees, { login: "user-20" }] })
+    )).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
+  });
+
+  it("reuses existing provider HTTP error mapping for issue inspection", async () => {
+    await expect(runIssueStatus(404)).rejects.toMatchObject({ code: "PROVIDER_REQUEST_FAILED" });
+    await expect(runIssueStatus(401)).rejects.toMatchObject({ code: "PROVIDER_CREDENTIAL_REJECTED" });
+    await expect(runIssueStatus(429)).rejects.toMatchObject({ code: "PROVIDER_RATE_LIMITED" });
+  });
+
   it("rejects repository inspection responses for a different repository", () => {
     expect(() => parseSemanticOutput("github.repository.inspect", { repository: REPOSITORY }, {
       full_name: "other/repo",
@@ -426,13 +662,15 @@ describe("github.read.v1 provider adapter", () => {
     })).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
   });
 
-  it("registers the three mappings and rejects unknown GitHub semantic operations", () => {
+  it("registers the five mappings and rejects unknown GitHub semantic operations", () => {
     const registry = new ProviderAdapterRegistry([GITHUB_READ_PROVIDER_MANIFEST]);
     expect(registry.list().map((candidate) => candidate.adapterId)).toEqual(["github.read.v1"]);
     expect(registry.requireMapping("github.repository.inspect").adapterOperationId).toBe("repository.inspect");
     expect(registry.requireMapping("github.pr.inspect").adapterOperationId).toBe("pr.inspect");
     expect(registry.requireMapping("github.pr.list").adapterOperationId).toBe("pr.list");
-    expect(() => registry.requireMapping("github.issue.inspect")).toThrowError(
+    expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
+    expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
+    expect(() => registry.requireMapping("github.issue.create")).toThrowError(
       expect.objectContaining({ code: "PROVIDER_TOOL_UNAVAILABLE" })
     );
   });
