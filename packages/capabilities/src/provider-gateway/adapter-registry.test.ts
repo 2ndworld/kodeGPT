@@ -77,8 +77,11 @@ function mutationManifest(overrides: Partial<ProviderAdapterManifest> = {}): Pro
 }
 
 describe("ProviderAdapterRegistry", () => {
-  it("ships exactly the reviewed GitHub read adapter in the production manifest inventory", () => {
-    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+  it("ships separate reviewed GitHub read and write adapters in production", () => {
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
+      "github.read.v1",
+      "github.write.v1"
+    ]);
     expect(Object.isFrozen(PRODUCTION_PROVIDER_MANIFESTS)).toBe(true);
     const registry = new ProviderAdapterRegistry(PRODUCTION_PROVIDER_MANIFESTS);
     expect(registry.require("github.read.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
@@ -88,8 +91,14 @@ describe("ProviderAdapterRegistry", () => {
       "github.issue.inspect",
       "github.issue.list"
     ]);
+    expect(registry.require("github.write.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.pr.create",
+      "github.pr.merge"
+    ]);
     expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
     expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
+    expect(registry.requireMapping("github.pr.create").adapterOperationId).toBe("pr.create");
+    expect(registry.requireMapping("github.pr.merge").adapterOperationId).toBe("pr.merge");
   });
 
   it("resolves a compiled manifest and semantic mapping", () => {

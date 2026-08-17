@@ -7,9 +7,11 @@ import {
   type ProviderSemanticMappingDefinition
 } from "./contracts.js";
 import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
+import { GITHUB_WRITE_PROVIDER_MANIFEST } from "./github-write.js";
 
 export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([
-  GITHUB_READ_PROVIDER_MANIFEST
+  GITHUB_READ_PROVIDER_MANIFEST,
+  GITHUB_WRITE_PROVIDER_MANIFEST
 ]);
 
 export class ProviderAdapterRegistry {

@@ -55,7 +55,7 @@ function mutationManifest(): ProviderAdapterManifest {
     credentialBroker: { kind: "none" },
     operations: [{
       id: "record.mutate",
-      method: "PUT" as never,
+      method: "PUT",
       origin: "https://fixture.example",
       pathTemplate: "/records/{id}",
       allowedQueryKeys: [],
@@ -67,7 +67,7 @@ function mutationManifest(): ProviderAdapterManifest {
       semanticCapabilityId: "test.fixture.record.mutate",
       adapterId: "test.fixture.write.v1",
       adapterOperationId: "record.mutate",
-      effect: "REMOTE_MUTATION" as never,
+      effect: "REMOTE_MUTATION",
       workspaceBinding: "NONE",
       inputSchema: z.object({ id: z.string() }).strict(),
       outputSchema: z.object({ ok: z.literal(true) }).strict(),
