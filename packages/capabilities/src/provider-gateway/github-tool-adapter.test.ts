@@ -149,9 +149,10 @@ function requireFactory(): (runtime: unknown) => {
 }
 
 describe("GitHubReadToolAdapter", () => {
-  it("is exported as the concrete typed bridge instead of a generic provider invoker", () => {
+  it("exports only the concrete typed bridge/contracts instead of provider control internals", () => {
     expect(adapterFactory()).toBeTypeOf("function");
     expect((providerGateway as Record<string, unknown>).providerInvoke).toBeUndefined();
+    expect((providerGateway as Record<string, unknown>).GITHUB_READ_PROVIDER_MANIFEST).toBeUndefined();
   });
 
   it("routes all five fixed semantics through the one enabled github.read.v1 provider and returns only normalized values", async () => {
