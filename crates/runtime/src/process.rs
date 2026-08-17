@@ -960,6 +960,43 @@ mod tests {
     }
 
     #[test]
+    fn trusted_process_can_run_one_nested_bubblewrap_while_develop_stays_userns_disabled() {
+        let workspace = temporary_root("nested-userns-workspace");
+        let trusted_state = temporary_root("nested-userns-trusted-state");
+        let develop_state = temporary_root("nested-userns-develop-state");
+        let nested_bwrap = "bwrap --unshare-user --uid 0 --gid 0 --proc /proc --dev /dev --ro-bind /usr /usr -- /usr/bin/true";
+
+        let trusted = run_bash_with_state(
+            &workspace,
+            &trusted_state,
+            trusted_toolchain_fallback_policy(),
+            nested_bwrap,
+        );
+        assert_eq!(
+            trusted.exit_code,
+            Some(0),
+            "trusted nested Bubblewrap must work: {}",
+            trusted.stderr_preview
+        );
+
+        let develop = run_bash_with_state(
+            &workspace,
+            &develop_state,
+            develop_cargo_state_policy(),
+            nested_bwrap,
+        );
+        assert_ne!(
+            develop.exit_code,
+            Some(0),
+            "develop must keep nested user namespaces disabled"
+        );
+
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(trusted_state).expect("trusted state cleanup");
+        fs::remove_dir_all(develop_state).expect("develop state cleanup");
+    }
+
+    #[test]
     fn trusted_node_process_can_compose_validated_rust_toolchain_without_host_path() {
         let node_root = temporary_root("trusted-node-root");
         let rust_root = temporary_root("trusted-rust-root");
