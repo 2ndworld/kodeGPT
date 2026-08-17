@@ -544,6 +544,10 @@ mod tests {
             args.windows(3)
                 .any(|window| window == ["--ro-bind-fd", "9", "/run/systemd/resolve"])
         );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "KODEGPT_SANDBOX", "1"])
+        );
         assert!(!args.windows(3).any(|window| {
             matches!(window, [flag, source, target] if flag == "--ro-bind" && source == "/run" && target == "/run")
         }));

@@ -509,6 +509,16 @@ mod tests {
     }
 
     #[test]
+    fn remapped_system_owner_is_trusted_only_for_read_only_kodegpt_sandbox_view() {
+        assert!(super::system_owner_is_trusted(0, Some(65534), false, false));
+        assert!(super::system_owner_is_trusted(65534, Some(65534), true, true));
+        assert!(!super::system_owner_is_trusted(65534, Some(65534), false, true));
+        assert!(!super::system_owner_is_trusted(65534, Some(65534), true, false));
+        assert!(!super::system_owner_is_trusted(1000, Some(65534), true, true));
+        assert!(!super::system_owner_is_trusted(65534, None, true, true));
+    }
+
+    #[test]
     fn parses_bubblewrap_version_triplet() {
         assert_eq!(
             parse_bubblewrap_version("bubblewrap 0.11.2\n"),
