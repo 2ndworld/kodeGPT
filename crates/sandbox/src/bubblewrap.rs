@@ -19,6 +19,7 @@ use crate::executable::{
 
 const CHILD_COREPACK_HOME: &str = "/opt/kodegpt-corepack";
 const CHILD_HOME: &str = "/home/kodegpt";
+const CHILD_CARGO_HOME: &str = "/home/kodegpt/.cargo";
 const CHILD_TOOL_ROOT: &str = "/opt/kodegpt-toolchain";
 const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
@@ -49,6 +50,7 @@ pub struct SandboxLaunchSpec {
     pub cwd: PathBuf,
     pub network: SandboxNetworkMode,
     pub workspace_access: WorkspaceAccess,
+    pub cargo_home: Option<PathBuf>,
 }
 
 impl SandboxLaunchSpec {
@@ -61,6 +63,7 @@ impl SandboxLaunchSpec {
             cwd: PathBuf::from(CHILD_WORKSPACE),
             network: SandboxNetworkMode::Deny,
             workspace_access: WorkspaceAccess::ReadOnly,
+            cargo_home: None,
         }
     }
 }
@@ -199,6 +202,16 @@ impl BubblewrapProvider {
             fcntl_setfd(root_fd, FdFlags::empty())
                 .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
         }
+        let cargo_home_mount = spec
+            .cargo_home
+            .as_ref()
+            .map(fs::File::open)
+            .transpose()?
+            .map(OwnedFd::from);
+        if let Some(root_fd) = &cargo_home_mount {
+            fcntl_setfd(root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
         let (status_reader, status_writer) = UnixStream::pair()?;
         status_reader.set_read_timeout(Some(Duration::from_secs(3)))?;
         fcntl_setfd(&status_writer, FdFlags::empty())
@@ -210,6 +223,7 @@ impl BubblewrapProvider {
             &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
             resolver_mount.as_ref().map(AsRawFd::as_raw_fd),
+            cargo_home_mount.as_ref().map(AsRawFd::as_raw_fd),
             spec,
         )?;
         self.executable.revalidate()?;
@@ -252,6 +266,7 @@ impl BubblewrapProvider {
         explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
         resolver_fd: Option<i32>,
+        cargo_home_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
         if matches!(
@@ -314,6 +329,15 @@ impl BubblewrapProvider {
             "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--chmod", "01777", "/tmp",
             "--dir", "/home", "--dir", CHILD_HOME, "--chmod", "0700", CHILD_HOME,
         ]);
+        if let Some(cargo_home_fd) = cargo_home_fd {
+            command.args([
+                "--dir",
+                CHILD_CARGO_HOME,
+                "--bind-fd",
+                &cargo_home_fd.to_string(),
+                CHILD_CARGO_HOME,
+            ]);
+        }
 
         if !explicit_mounts.is_empty() {
             command.args(["--dir", "/opt"]);
@@ -504,7 +528,7 @@ mod tests {
         );
         spec.network = SandboxNetworkMode::Unrestricted;
         let command = provider
-            .build_command(3, None, &[], None, Some(9), &spec)
+            .build_command(3, None, &[], None, Some(9), None, &spec)
             .expect("unrestricted command construction");
         let args = command
             .get_args()
@@ -742,7 +766,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, &[], None, None, &spec),
+                provider.build_command(3, None, &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

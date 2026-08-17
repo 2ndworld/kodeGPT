@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -241,8 +243,13 @@ pub fn next_process_operation_id() -> String {
     format!("op_{sequence:016x}")
 }
 
+fn managed_cargo_home(state_root: &Path) -> PathBuf {
+    state_root.join("tool-state").join("cargo-home")
+}
+
 pub fn run_process(
     workspace_root: OwnedFd,
+    state_root: &Path,
     workspace_capability: String,
     request_id: String,
     operation_id: String,
@@ -272,6 +279,22 @@ pub fn run_process(
             {
                 spec.auxiliary_programs.push(auxiliary);
             }
+        }
+        if policy
+            .allowed_executable_names
+            .iter()
+            .any(|name| matches!(name.as_str(), "cargo" | "rustc"))
+        {
+            let cargo_home = managed_cargo_home(state_root);
+            fs::create_dir_all(&cargo_home)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?;
+            let mut permissions = fs::metadata(&cargo_home)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?
+                .permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&cargo_home, permissions)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?;
+            spec.cargo_home = Some(cargo_home);
         }
     }
     spec.args = request.argv.into_iter().map(OsString::from).collect();
@@ -763,6 +786,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            state,
             "kc_process_fixture".to_owned(),
             "req_process_fixture".to_owned(),
             super::next_process_operation_id(),
@@ -879,7 +903,12 @@ mod tests {
             trusted_cargo_state_policy(),
             &format!("printf 'persistent-cargo-state\\n' > \"$HOME/.cargo/{marker}\""),
         );
-        assert_eq!(first.state, ProcessState::Completed, "{}", first.stderr_preview);
+        assert_eq!(
+            first.state,
+            ProcessState::Completed,
+            "{}",
+            first.stderr_preview
+        );
         assert_eq!(first.exit_code, Some(0), "{}", first.stderr_preview);
 
         let second = run_bash_with_state(
@@ -919,7 +948,12 @@ mod tests {
             develop_cargo_state_policy(),
             "test ! -e \"$HOME/.cargo/kodegpt-develop-marker\"",
         );
-        assert_eq!(view.state, ProcessState::Completed, "{}", view.stderr_preview);
+        assert_eq!(
+            view.state,
+            ProcessState::Completed,
+            "{}",
+            view.stderr_preview
+        );
         assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
         fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");
@@ -1030,6 +1064,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            &state,
             "kc_toolchain_fallback_fixture".to_owned(),
             "req_toolchain_fallback_fixture".to_owned(),
             next_process_operation_id(),
@@ -1076,6 +1111,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            &state,
             "kc_toolchain_fixture".to_owned(),
             "req_toolchain_fixture".to_owned(),
             next_process_operation_id(),
@@ -1258,6 +1294,7 @@ mod tests {
 
         let result = run_process(
             root_fd,
+            &state,
             "kc_process_fixture".to_owned(),
             "req_process_poison".to_owned(),
             next_process_operation_id(),
