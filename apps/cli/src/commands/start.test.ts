@@ -235,8 +235,9 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
-  it("keeps Provider Gateway private and idle while wiring audit and workspace authority", async () => {
+  it("keeps Provider Gateway private and startup-idle while wiring the concrete GitHub read context", async () => {
     const events: string[] = [];
+    const providerExecutions: Array<Record<string, unknown>> = [];
     const deps = dependencies(events);
     const originalCreateManagers = deps.createManagers;
     deps.createManagers = (options) => {
@@ -253,10 +254,42 @@ describe("kodegpt start orchestration", () => {
       events.push("provider-runtime");
       providerInput = input;
       return {
+        operator: {
+          list: async () => [{
+            providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
+            adapterId: "github.read.v1",
+            enabled: true
+          }]
+        },
+        gateway: {
+          execute: async (execution: Record<string, unknown>) => {
+            providerExecutions.push(structuredClone(execution));
+            return {
+              semanticCapabilityId: execution.semanticCapabilityId,
+              providerInstanceId: execution.providerInstanceId,
+              value: {
+                repository: "2ndworld/kodeGPT",
+                name: "kodeGPT",
+                owner: "2ndworld",
+                description: "KodeGPT",
+                private: false,
+                defaultBranch: "main",
+                archived: false,
+                fork: false,
+                htmlUrl: "https://github.com/2ndworld/kodeGPT",
+                createdAt: "2026-08-01T00:00:00Z",
+                updatedAt: "2026-08-17T00:00:00Z",
+                pushedAt: "2026-08-17T00:00:00Z"
+              },
+              truncated: false,
+              truncationReasons: []
+            };
+          }
+        },
         close: async () => {
           events.push("provider.close");
         }
-      };
+      } as never;
     };
 
     const stack = await createProductionServiceStack(
@@ -266,14 +299,27 @@ describe("kodegpt start orchestration", () => {
     try {
       expect(events).toContain("provider-runtime");
       expect(events).not.toContain("provider.audit");
+      expect(providerExecutions).toEqual([]);
       expect(Object.keys(stack)).not.toContain("providerRuntime");
       expect(Object.keys(stack.toolContext)).not.toContain("provider");
+      expect(Object.keys(stack.toolContext)).toContain("github");
       expect(providerInput!.manifests.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
       expect(providerInput!.workspaceRoots()).toEqual(["/workspace"]);
       await expect(providerInput!.workspaceAuthority.resolve("ws_test")).resolves.toEqual({
         workspaceId: "ws_test",
         network: "unrestricted"
       });
+      await expect(stack.toolContext.github.repositoryInspect({ repository: "2ndworld/kodeGPT" })).resolves.toMatchObject({
+        repository: "2ndworld/kodeGPT",
+        defaultBranch: "main"
+      });
+      expect(providerExecutions).toEqual([
+        {
+          semanticCapabilityId: "github.repository.inspect",
+          providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
+          input: { repository: "2ndworld/kodeGPT" }
+        }
+      ]);
       await providerInput!.audit.record({
         operationId: "op_test",
         operation: "execute",

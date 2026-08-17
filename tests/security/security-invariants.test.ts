@@ -17,7 +17,10 @@ import {
   PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS,
   PROVIDER_OPERATION_TIMEOUT_MS
 } from "../../packages/capabilities/src/index.js";
-import { READ_ONLY_TOOL_ANNOTATIONS } from "../../packages/mcp-server/src/annotations.js";
+import {
+  READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+} from "../../packages/mcp-server/src/annotations.js";
 import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
 import {
   analyzeSkillCompatibility,
@@ -168,10 +171,10 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust and bounded Git surface with no generic authority or execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.7");
+  it("ships only the intended typed trust, Git, and GitHub read surface with no generic authority or execution tools", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.8");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(51);
+    expect(names).toHaveLength(56);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
     expect(PROVIDER_CREDENTIAL_TIMEOUT_MS).toBe(5_000);
@@ -195,6 +198,11 @@ describe("full security acceptance invariants", () => {
       "git.fetch",
       "git.pull",
       "git.push",
+      "github.repository.inspect",
+      "github.pr.inspect",
+      "github.pr.list",
+      "github.issue.inspect",
+      "github.issue.list",
       "verify.list",
       "verify.run",
       "file.patch",
@@ -232,6 +240,15 @@ describe("full security acceptance invariants", () => {
       "provider.list",
       "provider.tools",
       "provider.invoke",
+      "github.issue.create",
+      "github.issue.update",
+      "github.issue.comment",
+      "github.pr.create",
+      "github.pr.update",
+      "github.pr.merge",
+      "github.label.create",
+      "github.label.update",
+      "github.label.delete",
       "git.run",
       "git.exec",
       "git.command",
@@ -253,6 +270,15 @@ describe("full security acceptance invariants", () => {
     );
     for (const name of ["skill.list", "skill.inspect", "skill.load"]) {
       expect(registrations.get(name)?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    }
+    for (const name of [
+      "github.repository.inspect",
+      "github.pr.inspect",
+      "github.pr.list",
+      "github.issue.inspect",
+      "github.issue.list"
+    ]) {
+      expect(registrations.get(name)?.annotations).toEqual(REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS);
     }
   });
 });

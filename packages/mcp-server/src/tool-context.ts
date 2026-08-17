@@ -32,6 +32,7 @@ import type {
   GitRangeResult,
   GitDiffHistoryInput,
   GitDiffHistoryResult,
+  GitHubReadToolAdapter,
   VerifyListInput,
   VerifyListResult,
   VerifyRunInput,
@@ -202,6 +203,8 @@ export interface CiToolContext {
   failure(input: CiFailureInput): Promise<CiFailureResult>;
 }
 
+export interface GitHubToolContext extends GitHubReadToolAdapter {}
+
 export interface SkillToolContext {
   list(input: {
     limit?: number;
@@ -232,6 +235,7 @@ export interface KodegptToolContext {
   verify: VerifyToolContext;
   context: ContextToolContext;
   ci: CiToolContext;
+  github: GitHubToolContext;
   skill: SkillToolContext;
 }
 
@@ -303,6 +307,7 @@ export function createKodegptToolContext(options: {
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
   remoteCi?: CiToolContext;
+  githubRead?: GitHubReadToolAdapter;
   skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
@@ -310,6 +315,7 @@ export function createKodegptToolContext(options: {
 }): KodegptToolContext {
   const native = options.nativeCapabilities ?? unavailableNativeCapabilities();
   const remoteCi = options.remoteCi ?? unavailableRemoteCi();
+  const githubRead = options.githubRead ?? unavailableGitHubRead();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -406,6 +412,7 @@ export function createKodegptToolContext(options: {
       run: (input) => remoteCi.run(input),
       failure: (input) => remoteCi.failure(input)
     },
+    github: githubRead,
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
@@ -445,6 +452,16 @@ function unavailableRemoteCi(): CiToolContext {
     runs: () => unavailable("ci.runs"),
     run: () => unavailable("ci.run"),
     failure: () => unavailable("ci.failure")
+  };
+}
+
+function unavailableGitHubRead(): GitHubReadToolAdapter {
+  return {
+    repositoryInspect: () => unavailable("github.repository.inspect"),
+    prInspect: () => unavailable("github.pr.inspect"),
+    prList: () => unavailable("github.pr.list"),
+    issueInspect: () => unavailable("github.issue.inspect"),
+    issueList: () => unavailable("github.issue.list")
   };
 }
 

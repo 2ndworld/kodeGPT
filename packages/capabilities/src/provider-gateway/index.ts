@@ -13,3 +13,28 @@ export * from "./lifecycle.js";
 export * from "./operator-service.js";
 export * from "./service.js";
 export * from "./production.js";
+export {
+  GitHubRepositoryInspectInputSchema,
+  GitHubRepositoryInspectResultSchema,
+  GitHubPrInspectInputSchema,
+  GitHubPrInspectResultSchema,
+  GitHubPrListInputSchema,
+  GitHubPrListResultSchema,
+  GitHubIssueInspectInputSchema,
+  GitHubIssueInspectResultSchema,
+  GitHubIssueListInputSchema,
+  GitHubIssueListResultSchema
+} from "./github.js";
+export type {
+  GitHubRepositoryInspectInput,
+  GitHubRepositoryInspectResult,
+  GitHubPrInspectInput,
+  GitHubPrInspectResult,
+  GitHubPrListInput,
+  GitHubPrListResult,
+  GitHubIssueInspectInput,
+  GitHubIssueInspectResult,
+  GitHubIssueListInput,
+  GitHubIssueListResult
+} from "./github.js";
+export * from "./github-tool-adapter.js";

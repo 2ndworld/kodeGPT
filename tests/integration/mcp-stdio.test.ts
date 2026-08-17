@@ -254,7 +254,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel") {
           expect(tool.annotations).toEqual(processCancelAnnotations);
-        } else if (tool.name.startsWith("ci.")) {
+        } else if (tool.name.startsWith("ci.") || tool.name.startsWith("github.")) {
           expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
         } else {
           expect(tool.annotations).toEqual(readOnlyAnnotations);
