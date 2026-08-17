@@ -195,6 +195,29 @@ const IssueListOutputSchema = z.object({
   items: z.array(IssueItemOutputSchema).max(GITHUB_ISSUE_LIST_LIMIT_MAX)
 }).strict();
 
+export const GITHUB_READ_PROVIDER_ADAPTER_ID = GITHUB_ADAPTER_ID;
+export const GitHubRepositoryInspectInputSchema = RepositoryInspectInputSchema;
+export const GitHubRepositoryInspectResultSchema = RepositoryInspectOutputSchema;
+export const GitHubPrInspectInputSchema = PrInspectInputSchema;
+export const GitHubPrInspectResultSchema = PrInspectOutputSchema;
+export const GitHubPrListInputSchema = PrListInputSchema;
+export const GitHubPrListResultSchema = PrListOutputSchema;
+export const GitHubIssueInspectInputSchema = IssueInspectInputSchema;
+export const GitHubIssueInspectResultSchema = IssueInspectOutputSchema;
+export const GitHubIssueListInputSchema = IssueListInputSchema;
+export const GitHubIssueListResultSchema = IssueListOutputSchema;
+
+export type GitHubRepositoryInspectInput = z.infer<typeof GitHubRepositoryInspectInputSchema>;
+export type GitHubRepositoryInspectResult = z.infer<typeof GitHubRepositoryInspectResultSchema>;
+export type GitHubPrInspectInput = z.infer<typeof GitHubPrInspectInputSchema>;
+export type GitHubPrInspectResult = z.infer<typeof GitHubPrInspectResultSchema>;
+export type GitHubPrListInput = z.input<typeof GitHubPrListInputSchema>;
+export type GitHubPrListResult = z.infer<typeof GitHubPrListResultSchema>;
+export type GitHubIssueInspectInput = z.infer<typeof GitHubIssueInspectInputSchema>;
+export type GitHubIssueInspectResult = z.infer<typeof GitHubIssueInspectResultSchema>;
+export type GitHubIssueListInput = z.input<typeof GitHubIssueListInputSchema>;
+export type GitHubIssueListResult = z.infer<typeof GitHubIssueListResultSchema>;
+
 const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   adapterId: GITHUB_ADAPTER_ID,
   adapterContractVersion: GITHUB_ADAPTER_CONTRACT_VERSION,

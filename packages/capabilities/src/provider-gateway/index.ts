@@ -13,3 +13,5 @@ export * from "./lifecycle.js";
 export * from "./operator-service.js";
 export * from "./service.js";
 export * from "./production.js";
+export * from "./github.js";
+export * from "./github-tool-adapter.js";
