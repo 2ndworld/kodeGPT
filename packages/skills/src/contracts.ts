@@ -260,6 +260,29 @@ export interface SkillCapabilityGuidanceStep {
   readonly purpose: string;
 }
 
+export type SkillExternalCliStatus =
+  | "available"
+  | "not-allowed"
+  | "not-installed"
+  | "sandbox-unavailable";
+
+export interface SkillExternalCliResolution {
+  readonly requirement: string;
+  readonly executable: string;
+  readonly status: SkillExternalCliStatus;
+  readonly capability: "process.run";
+}
+
+export interface SkillCapabilityRuntimeContext {
+  readonly workspaceId: string;
+  readonly allowProcess: boolean;
+  readonly allowedExecutableNames: readonly string[];
+  inspectExecutable(executable: string): Promise<{
+    executableAvailable: boolean;
+    sandboxAvailable: boolean;
+  }>;
+}
+
 export type SkillCapabilityPlanTruncationReason =
   | "MISSING_CAPABILITIES"
   | "EXTERNAL_REQUIREMENTS"
@@ -273,6 +296,7 @@ export interface SkillCapabilityPlan {
   readonly externalRequirements: readonly string[];
   readonly blockedSemantics: readonly string[];
   readonly guidance: readonly SkillCapabilityGuidanceStep[];
+  readonly externalCliRequirements?: readonly SkillExternalCliResolution[];
   readonly truncated: boolean;
   readonly truncationReasons: readonly SkillCapabilityPlanTruncationReason[];
 }
