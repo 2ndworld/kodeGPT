@@ -33,6 +33,20 @@ export const REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
   openWorldHint: true
 });
 
+export const REMOTE_CI_MUTATION_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
+export const REMOTE_CI_CANCEL_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
 export const REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
   readOnlyHint: true,
   destructiveHint: false,

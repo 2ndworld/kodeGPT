@@ -8,7 +8,14 @@ const REPOSITORY = { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kod
 
 class FakeHttp {
   responses: unknown[] = [];
-  calls: Array<{ kind: "json" | "log"; path: string; query?: string; maxBytes?: number }> = [];
+  calls: Array<{
+    kind: "json" | "log" | "mutation";
+    path: string;
+    query?: string;
+    maxBytes?: number;
+    expectedStatus?: 200 | 201 | 202;
+    body?: Record<string, unknown>;
+  }> = [];
   logResult: GitHubLogRead = {
     bytes: new TextEncoder().encode("log"),
     truncated: false,
@@ -25,6 +32,19 @@ class FakeHttp {
   async getJobLog(path: string, maxBytes: number): Promise<GitHubLogRead> {
     this.calls.push({ kind: "log", path, maxBytes });
     return this.logResult;
+  }
+
+  async postMutation(
+    path: string,
+    expectedStatus: 200 | 201 | 202,
+    body?: Record<string, unknown>
+  ): Promise<void> {
+    this.calls.push({
+      kind: "mutation",
+      path,
+      expectedStatus,
+      ...(body === undefined ? {} : { body })
+    });
   }
 }
 
@@ -347,6 +367,39 @@ describe("GitHubRemoteCiAdapter", () => {
         kind: "log",
         path: "/repos/2ndworld/kodeGPT/actions/jobs/20/logs",
         maxBytes: 512 * 1024
+      }
+    ]);
+  });
+
+  it("uses only fixed typed GitHub Actions mutation endpoints", async () => {
+    const http = new FakeHttp();
+    const adapter = new GitHubRemoteCiAdapter({ http }) as GitHubRemoteCiAdapter & {
+      rerun(input: { repository: typeof REPOSITORY; runId: string; failedOnly: boolean }): Promise<{ providerRequests: 1 }>;
+      cancel(input: { repository: typeof REPOSITORY; runId: string }): Promise<{ providerRequests: 1 }>;
+      dispatch(input: {
+        repository: typeof REPOSITORY;
+        workflow: string;
+        ref: string;
+        inputs?: Record<string, string>;
+      }): Promise<{ providerRequests: 1 }>;
+    };
+
+    await expect(adapter.rerun({ repository: REPOSITORY, runId: "10", failedOnly: false })).resolves.toEqual({ providerRequests: 1 });
+    await expect(adapter.rerun({ repository: REPOSITORY, runId: "10", failedOnly: true })).resolves.toEqual({ providerRequests: 1 });
+    await expect(adapter.cancel({ repository: REPOSITORY, runId: "10" })).resolves.toEqual({ providerRequests: 1 });
+    await expect(
+      adapter.dispatch({ repository: REPOSITORY, workflow: "ci.yml", ref: "main", inputs: { target: "smoke" } })
+    ).resolves.toEqual({ providerRequests: 1 });
+
+    expect(http.calls).toEqual([
+      { kind: "mutation", path: "/repos/2ndworld/kodeGPT/actions/runs/10/rerun", expectedStatus: 201 },
+      { kind: "mutation", path: "/repos/2ndworld/kodeGPT/actions/runs/10/rerun-failed-jobs", expectedStatus: 201 },
+      { kind: "mutation", path: "/repos/2ndworld/kodeGPT/actions/runs/10/cancel", expectedStatus: 202 },
+      {
+        kind: "mutation",
+        path: "/repos/2ndworld/kodeGPT/actions/workflows/ci.yml/dispatches",
+        expectedStatus: 200,
+        body: { ref: "main", inputs: { target: "smoke" } }
       }
     ]);
   });

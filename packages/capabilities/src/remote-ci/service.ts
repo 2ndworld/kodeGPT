@@ -18,13 +18,17 @@ import {
   MAX_CI_STATUS_FAILURE_SUMMARIES,
   MAX_CI_STATUS_SUMMARIES,
   type CiAnnotation,
+  type CiCancelInput,
+  type CiDispatchInput,
   type CiFailureInput,
   type CiFailureResult,
   type CiFailureSummary,
   type CiJobSummary,
+  type CiMutationResult,
   type CiOverallState,
   type CiRepositoryInput,
   type CiRepositoryResult,
+  type CiRerunInput,
   type CiRunInput,
   type CiRunResult,
   type CiRunsInput,
@@ -40,9 +44,13 @@ import { redactCiText } from "./redaction.js";
 import { fitCiResult, utf8Prefix } from "./response-budget.js";
 import type { ResolvedCiRepository } from "./repository-resolver.js";
 import {
+  CiCancelInputSchema,
+  CiDispatchInputSchema,
   CiFailureInputSchema,
   CiFailureResultSchema,
+  CiMutationResultSchema,
   CiRepositoryInputSchema,
+  CiRerunInputSchema,
   CiRepositoryResultSchema,
   CiRunInputSchema,
   CiRunResultSchema,
@@ -152,6 +160,52 @@ export class RemoteCiService {
       await this.#failed(operation, normalized, credentialSource);
       throw normalized;
     }
+  }
+
+  async rerun(input: CiRerunInput): Promise<CiMutationResult> {
+    const parsed = parseInput(CiRerunInputSchema, input);
+    const failedOnly = parsed.failedOnly ?? false;
+    return this.#mutation({
+      capability: "ci.rerun",
+      budget: "rerun",
+      workspaceId: parsed.workspaceId,
+      runId: parsed.runId,
+      operation: failedOnly ? "rerun_failed" : "rerun",
+      target: { kind: "run", runId: parsed.runId },
+      invoke: (adapter, repository) =>
+        adapter.rerun({ repository, runId: parsed.runId, failedOnly })
+    });
+  }
+
+  async cancel(input: CiCancelInput): Promise<CiMutationResult> {
+    const parsed = parseInput(CiCancelInputSchema, input);
+    return this.#mutation({
+      capability: "ci.cancel",
+      budget: "cancel",
+      workspaceId: parsed.workspaceId,
+      runId: parsed.runId,
+      operation: "cancel",
+      target: { kind: "run", runId: parsed.runId },
+      invoke: (adapter, repository) => adapter.cancel({ repository, runId: parsed.runId })
+    });
+  }
+
+  async dispatch(input: CiDispatchInput): Promise<CiMutationResult> {
+    const parsed = parseInput(CiDispatchInputSchema, input);
+    return this.#mutation({
+      capability: "ci.dispatch",
+      budget: "dispatch",
+      workspaceId: parsed.workspaceId,
+      operation: "dispatch",
+      target: { kind: "workflow", workflow: parsed.workflow, ref: parsed.ref },
+      invoke: (adapter, repository) =>
+        adapter.dispatch({
+          repository,
+          workflow: parsed.workflow,
+          ref: parsed.ref,
+          ...(parsed.inputs === undefined ? {} : { inputs: parsed.inputs })
+        })
+    });
   }
 
   async status(input: CiStatusInput): Promise<CiStatusResult> {
@@ -439,6 +493,53 @@ export class RemoteCiService {
     }
   }
 
+  async #mutation(input: {
+    capability: "ci.rerun" | "ci.cancel" | "ci.dispatch";
+    budget: "rerun" | "cancel" | "dispatch";
+    workspaceId?: string;
+    runId?: string;
+    operation: CiMutationResult["operation"];
+    target: CiMutationResult["target"];
+    invoke(
+      adapter: RemoteCiAdapter,
+      repository: ReturnType<typeof publicRepository>
+    ): Promise<{ providerRequests: number }>;
+  }): Promise<CiMutationResult> {
+    const resolved = await this.#resolve(input.workspaceId);
+    const operation = this.#operation(
+      input.capability,
+      resolved,
+      input.runId === undefined ? undefined : { runId: input.runId }
+    );
+    await this.#decision(operation);
+
+    let credentialSource: "gh" | undefined;
+    try {
+      const root = await this.#roots.rootFor(resolved.workspaceId);
+      const credential = await this.#credentialProvider.getCredential({ workspaceRoot: root });
+      credentialSource = credential.source;
+      const adapter = this.#adapterFactory.create(credential);
+      const provider = await input.invoke(adapter, publicRepository(resolved));
+      enforceProviderBudget(input.budget, provider.providerRequests);
+      const result = this.#finalizeMutation({
+        schemaVersion: 1,
+        workspaceId: resolved.workspaceId,
+        provider: "github",
+        repository: publicRepository(resolved),
+        operation: input.operation,
+        target: input.target,
+        accepted: true
+      });
+      await this.#success(operation, false, credentialSource);
+      return result;
+    } catch (error) {
+      const normalized = normalizeOperationError(error);
+      if (normalized.code === "CI_AUDIT_UNAVAILABLE") throw normalized;
+      await this.#failed(operation, normalized, credentialSource);
+      throw normalized;
+    }
+  }
+
   async #resolve(workspaceId: string | undefined): Promise<ResolvedCiRepository> {
     try {
       return await this.#resolver.resolveRepository(
@@ -520,6 +621,10 @@ export class RemoteCiService {
 
   #finalizeFailure(value: CiFailureResult): CiFailureResult {
     return parseResult(CiFailureResultSchema, fitCiResult(value));
+  }
+
+  #finalizeMutation(value: CiMutationResult): CiMutationResult {
+    return parseResult(CiMutationResultSchema, value);
   }
 
   #finalizeRepository(value: CiRepositoryResult): CiRepositoryResult {

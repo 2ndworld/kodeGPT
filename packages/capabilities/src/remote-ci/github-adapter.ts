@@ -8,7 +8,11 @@ import type {
 import { CapabilityError } from "../errors.js";
 import {
   MAX_CI_ANNOTATIONS,
+  MAX_CI_DISPATCH_INPUTS,
+  MAX_CI_DISPATCH_INPUT_KEY,
+  MAX_CI_DISPATCH_INPUT_VALUE,
   MAX_CI_JOB_STEPS,
+  MAX_CI_WORKFLOW,
   MAX_CI_RUN_JOBS,
   MAX_CI_RUNS_LIMIT,
   MAX_CI_STATUS_SUMMARIES,
@@ -27,6 +31,11 @@ import type { GitHubHttp, GitHubLogRead } from "./github-http.js";
 interface GitHubHttpLike {
   getJson<T>(path: string, query?: URLSearchParams): Promise<T>;
   getJobLog(path: string, scanMaxBytes: number): Promise<GitHubLogRead>;
+  postMutation(
+    path: string,
+    expectedStatus: 200 | 201 | 202,
+    body?: Record<string, unknown>
+  ): Promise<void>;
 }
 
 export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
@@ -53,6 +62,45 @@ export class GitHubRemoteCiAdapter implements RemoteCiAdapter {
       ? null
       : expectSafeRef(record.default_branch);
     return { defaultBranch, providerRequests: 1 };
+  }
+
+  async rerun(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+    failedOnly: boolean;
+  }): Promise<{ providerRequests: 1 }> {
+    const runId = expectDecimalId(input.runId);
+    await this.#http.postMutation(
+      `${repoPath(input.repository)}/actions/runs/${runId}/${input.failedOnly ? "rerun-failed-jobs" : "rerun"}`,
+      201
+    );
+    return { providerRequests: 1 };
+  }
+
+  async cancel(input: {
+    repository: CiRepositoryIdentity;
+    runId: string;
+  }): Promise<{ providerRequests: 1 }> {
+    const runId = expectDecimalId(input.runId);
+    await this.#http.postMutation(`${repoPath(input.repository)}/actions/runs/${runId}/cancel`, 202);
+    return { providerRequests: 1 };
+  }
+
+  async dispatch(input: {
+    repository: CiRepositoryIdentity;
+    workflow: string;
+    ref: string;
+    inputs?: Record<string, string>;
+  }): Promise<{ providerRequests: 1 }> {
+    const workflow = expectWorkflow(input.workflow);
+    const ref = expectSafeRef(input.ref);
+    const inputs = expectDispatchInputs(input.inputs);
+    await this.#http.postMutation(
+      `${repoPath(input.repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+      200,
+      { ref, ...(inputs === undefined ? {} : { inputs }) }
+    );
+    return { providerRequests: 1 };
   }
 
   async statusEvidence(input: {
@@ -477,6 +525,30 @@ function expectSafeRef(value: unknown): string {
     throw invalidResponse();
   }
   return ref;
+}
+
+function expectWorkflow(value: unknown): string {
+  const workflow = expectBoundedString(value, MAX_CI_WORKFLOW);
+  if (!/^[A-Za-z0-9._-]+$/.test(workflow)) throw invalidResponse();
+  return workflow;
+}
+
+function expectDispatchInputs(value: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length > MAX_CI_DISPATCH_INPUTS) throw invalidResponse();
+  for (const [key, inputValue] of entries) {
+    if (
+      key.length === 0 ||
+      key.length > MAX_CI_DISPATCH_INPUT_KEY ||
+      !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(key) ||
+      inputValue.length > MAX_CI_DISPATCH_INPUT_VALUE ||
+      hasControl(inputValue)
+    ) {
+      throw invalidResponse();
+    }
+  }
+  return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
 function safeRepositoryUrl(value: unknown, repository: CiRepositoryIdentity): string | null {

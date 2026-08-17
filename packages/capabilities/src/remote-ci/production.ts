@@ -46,6 +46,9 @@ export function createGitHubRemoteCiToolAdapter(
     status: (input) => service().status(input),
     runs: (input) => service().runs(input),
     run: (input) => service().run(input),
-    failure: (input) => service().failure(input)
+    failure: (input) => service().failure(input),
+    rerun: (input) => service().rerun(input),
+    cancel: (input) => service().cancel(input),
+    dispatch: (input) => service().dispatch(input)
   };
 }

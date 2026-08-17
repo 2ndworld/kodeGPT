@@ -1,8 +1,12 @@
 import type { ArtifactReadResult, ArtifactStore } from "../../artifacts/src/index.js";
 import type {
+  CiCancelInput,
+  CiDispatchInput,
   CiFailureInput,
   CiFailureResult,
+  CiMutationResult,
   CiRepositoryInput,
+  CiRerunInput,
   CiRepositoryResult,
   CiRunInput,
   CiRunResult,
@@ -205,6 +209,9 @@ export interface CiToolContext {
   runs(input: CiRunsInput): Promise<CiRunsResult>;
   run(input: CiRunInput): Promise<CiRunResult>;
   failure(input: CiFailureInput): Promise<CiFailureResult>;
+  rerun(input: CiRerunInput): Promise<CiMutationResult>;
+  cancel(input: CiCancelInput): Promise<CiMutationResult>;
+  dispatch(input: CiDispatchInput): Promise<CiMutationResult>;
 }
 
 export interface GitHubToolContext extends GitHubReadToolAdapter, GitHubWriteToolAdapter {}
@@ -418,7 +425,10 @@ export function createKodegptToolContext(options: {
       status: (input) => remoteCi.status(input),
       runs: (input) => remoteCi.runs(input),
       run: (input) => remoteCi.run(input),
-      failure: (input) => remoteCi.failure(input)
+      failure: (input) => remoteCi.failure(input),
+      rerun: (input) => remoteCi.rerun(input),
+      cancel: (input) => remoteCi.cancel(input),
+      dispatch: (input) => remoteCi.dispatch(input)
     },
     github: {
       ...githubRead,
@@ -462,7 +472,10 @@ function unavailableRemoteCi(): CiToolContext {
     status: () => unavailable("ci.status"),
     runs: () => unavailable("ci.runs"),
     run: () => unavailable("ci.run"),
-    failure: () => unavailable("ci.failure")
+    failure: () => unavailable("ci.failure"),
+    rerun: () => unavailable("ci.rerun"),
+    cancel: () => unavailable("ci.cancel"),
+    dispatch: () => unavailable("ci.dispatch")
   };
 }
 

@@ -1,9 +1,13 @@
 import {
   CapabilityError,
+  CiCancelInputSchema,
+  CiDispatchInputSchema,
   CiFailureInputSchema,
   CiFailureResultSchema,
+  CiMutationResultSchema,
   CiRepositoryInputSchema,
   CiRepositoryResultSchema,
+  CiRerunInputSchema,
   CiRunInputSchema,
   CiRunResultSchema,
   CiRunsInputSchema,
@@ -54,6 +58,7 @@ import {
   VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
+  type CiMutationResult,
   type CodeImpactResult,
   type CodeSearchResult,
   type ContextBuildResult,
@@ -74,6 +79,8 @@ import {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_CI_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_CI_MUTATION_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
@@ -151,6 +158,16 @@ const typedCodeImpactResult: CodeImpactResult = {
   affectedAreas: ["src"],
   truncated: false,
   truncationReasons: []
+};
+
+const typedCiMutationResult: CiMutationResult = {
+  schemaVersion: 1,
+  workspaceId: "ws_1",
+  provider: "github",
+  repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" },
+  operation: "rerun",
+  target: { kind: "run", runId: "123" },
+  accepted: true
 };
 
 const typedGitChangesResult: GitChangesResult = {
@@ -353,7 +370,14 @@ function makeContext(): KodegptToolContext {
       status: async () => ({} as never),
       runs: async () => ({} as never),
       run: async () => ({} as never),
-      failure: async () => ({} as never)
+      failure: async () => ({} as never),
+      rerun: async () => typedCiMutationResult,
+      cancel: async () => ({ ...typedCiMutationResult, operation: "cancel" as const }),
+      dispatch: async () => ({
+        ...typedCiMutationResult,
+        operation: "dispatch" as const,
+        target: { kind: "workflow" as const, workflow: "ci.yml", ref: "main" }
+      })
     },
     github: {
       repositoryInspect: async () => ({} as never),
@@ -431,6 +455,34 @@ describe("structured MCP tool results", () => {
 
     const result = (await handlers.get("ci.repository")!({} as never)) as { structuredContent?: unknown };
     expect(result.structuredContent).toEqual(repositoryResult);
+  });
+
+  it("registers typed bounded CI mutations with non-idempotent annotations and structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const specs = [
+      ["ci.rerun", CiRerunInputSchema, REMOTE_CI_MUTATION_TOOL_ANNOTATIONS, { runId: "123" }],
+      ["ci.cancel", CiCancelInputSchema, REMOTE_CI_CANCEL_TOOL_ANNOTATIONS, { runId: "123" }],
+      ["ci.dispatch", CiDispatchInputSchema, REMOTE_CI_MUTATION_TOOL_ANNOTATIONS, { workflow: "ci.yml", ref: "main" }]
+    ] as const;
+
+    for (const [name, inputSchema, annotations, input] of specs) {
+      const definition = definitions.get(name);
+      expect(definition?.inputSchema).toBe(inputSchema);
+      expect(definition?.outputSchema).toBe(CiMutationResultSchema);
+      expect(definition?.annotations).toEqual(annotations);
+      expect(inputSchema.safeParse({ ...input, endpoint: "https://example.invalid" }).success).toBe(false);
+      const result = (await handlers.get(name)!(input as never)) as { structuredContent?: unknown };
+      expect(CiMutationResultSchema.safeParse(result.structuredContent).success).toBe(true);
+    }
   });
 
   it("registers exactly five typed GitHub reads with closed schemas and normalized structured results", async () => {

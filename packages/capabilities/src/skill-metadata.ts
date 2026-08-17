@@ -164,6 +164,21 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "why ci failed",
     "github actions failure"
   ]),
+  "ci.rerun": entry("ci.rerun", "Re-run one GitHub Actions workflow run through bounded CI mutation authority.", [
+    "rerun ci",
+    "rerun workflow",
+    "rerun failed jobs"
+  ]),
+  "ci.cancel": entry("ci.cancel", "Cancel one GitHub Actions workflow run through bounded CI mutation authority.", [
+    "cancel ci",
+    "cancel workflow",
+    "stop workflow run"
+  ]),
+  "ci.dispatch": entry("ci.dispatch", "Dispatch one configured GitHub Actions workflow through bounded CI mutation authority.", [
+    "dispatch workflow",
+    "run workflow",
+    "workflow dispatch"
+  ]),
   "process.run": entry("process.run", "Run a policy-approved process through native process controls.", [
     "run process",
     "native process",

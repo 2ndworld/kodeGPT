@@ -7,10 +7,14 @@ import type { KodegptToolContext } from "./tool-context.js";
 const LOCKED_SURFACE = [
   { name: "artifact.read", required: ["uri"] },
   { name: "ci.failure", required: ["runId"] },
+  { name: "ci.rerun", required: ["runId"] },
+  { name: "ci.cancel", required: ["runId"] },
+  { name: "ci.dispatch", required: ["workflow", "ref"] },
   { name: "ci.repository", required: [] },
   { name: "ci.run", required: ["runId"] },
   { name: "ci.runs", required: [] },
   { name: "ci.status", required: [] },
+  { name: "code.impact", required: ["workspaceId", "target"] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
@@ -72,12 +76,15 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.9");
+    expect(MCP_SURFACE_VERSION).toBe("0.10");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(58);
+    expect(surface).toHaveLength(62);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
+      "ci.rerun",
+      "ci.cancel",
+      "ci.dispatch",
       "ci.repository",
       "ci.run",
       "ci.runs",

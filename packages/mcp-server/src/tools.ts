@@ -1,7 +1,11 @@
 import {
+  CiCancelInputSchema,
+  CiDispatchInputSchema,
   CiFailureInputSchema,
   CiFailureResultSchema,
+  CiMutationResultSchema,
   CiRepositoryInputSchema,
+  CiRerunInputSchema,
   CiRepositoryResultSchema,
   CiRunInputSchema,
   CiRunResultSchema,
@@ -72,6 +76,8 @@ import {
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_CI_CANCEL_TOOL_ANNOTATIONS,
+  REMOTE_CI_MUTATION_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
@@ -87,6 +93,9 @@ import type { KodegptToolContext } from "./tool-context.js";
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
   { name: "ci.failure", required: ["runId"] },
+  { name: "ci.rerun", required: ["runId"] },
+  { name: "ci.cancel", required: ["runId"] },
+  { name: "ci.dispatch", required: ["workflow", "ref"] },
   { name: "ci.repository", required: [] },
   { name: "ci.run", required: ["runId"] },
   { name: "ci.runs", required: [] },
@@ -275,6 +284,42 @@ export function registerKodegptTools(
     },
     async (input) =>
       nativeCapabilityResult(async () => CiFailureResultSchema.parse(await context.ci.failure(input)))
+  );
+
+  server.registerTool(
+    "ci.rerun",
+    {
+      description: "Re-run one GitHub Actions workflow run through bounded typed CI mutation authority.",
+      inputSchema: CiRerunInputSchema,
+      outputSchema: CiMutationResultSchema,
+      annotations: REMOTE_CI_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiMutationResultSchema.parse(await context.ci.rerun(input)))
+  );
+
+  server.registerTool(
+    "ci.cancel",
+    {
+      description: "Cancel one GitHub Actions workflow run through bounded typed CI mutation authority.",
+      inputSchema: CiCancelInputSchema,
+      outputSchema: CiMutationResultSchema,
+      annotations: REMOTE_CI_CANCEL_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiMutationResultSchema.parse(await context.ci.cancel(input)))
+  );
+
+  server.registerTool(
+    "ci.dispatch",
+    {
+      description: "Dispatch one configured GitHub Actions workflow through bounded typed CI mutation authority.",
+      inputSchema: CiDispatchInputSchema,
+      outputSchema: CiMutationResultSchema,
+      annotations: REMOTE_CI_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => CiMutationResultSchema.parse(await context.ci.dispatch(input)))
   );
 
   server.registerTool(

@@ -260,8 +260,8 @@ describe("Provider Gateway conformance boundary", () => {
     ]);
 
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(MCP_SURFACE_VERSION).toBe("0.9");
-    expect(names).toHaveLength(58);
+    expect(MCP_SURFACE_VERSION).toBe("0.10");
+    expect(names).toHaveLength(62);
     expect(names.filter((name) => name.startsWith("github."))).toEqual([
       "github.issue.inspect",
       "github.issue.list",

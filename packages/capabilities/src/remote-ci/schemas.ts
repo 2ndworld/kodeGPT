@@ -5,13 +5,22 @@ import {
   CI_LOG_EXCERPT_MAX_BYTES,
   CI_TRUNCATION_REASONS,
   MAX_CI_ANNOTATIONS,
+  MAX_CI_DISPATCH_INPUTS,
+  MAX_CI_DISPATCH_INPUT_KEY,
+  MAX_CI_DISPATCH_INPUT_VALUE,
   MAX_CI_JOB_STEPS,
+  MAX_CI_REF,
   MAX_CI_RUN_JOBS,
   MAX_CI_RUNS_LIMIT,
   MAX_CI_STATUS_FAILURE_SUMMARIES,
   MAX_CI_STATUS_SUMMARIES,
+  MAX_CI_WORKFLOW,
+  type CiCancelInput,
+  type CiDispatchInput,
   type CiFailureInput,
+  type CiMutationResult,
   type CiRepositoryInput,
+  type CiRerunInput,
   type CiRunInput,
   type CiRunsInput,
   type CiStatusInput
@@ -196,6 +205,65 @@ export const CiFailureInputSchema: z.ZodType<CiFailureInput> = z
     workspaceId: z.string().min(1).optional(),
     runId: CiIdSchema,
     jobId: CiIdSchema.optional()
+  })
+  .strict();
+
+const ciWorkflowSchema = z
+  .string()
+  .min(1)
+  .max(MAX_CI_WORKFLOW)
+  .regex(/^[A-Za-z0-9._-]+$/);
+const ciDispatchInputKeySchema = z
+  .string()
+  .min(1)
+  .max(MAX_CI_DISPATCH_INPUT_KEY)
+  .regex(/^[A-Za-z_][A-Za-z0-9_-]*$/);
+const ciDispatchInputsSchema = z
+  .record(ciDispatchInputKeySchema, z.string().max(MAX_CI_DISPATCH_INPUT_VALUE))
+  .superRefine((value, context) => {
+    if (Object.keys(value).length > MAX_CI_DISPATCH_INPUTS) {
+      context.addIssue({ code: "custom", message: `workflow dispatch supports at most ${MAX_CI_DISPATCH_INPUTS} inputs` });
+    }
+  });
+
+export const CiRerunInputSchema: z.ZodType<CiRerunInput> = z
+  .object({
+    workspaceId: z.string().min(1).optional(),
+    runId: CiIdSchema,
+    failedOnly: z.boolean().optional()
+  })
+  .strict();
+
+export const CiCancelInputSchema: z.ZodType<CiCancelInput> = z
+  .object({
+    workspaceId: z.string().min(1).optional(),
+    runId: CiIdSchema
+  })
+  .strict();
+
+export const CiDispatchInputSchema: z.ZodType<CiDispatchInput> = z
+  .object({
+    workspaceId: z.string().min(1).optional(),
+    workflow: ciWorkflowSchema,
+    ref: GitSafeRefNameSchema.refine((value) => value.length <= MAX_CI_REF),
+    inputs: ciDispatchInputsSchema.optional()
+  })
+  .strict();
+
+const CiMutationTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("run"), runId: CiIdSchema }).strict(),
+  z.object({ kind: z.literal("workflow"), workflow: ciWorkflowSchema, ref: GitSafeRefNameSchema }).strict()
+]);
+
+export const CiMutationResultSchema: z.ZodType<CiMutationResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    provider: z.literal("github"),
+    repository: CiRepositoryIdentitySchema,
+    operation: z.enum(["rerun", "rerun_failed", "cancel", "dispatch"]),
+    target: CiMutationTargetSchema,
+    accepted: z.literal(true)
   })
   .strict();
 

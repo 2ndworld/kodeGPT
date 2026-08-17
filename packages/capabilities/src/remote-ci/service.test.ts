@@ -141,6 +141,21 @@ class Fixture {
       if (this.providerError !== undefined) throw this.providerError;
       return { defaultBranch: "main", providerRequests: 1 };
     },
+    rerun: async () => {
+      this.events.push("provider-rerun");
+      if (this.providerError !== undefined) throw this.providerError;
+      return { providerRequests: 1 };
+    },
+    cancel: async () => {
+      this.events.push("provider-cancel");
+      if (this.providerError !== undefined) throw this.providerError;
+      return { providerRequests: 1 };
+    },
+    dispatch: async () => {
+      this.events.push("provider-dispatch");
+      if (this.providerError !== undefined) throw this.providerError;
+      return { providerRequests: 1 };
+    },
     statusEvidence: async (input) => {
       this.events.push("provider-status");
       this.statusInput = input;
@@ -556,5 +571,84 @@ describe("RemoteCiService repository/runs/run", () => {
     fixture.providerError = new CapabilityError("CI_RATE_LIMITED", "Rate limited", { retryAfter: 30 });
     await expectCode(fixture.service().runs({}), "CI_RATE_LIMITED");
     expect(fixture.audits.at(-1)).toMatchObject({ phase: "failed", errorCode: "CI_RATE_LIMITED" });
+  });
+
+  it("audits bounded CI mutations before effects and never persists dispatch input values", async () => {
+    const fixture = new Fixture();
+    const adapter = fixture.adapter as RemoteCiAdapter & {
+      rerun(input: { runId: string; failedOnly: boolean }): Promise<{ providerRequests: 1 }>;
+      cancel(input: { runId: string }): Promise<{ providerRequests: 1 }>;
+      dispatch(input: { workflow: string; ref: string; inputs?: Record<string, string> }): Promise<{ providerRequests: 1 }>;
+    };
+    adapter.rerun = async () => {
+      fixture.events.push("provider-rerun");
+      return { providerRequests: 1 };
+    };
+    adapter.cancel = async () => {
+      fixture.events.push("provider-cancel");
+      return { providerRequests: 1 };
+    };
+    adapter.dispatch = async () => {
+      fixture.events.push("provider-dispatch");
+      return { providerRequests: 1 };
+    };
+    const service = fixture.service() as RemoteCiService & {
+      rerun(input: { runId: string; failedOnly?: boolean }): Promise<unknown>;
+      cancel(input: { runId: string }): Promise<unknown>;
+      dispatch(input: { workflow: string; ref: string; inputs?: Record<string, string> }): Promise<unknown>;
+    };
+
+    await expect(service.rerun({ runId: "10", failedOnly: true })).resolves.toMatchObject({
+      operation: "rerun_failed",
+      accepted: true
+    });
+    expect(fixture.events.slice(0, 5)).toEqual([
+      "resolve-repository",
+      "audit-decision",
+      "credential",
+      "provider-rerun",
+      "audit-success"
+    ]);
+
+    fixture.events.length = 0;
+    fixture.audits.length = 0;
+    await expect(
+      service.dispatch({ workflow: "ci.yml", ref: "main", inputs: { target: "super-secret-value" } })
+    ).resolves.toMatchObject({ operation: "dispatch", accepted: true });
+    expect(fixture.events).toEqual([
+      "resolve-repository",
+      "audit-decision",
+      "credential",
+      "provider-dispatch",
+      "audit-success"
+    ]);
+    expect(JSON.stringify(fixture.audits)).not.toContain("super-secret-value");
+    expect(JSON.stringify(fixture.audits)).not.toContain("fixture");
+  });
+
+  it("surfaces ambiguous mutation outcome without retrying the provider effect", async () => {
+    const fixture = new Fixture();
+    let attempts = 0;
+    const adapter = fixture.adapter as RemoteCiAdapter & {
+      cancel(input: { runId: string }): Promise<{ providerRequests: 1 }>;
+    };
+    adapter.cancel = async () => {
+      attempts += 1;
+      fixture.events.push("provider-cancel");
+      throw new CapabilityError(
+        "CI_MUTATION_OUTCOME_UNKNOWN",
+        "GitHub mutation outcome is unknown; inspect current CI state before retrying"
+      );
+    };
+    const service = fixture.service() as RemoteCiService & {
+      cancel(input: { runId: string }): Promise<unknown>;
+    };
+
+    await expectCode(service.cancel({ runId: "10" }), "CI_MUTATION_OUTCOME_UNKNOWN");
+    expect(attempts).toBe(1);
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "failed",
+      errorCode: "CI_MUTATION_OUTCOME_UNKNOWN"
+    });
   });
 });
