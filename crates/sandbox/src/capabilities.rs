@@ -262,6 +262,7 @@ impl ProbeFixture {
             "PATH=/usr/local/bin:/usr/bin:/bin",
             "PWD=/workspace",
             "TMPDIR=/tmp",
+            "KODEGPT_SANDBOX=1",
         ]);
         if actual != expected {
             return Err(SandboxError::SandboxUnavailable(

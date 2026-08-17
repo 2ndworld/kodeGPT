@@ -2933,9 +2933,11 @@ async fn dispatch_process_run_with_operation_id(
     let capability_for_run = capability_id.clone();
     let request_for_run = request_id.clone();
     let operation_for_run = operation_id.clone();
+    let state_root_for_run = audit.state_root().to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
         run_process(
             root_fd,
+            &state_root_for_run,
             capability_for_run,
             request_for_run,
             operation_for_run,

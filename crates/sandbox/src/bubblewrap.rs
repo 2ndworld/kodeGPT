@@ -13,17 +13,26 @@ use rustix::io::{FdFlags, fcntl_setfd};
 
 use crate::PROCESS_SPAWN_LOCK;
 use crate::executable::{
-    ExplicitExecutableMount, TrustedExecutable, TrustedExecutableError,
+    ExplicitExecutableMount, SANDBOX_MARKER_ENV, TrustedExecutable, TrustedExecutableError,
     open_explicit_directory_from_env, resolve_bubblewrap,
 };
 
 const CHILD_COREPACK_HOME: &str = "/opt/kodegpt-corepack";
 const CHILD_HOME: &str = "/home/kodegpt";
+const CHILD_CARGO_HOME: &str = "/home/kodegpt/.cargo";
 const CHILD_TOOL_ROOT: &str = "/opt/kodegpt-toolchain";
 const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const RUNTIME_SYSTEM_PATHS: [&str; 5] = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
-const RESERVED_ENV: [&str; 5] = ["COREPACK_HOME", "HOME", "PATH", "TMPDIR", "PWD"];
+const RESOLVER_RUNTIME_DIRECTORY: &str = "/run/systemd/resolve";
+const RESERVED_ENV: [&str; 6] = [
+    "COREPACK_HOME",
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "PWD",
+    SANDBOX_MARKER_ENV,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxNetworkMode {
@@ -48,6 +57,7 @@ pub struct SandboxLaunchSpec {
     pub cwd: PathBuf,
     pub network: SandboxNetworkMode,
     pub workspace_access: WorkspaceAccess,
+    pub cargo_home: Option<PathBuf>,
 }
 
 impl SandboxLaunchSpec {
@@ -60,6 +70,7 @@ impl SandboxLaunchSpec {
             cwd: PathBuf::from(CHILD_WORKSPACE),
             network: SandboxNetworkMode::Deny,
             workspace_access: WorkspaceAccess::ReadOnly,
+            cargo_home: None,
         }
     }
 }
@@ -185,6 +196,29 @@ impl BubblewrapProvider {
             fcntl_setfd(root_fd, FdFlags::empty())
                 .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
         }
+        let resolver_mount = if spec.network == SandboxNetworkMode::Unrestricted {
+            let resolved_resolv_conf = fs::canonicalize("/etc/resolv.conf")?;
+            resolver_runtime_directory(&resolved_resolv_conf)
+                .map(fs::File::open)
+                .transpose()?
+                .map(OwnedFd::from)
+        } else {
+            None
+        };
+        if let Some(root_fd) = &resolver_mount {
+            fcntl_setfd(root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
+        let cargo_home_mount = spec
+            .cargo_home
+            .as_ref()
+            .map(fs::File::open)
+            .transpose()?
+            .map(OwnedFd::from);
+        if let Some(root_fd) = &cargo_home_mount {
+            fcntl_setfd(root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
         let (status_reader, status_writer) = UnixStream::pair()?;
         status_reader.set_read_timeout(Some(Duration::from_secs(3)))?;
         fcntl_setfd(&status_writer, FdFlags::empty())
@@ -195,6 +229,8 @@ impl BubblewrapProvider {
             Some(status_writer.as_raw_fd()),
             &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
+            resolver_mount.as_ref().map(AsRawFd::as_raw_fd),
+            cargo_home_mount.as_ref().map(AsRawFd::as_raw_fd),
             spec,
         )?;
         self.executable.revalidate()?;
@@ -236,6 +272,8 @@ impl BubblewrapProvider {
         status_fd: Option<i32>,
         explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
+        resolver_fd: Option<i32>,
+        cargo_home_fd: Option<i32>,
         spec: &SandboxLaunchSpec,
     ) -> Result<Command, SandboxError> {
         if matches!(
@@ -282,11 +320,31 @@ impl BubblewrapProvider {
                 command.args(["--ro-bind", system_path, system_path]);
             }
         }
+        if let Some(resolver_fd) = resolver_fd {
+            command.args([
+                "--dir",
+                "/run",
+                "--dir",
+                "/run/systemd",
+                "--ro-bind-fd",
+                &resolver_fd.to_string(),
+                RESOLVER_RUNTIME_DIRECTORY,
+            ]);
+        }
 
         command.args([
             "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--chmod", "01777", "/tmp",
             "--dir", "/home", "--dir", CHILD_HOME, "--chmod", "0700", CHILD_HOME,
         ]);
+        if let Some(cargo_home_fd) = cargo_home_fd {
+            command.args([
+                "--dir",
+                CHILD_CARGO_HOME,
+                "--bind-fd",
+                &cargo_home_fd.to_string(),
+                CHILD_CARGO_HOME,
+            ]);
+        }
 
         if !explicit_mounts.is_empty() {
             command.args(["--dir", "/opt"]);
@@ -338,6 +396,9 @@ impl BubblewrapProvider {
             "--setenv",
             "TMPDIR",
             "/tmp",
+            "--setenv",
+            SANDBOX_MARKER_ENV,
+            "1",
         ]);
         if corepack_fd.is_some() {
             command.args(["--setenv", "COREPACK_HOME", CHILD_COREPACK_HOME]);
@@ -358,6 +419,14 @@ impl BubblewrapProvider {
             .unwrap_or_else(|| spec.program.canonical_path().to_path_buf());
         command.arg("--").arg(child_program).args(&spec.args);
         Ok(command)
+    }
+}
+
+fn resolver_runtime_directory(resolved_resolv_conf: &Path) -> Option<&'static Path> {
+    if resolved_resolv_conf.starts_with(RESOLVER_RUNTIME_DIRECTORY) {
+        Some(Path::new(RESOLVER_RUNTIME_DIRECTORY))
+    } else {
+        None
     }
 }
 
@@ -426,7 +495,7 @@ mod tests {
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::{PermissionsExt, symlink};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -434,6 +503,7 @@ mod tests {
         BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
         cwd_is_beneath_workspace,
     };
+    use crate::executable::SANDBOX_MARKER_ENV;
     use crate::resolve_trusted_executable;
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -447,6 +517,51 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("temporary root");
         root
+    }
+
+    #[test]
+    fn systemd_resolved_target_requires_only_the_systemd_resolver_runtime_directory() {
+        assert_eq!(
+            super::resolver_runtime_directory(Path::new("/run/systemd/resolve/stub-resolv.conf",)),
+            Some(Path::new("/run/systemd/resolve"))
+        );
+        assert_eq!(
+            super::resolver_runtime_directory(Path::new("/etc/static-resolv.conf")),
+            None
+        );
+    }
+
+    #[test]
+    fn unrestricted_network_mounts_only_the_required_resolver_runtime_directory() {
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("env").expect("trusted env executable"),
+        );
+        spec.network = SandboxNetworkMode::Unrestricted;
+        let command = provider
+            .build_command(3, None, &[], None, Some(9), None, &spec)
+            .expect("unrestricted command construction");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(args.windows(2).any(|window| window == ["--dir", "/run"]));
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--dir", "/run/systemd"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--ro-bind-fd", "9", "/run/systemd/resolve"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| window == ["--setenv", "KODEGPT_SANDBOX", "1"])
+        );
+        assert!(!args.windows(3).any(|window| {
+            matches!(window, [flag, source, target] if flag == "--ro-bind" && source == "/run" && target == "/run")
+        }));
     }
 
     #[test]
@@ -650,7 +765,7 @@ mod tests {
         let mut spec = SandboxLaunchSpec::new(
             resolve_trusted_executable("env").expect("trusted env executable"),
         );
-        for reserved in ["HOME", "PATH", "TMPDIR", "PWD"] {
+        for reserved in ["HOME", "PATH", "TMPDIR", "PWD", SANDBOX_MARKER_ENV] {
             spec.env = BTreeMap::from([(reserved.to_owned(), "/host".to_owned())]);
             assert!(
                 matches!(
@@ -666,7 +781,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, &[], None, &spec),
+                provider.build_command(3, None, &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

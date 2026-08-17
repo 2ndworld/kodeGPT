@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -241,8 +243,13 @@ pub fn next_process_operation_id() -> String {
     format!("op_{sequence:016x}")
 }
 
+fn managed_cargo_home(state_root: &Path) -> PathBuf {
+    state_root.join("tool-state").join("cargo-home")
+}
+
 pub fn run_process(
     workspace_root: OwnedFd,
+    state_root: &Path,
     workspace_capability: String,
     request_id: String,
     operation_id: String,
@@ -272,6 +279,22 @@ pub fn run_process(
             {
                 spec.auxiliary_programs.push(auxiliary);
             }
+        }
+        if policy
+            .allowed_executable_names
+            .iter()
+            .any(|name| matches!(name.as_str(), "cargo" | "rustc"))
+        {
+            let cargo_home = managed_cargo_home(state_root);
+            fs::create_dir_all(&cargo_home)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?;
+            let mut permissions = fs::metadata(&cargo_home)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?
+                .permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&cargo_home, permissions)
+                .map_err(|error| ProcessError::Sandbox(SandboxError::Io(error)))?;
+            spec.cargo_home = Some(cargo_home);
         }
     }
     spec.args = request.argv.into_iter().map(OsString::from).collect();
@@ -659,7 +682,7 @@ mod tests {
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -725,6 +748,30 @@ mod tests {
         }
     }
 
+    fn trusted_cargo_state_policy() -> RuntimePolicy {
+        RuntimePolicy {
+            name: ProfileName::Trusted,
+            allow_write: true,
+            allow_process: true,
+            network: NetworkMode::Deny,
+            allowed_executable_names: vec!["bash".to_owned(), "cargo".to_owned()],
+            inherit_env: InheritEnvDisabled,
+            env_allowlist: Vec::new(),
+        }
+    }
+
+    fn develop_cargo_state_policy() -> RuntimePolicy {
+        RuntimePolicy {
+            name: ProfileName::Develop,
+            allow_write: true,
+            allow_process: true,
+            network: NetworkMode::Deny,
+            allowed_executable_names: vec!["bash".to_owned(), "cargo".to_owned()],
+            inherit_env: InheritEnvDisabled,
+            env_allowlist: Vec::new(),
+        }
+    }
+
     fn run_python(
         workspace: &PathBuf,
         state: &PathBuf,
@@ -739,6 +786,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            state,
             "kc_process_fixture".to_owned(),
             "req_process_fixture".to_owned(),
             super::next_process_operation_id(),
@@ -759,6 +807,200 @@ mod tests {
     }
 
     use std::collections::BTreeMap;
+
+    fn run_bash_with_state(
+        workspace: &Path,
+        state: &Path,
+        policy: RuntimePolicy,
+        script: &str,
+    ) -> super::ProcessOperationView {
+        let root_fd = OwnedFd::from(File::open(workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(state));
+        let spool = Arc::new(RawSpoolStore::open(state, audit).expect("spool store"));
+        run_process(
+            root_fd,
+            state,
+            "kc_cargo_state_fixture".to_owned(),
+            "req_cargo_state_fixture".to_owned(),
+            next_process_operation_id(),
+            policy,
+            ProcessLaunchRequest {
+                logical_executable: "bash".to_owned(),
+                argv: vec![
+                    "--noprofile".to_owned(),
+                    "--norc".to_owned(),
+                    "-c".to_owned(),
+                    script.to_owned(),
+                ],
+                cwd: ".".to_owned(),
+                env: BTreeMap::new(),
+                background: false,
+            },
+            spool,
+            Arc::new(Mutex::new(ExecutionRegistry::default())),
+            Arc::new(ProcessOperationRegistry::default()),
+        )
+        .expect("bash process starts")
+    }
+
+    #[test]
+    fn managed_cargo_home_is_derived_only_from_kodegpt_state_root() {
+        let state = Path::new("/tmp/kodegpt-state-contract");
+        assert_eq!(
+            super::managed_cargo_home(state),
+            state.join("tool-state").join("cargo-home")
+        );
+    }
+
+    #[test]
+    fn trusted_rust_capable_process_persists_cargo_home_between_invocations() {
+        let rust_root = temporary_root("persistent-cargo-rust-root");
+        let workspace = temporary_root("persistent-cargo-workspace");
+        let state = temporary_root("persistent-cargo-state");
+        fs::create_dir_all(rust_root.join("bin")).expect("rust bin");
+        let cargo = rust_root.join("bin/cargo");
+        fs::write(&cargo, b"#!/bin/sh\nexit 0\n").expect("cargo fixture");
+        let mut permissions = fs::metadata(&cargo).expect("cargo metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&cargo, permissions).expect("cargo executable mode");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "process::tests::persistent_cargo_home_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &rust_root)
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .env("KODEGPT_TEST_STATE", &state)
+            .output()
+            .expect("persistent cargo state subprocess runs");
+
+        assert!(
+            output.status.success(),
+            "persistent cargo state failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(rust_root).expect("rust root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by trusted_rust_capable_process_persists_cargo_home_between_invocations"]
+    fn persistent_cargo_home_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let state =
+            PathBuf::from(std::env::var_os("KODEGPT_TEST_STATE").expect("state fixture env"));
+        let marker = "kodegpt-persistence-marker";
+
+        let first = run_bash_with_state(
+            &workspace,
+            &state,
+            trusted_cargo_state_policy(),
+            &format!("printf 'persistent-cargo-state\\n' > \"$HOME/.cargo/{marker}\""),
+        );
+        assert_eq!(
+            first.state,
+            ProcessState::Completed,
+            "{}",
+            first.stderr_preview
+        );
+        assert_eq!(first.exit_code, Some(0), "{}", first.stderr_preview);
+
+        let second = run_bash_with_state(
+            &workspace,
+            &state,
+            trusted_cargo_state_policy(),
+            &format!("cat \"$HOME/.cargo/{marker}\""),
+        );
+        assert_eq!(
+            second.state,
+            ProcessState::Completed,
+            "{}",
+            second.stderr_preview
+        );
+        assert_eq!(second.exit_code, Some(0), "{}", second.stderr_preview);
+        assert_eq!(second.stdout_preview, "persistent-cargo-state\n");
+        let host_marker = super::managed_cargo_home(&state).join(marker);
+        assert!(host_marker.starts_with(&state));
+        assert_eq!(
+            fs::read_to_string(host_marker).expect("managed cargo marker"),
+            "persistent-cargo-state\n"
+        );
+    }
+
+    #[test]
+    fn develop_does_not_receive_managed_cargo_state() {
+        let workspace = temporary_root("develop-cargo-workspace");
+        let state = temporary_root("develop-cargo-state");
+        let cargo_home = state.join("tool-state").join("cargo-home");
+        fs::create_dir_all(&cargo_home).expect("managed cargo fixture");
+        fs::write(cargo_home.join("kodegpt-develop-marker"), b"host-state\n")
+            .expect("develop marker fixture");
+
+        let view = run_bash_with_state(
+            &workspace,
+            &state,
+            develop_cargo_state_policy(),
+            "test ! -e \"$HOME/.cargo/kodegpt-develop-marker\"",
+        );
+        assert_eq!(
+            view.state,
+            ProcessState::Completed,
+            "{}",
+            view.stderr_preview
+        );
+        assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn trusted_and_develop_processes_keep_nested_user_namespaces_disabled() {
+        let workspace = temporary_root("nested-userns-workspace");
+        let trusted_state = temporary_root("nested-userns-trusted-state");
+        let develop_state = temporary_root("nested-userns-develop-state");
+        let nested_bwrap = "bwrap --unshare-user --uid 0 --gid 0 --proc /proc --dev /dev --ro-bind /usr /usr -- /usr/bin/true";
+
+        let trusted = run_bash_with_state(
+            &workspace,
+            &trusted_state,
+            trusted_toolchain_fallback_policy(),
+            nested_bwrap,
+        );
+        assert_ne!(
+            trusted.exit_code,
+            Some(0),
+            "trusted outer sandbox must keep nested user namespaces disabled"
+        );
+        assert!(
+            trusted.stderr_preview.contains("namespace")
+                || trusted.stderr_preview.contains("permissions")
+                || trusted.stderr_preview.contains("ENOSPC"),
+            "nested Bubblewrap failure must remain actionable: {}",
+            trusted.stderr_preview
+        );
+
+        let develop = run_bash_with_state(
+            &workspace,
+            &develop_state,
+            develop_cargo_state_policy(),
+            nested_bwrap,
+        );
+        assert_ne!(
+            develop.exit_code,
+            Some(0),
+            "develop must keep nested user namespaces disabled"
+        );
+
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(trusted_state).expect("trusted state cleanup");
+        fs::remove_dir_all(develop_state).expect("develop state cleanup");
+    }
 
     #[test]
     fn trusted_node_process_can_compose_validated_rust_toolchain_without_host_path() {
@@ -865,6 +1107,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            &state,
             "kc_toolchain_fallback_fixture".to_owned(),
             "req_toolchain_fallback_fixture".to_owned(),
             next_process_operation_id(),
@@ -911,6 +1154,7 @@ mod tests {
         let operations = Arc::new(ProcessOperationRegistry::default());
         let view = run_process(
             root_fd,
+            &state,
             "kc_toolchain_fixture".to_owned(),
             "req_toolchain_fixture".to_owned(),
             next_process_operation_id(),
@@ -1093,6 +1337,7 @@ mod tests {
 
         let result = run_process(
             root_fd,
+            &state,
             "kc_process_fixture".to_owned(),
             "req_process_poison".to_owned(),
             next_process_operation_id(),
