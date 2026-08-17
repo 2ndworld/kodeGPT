@@ -960,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_process_can_run_one_nested_bubblewrap_while_develop_stays_userns_disabled() {
+    fn trusted_and_develop_processes_keep_nested_user_namespaces_disabled() {
         let workspace = temporary_root("nested-userns-workspace");
         let trusted_state = temporary_root("nested-userns-trusted-state");
         let develop_state = temporary_root("nested-userns-develop-state");
@@ -972,10 +972,16 @@ mod tests {
             trusted_toolchain_fallback_policy(),
             nested_bwrap,
         );
-        assert_eq!(
+        assert_ne!(
             trusted.exit_code,
             Some(0),
-            "trusted nested Bubblewrap must work: {}",
+            "trusted outer sandbox must keep nested user namespaces disabled"
+        );
+        assert!(
+            trusted.stderr_preview.contains("namespace")
+                || trusted.stderr_preview.contains("permissions")
+                || trusted.stderr_preview.contains("ENOSPC"),
+            "nested Bubblewrap failure must remain actionable: {}",
             trusted.stderr_preview
         );
 
