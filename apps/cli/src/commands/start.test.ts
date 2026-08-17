@@ -235,7 +235,7 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
-  it("keeps Provider Gateway private and startup-idle while wiring the concrete GitHub read context", async () => {
+  it("keeps Provider Gateway private and startup-idle while wiring separate GitHub read/write contexts", async () => {
     const events: string[] = [];
     const providerExecutions: Array<Record<string, unknown>> = [];
     const deps = dependencies(events);
@@ -255,11 +255,18 @@ describe("kodegpt start orchestration", () => {
       providerInput = input;
       return {
         operator: {
-          list: async () => [{
-            providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
-            adapterId: "github.read.v1",
-            enabled: true
-          }]
+          list: async () => [
+            {
+              providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
+              adapterId: "github.read.v1",
+              enabled: true
+            },
+            {
+              providerInstanceId: "prv_abcdef0123456789abcdef0123456789",
+              adapterId: "github.write.v1",
+              enabled: true
+            }
+          ]
         },
         gateway: {
           execute: async (execution: Record<string, unknown>) => {
@@ -267,20 +274,41 @@ describe("kodegpt start orchestration", () => {
             return {
               semanticCapabilityId: execution.semanticCapabilityId,
               providerInstanceId: execution.providerInstanceId,
-              value: {
-                repository: "2ndworld/kodeGPT",
-                name: "kodeGPT",
-                owner: "2ndworld",
-                description: "KodeGPT",
-                private: false,
-                defaultBranch: "main",
-                archived: false,
-                fork: false,
-                htmlUrl: "https://github.com/2ndworld/kodeGPT",
-                createdAt: "2026-08-01T00:00:00Z",
-                updatedAt: "2026-08-17T00:00:00Z",
-                pushedAt: "2026-08-17T00:00:00Z"
-              },
+              value: execution.semanticCapabilityId === "github.pr.create"
+                ? {
+                    repository: "2ndworld/kodeGPT",
+                    number: 23,
+                    title: "feat: bounded write",
+                    state: "open",
+                    authorLogin: "2ndworld",
+                    baseBranch: "main",
+                    headBranch: "feat/bounded-write",
+                    draft: false,
+                    htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/23",
+                    createdAt: "2026-08-17T06:30:00Z",
+                    updatedAt: "2026-08-17T06:30:00Z"
+                  }
+                : execution.semanticCapabilityId === "github.pr.merge"
+                  ? {
+                      repository: "2ndworld/kodeGPT",
+                      number: 23,
+                      merged: true,
+                      mergeCommitOid: "b".repeat(40)
+                    }
+                  : {
+                      repository: "2ndworld/kodeGPT",
+                      name: "kodeGPT",
+                      owner: "2ndworld",
+                      description: "KodeGPT",
+                      private: false,
+                      defaultBranch: "main",
+                      archived: false,
+                      fork: false,
+                      htmlUrl: "https://github.com/2ndworld/kodeGPT",
+                      createdAt: "2026-08-01T00:00:00Z",
+                      updatedAt: "2026-08-17T00:00:00Z",
+                      pushedAt: "2026-08-17T00:00:00Z"
+                    },
               truncated: false,
               truncationReasons: []
             };
@@ -303,7 +331,10 @@ describe("kodegpt start orchestration", () => {
       expect(Object.keys(stack)).not.toContain("providerRuntime");
       expect(Object.keys(stack.toolContext)).not.toContain("provider");
       expect(Object.keys(stack.toolContext)).toContain("github");
-      expect(providerInput!.manifests.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+      expect(providerInput!.manifests.map(({ adapterId }) => adapterId)).toEqual([
+        "github.read.v1",
+        "github.write.v1"
+      ]);
       expect(providerInput!.workspaceRoots()).toEqual(["/workspace"]);
       await expect(providerInput!.workspaceAuthority.resolve("ws_test")).resolves.toEqual({
         workspaceId: "ws_test",
@@ -313,11 +344,41 @@ describe("kodegpt start orchestration", () => {
         repository: "2ndworld/kodeGPT",
         defaultBranch: "main"
       });
+      await expect(stack.toolContext.github.prCreate({
+        repository: "2ndworld/kodeGPT",
+        title: "feat: bounded write",
+        headBranch: "feat/bounded-write",
+        baseBranch: "main"
+      })).resolves.toMatchObject({ repository: "2ndworld/kodeGPT", number: 23 });
+      await expect(stack.toolContext.github.prMerge({
+        repository: "2ndworld/kodeGPT",
+        number: 23,
+        expectedHeadOid: "a".repeat(40)
+      })).resolves.toMatchObject({ repository: "2ndworld/kodeGPT", number: 23, merged: true });
       expect(providerExecutions).toEqual([
         {
           semanticCapabilityId: "github.repository.inspect",
           providerInstanceId: "prv_0123456789abcdef0123456789abcdef",
           input: { repository: "2ndworld/kodeGPT" }
+        },
+        {
+          semanticCapabilityId: "github.pr.create",
+          providerInstanceId: "prv_abcdef0123456789abcdef0123456789",
+          input: {
+            repository: "2ndworld/kodeGPT",
+            title: "feat: bounded write",
+            headBranch: "feat/bounded-write",
+            baseBranch: "main"
+          }
+        },
+        {
+          semanticCapabilityId: "github.pr.merge",
+          providerInstanceId: "prv_abcdef0123456789abcdef0123456789",
+          input: {
+            repository: "2ndworld/kodeGPT",
+            number: 23,
+            expectedHeadOid: "a".repeat(40)
+          }
         }
       ]);
       await providerInput!.audit.record({

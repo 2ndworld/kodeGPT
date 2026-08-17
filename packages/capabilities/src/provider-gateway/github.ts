@@ -196,6 +196,12 @@ const IssueListOutputSchema = z.object({
 }).strict();
 
 export const GITHUB_READ_PROVIDER_ADAPTER_ID = GITHUB_ADAPTER_ID;
+export const GitHubRepositorySchema = RepositorySchema;
+export const GitHubUrlValueSchema = GitHubUrlSchema;
+export const GitHubTimestampValueSchema = GitHubTimestampSchema;
+export const GitHubLoginValueSchema = GitHubLoginSchema;
+export const GitHubBranchValueSchema = GitHubBranchSchema;
+export const GitHubTitleValueSchema = GitHubTitleSchema;
 export const GitHubRepositoryInspectInputSchema = RepositoryInspectInputSchema;
 export const GitHubRepositoryInspectResultSchema = RepositoryInspectOutputSchema;
 export const GitHubPrInspectInputSchema = PrInspectInputSchema;

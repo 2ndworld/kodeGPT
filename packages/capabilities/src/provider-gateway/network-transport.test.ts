@@ -4,7 +4,10 @@ import { z } from "zod";
 import type { ProviderAdapterManifest, ProviderRequestBudget } from "./contracts.js";
 import { DefaultProviderNetworkTransport, type ProviderHttpsRequestInput } from "./network-transport.js";
 
-function manifest(input: { redirect?: { fromOrigin: string; toOrigin: string } | null } = {}): ProviderAdapterManifest {
+function manifest(input: {
+  redirect?: { fromOrigin: string; toOrigin: string } | null;
+  method?: "POST" | "PUT";
+} = {}): ProviderAdapterManifest {
   const origins = input.redirect === undefined || input.redirect === null
     ? ["https://api.fixture.example"]
     : [input.redirect.fromOrigin, input.redirect.toOrigin];
@@ -21,7 +24,7 @@ function manifest(input: { redirect?: { fromOrigin: string; toOrigin: string } |
     credentialBroker: { kind: "none" },
     operations: [{
       id: "record.read",
-      method: "POST",
+      method: input.method ?? "POST",
       origin: origins[0]!,
       pathTemplate: "/records/{recordId}",
       allowedQueryKeys: ["view"],
@@ -86,6 +89,29 @@ describe("DefaultProviderNetworkTransport", () => {
     expect(calls[0]?.body?.toString("utf8")).toBe('{"x":1}');
     expect(result.statusCode).toBe(200);
     expect(result.body.toString("utf8")).toBe('{"ok":true}');
+  });
+
+  it("preserves a compiled PUT method without exposing method selection to callers", async () => {
+    const calls: ProviderHttpsRequestInput[] = [];
+    const transport = new DefaultProviderNetworkTransport({
+      resolver: { lookup: async () => [{ address: "203.0.113.10", family: 4 as const }] },
+      requester: { request: async (input: ProviderHttpsRequestInput) => {
+        calls.push(input);
+        return { statusCode: 200, headers: {}, body: Buffer.from("{\"ok\":true}") };
+      } }
+    });
+
+    await transport.request({
+      manifest: manifest({ method: "PUT" }),
+      operationId: "record.read",
+      operationInput: { recordId: "42", payload: { ok: true } },
+      credential: null,
+      signal: new AbortController().signal,
+      budget: budget()
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PUT");
   });
 
   it("rejects private DNS answers before any request is created", async () => {

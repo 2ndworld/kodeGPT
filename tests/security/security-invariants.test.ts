@@ -19,6 +19,8 @@ import {
 } from "../../packages/capabilities/src/index.js";
 import {
   READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
 } from "../../packages/mcp-server/src/annotations.js";
 import { listSurfaceTools } from "../../packages/mcp-server/src/server.js";
@@ -171,12 +173,15 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust, Git, and GitHub read surface with no generic authority or execution tools", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.8");
+  it("ships only the intended typed trust, Git, and bounded GitHub surface with no generic authority", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.9");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(56);
+    expect(names).toHaveLength(58);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
-    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
+      "github.read.v1",
+      "github.write.v1"
+    ]);
     expect(PROVIDER_CREDENTIAL_TIMEOUT_MS).toBe(5_000);
     expect(PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS).toBe(10_000);
     expect(PROVIDER_OPERATION_TIMEOUT_MS).toBe(30_000);
@@ -199,8 +204,10 @@ describe("full security acceptance invariants", () => {
       "git.pull",
       "git.push",
       "github.repository.inspect",
+      "github.pr.create",
       "github.pr.inspect",
       "github.pr.list",
+      "github.pr.merge",
       "github.issue.inspect",
       "github.issue.list",
       "verify.list",
@@ -243,9 +250,7 @@ describe("full security acceptance invariants", () => {
       "github.issue.create",
       "github.issue.update",
       "github.issue.comment",
-      "github.pr.create",
       "github.pr.update",
-      "github.pr.merge",
       "github.label.create",
       "github.label.update",
       "github.label.delete",
@@ -280,5 +285,7 @@ describe("full security acceptance invariants", () => {
     ]) {
       expect(registrations.get(name)?.annotations).toEqual(REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS);
     }
+    expect(registrations.get("github.pr.create")?.annotations).toEqual(REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS);
+    expect(registrations.get("github.pr.merge")?.annotations).toEqual(REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS);
   });
 });

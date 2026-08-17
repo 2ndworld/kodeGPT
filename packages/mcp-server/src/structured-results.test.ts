@@ -22,10 +22,14 @@ import {
   GitHubIssueInspectResultSchema,
   GitHubIssueListInputSchema,
   GitHubIssueListResultSchema,
+  GitHubPrCreateInputSchema,
+  GitHubPrCreateResultSchema,
   GitHubPrInspectInputSchema,
   GitHubPrInspectResultSchema,
   GitHubPrListInputSchema,
   GitHubPrListResultSchema,
+  GitHubPrMergeInputSchema,
+  GitHubPrMergeResultSchema,
   GitHubRepositoryInspectInputSchema,
   GitHubRepositoryInspectResultSchema,
   GitStageInputSchema,
@@ -68,6 +72,9 @@ import {
   PROCESS_RUN_TOOL_ANNOTATIONS,
   READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
   REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
   REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
@@ -336,8 +343,10 @@ function makeContext(): KodegptToolContext {
     },
     github: {
       repositoryInspect: async () => ({} as never),
+      prCreate: async () => ({} as never),
       prInspect: async () => ({} as never),
       prList: async () => ({} as never),
+      prMerge: async () => ({} as never),
       issueInspect: async () => ({} as never),
       issueList: async () => ({} as never)
     },
@@ -458,6 +467,25 @@ describe("structured MCP tool results", () => {
         updatedAt: "2026-08-17T01:00:00Z"
       }]
     };
+    const prCreateResult = {
+      repository: "2ndworld/kodeGPT",
+      number: 23,
+      title: "feat: bounded write",
+      state: "open" as const,
+      authorLogin: "2ndworld",
+      baseBranch: "main",
+      headBranch: "feat/bounded-write",
+      draft: false,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/23",
+      createdAt: "2026-08-17T06:30:00Z",
+      updatedAt: "2026-08-17T06:30:00Z"
+    };
+    const prMergeResult = {
+      repository: "2ndworld/kodeGPT",
+      number: 23,
+      merged: true as const,
+      mergeCommitOid: "b".repeat(40)
+    };
     const issueItem = {
       number: 1,
       title: "Example issue",
@@ -476,8 +504,10 @@ describe("structured MCP tool results", () => {
     const context = Object.assign(makeContext(), {
       github: {
         repositoryInspect: async () => repositoryResult,
+        prCreate: async () => prCreateResult,
         prInspect: async () => prInspectResult,
         prList: async () => prListResult,
+        prMerge: async () => prMergeResult,
         issueInspect: async () => issueInspectResult,
         issueList: async () => issueListResult
       }
@@ -492,33 +522,32 @@ describe("structured MCP tool results", () => {
     registerKodegptTools(server, context);
 
     const specs = [
-      ["github.repository.inspect", GitHubRepositoryInspectInputSchema, GitHubRepositoryInspectResultSchema, { repository: "2ndworld/kodeGPT" }, repositoryResult],
-      ["github.pr.inspect", GitHubPrInspectInputSchema, GitHubPrInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 20 }, prInspectResult],
-      ["github.pr.list", GitHubPrListInputSchema, GitHubPrListResultSchema, { repository: "2ndworld/kodeGPT", state: "closed", limit: 5 }, prListResult],
-      ["github.issue.inspect", GitHubIssueInspectInputSchema, GitHubIssueInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 1 }, issueInspectResult],
-      ["github.issue.list", GitHubIssueListInputSchema, GitHubIssueListResultSchema, { repository: "2ndworld/kodeGPT", state: "open", limit: 5 }, issueListResult]
+      ["github.repository.inspect", GitHubRepositoryInspectInputSchema, GitHubRepositoryInspectResultSchema, { repository: "2ndworld/kodeGPT" }, repositoryResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
+      ["github.pr.create", GitHubPrCreateInputSchema, GitHubPrCreateResultSchema, { repository: "2ndworld/kodeGPT", title: "feat: bounded write", headBranch: "feat/bounded-write", baseBranch: "main" }, prCreateResult, REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS],
+      ["github.pr.inspect", GitHubPrInspectInputSchema, GitHubPrInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 20 }, prInspectResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
+      ["github.pr.list", GitHubPrListInputSchema, GitHubPrListResultSchema, { repository: "2ndworld/kodeGPT", state: "closed", limit: 5 }, prListResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
+      ["github.pr.merge", GitHubPrMergeInputSchema, GitHubPrMergeResultSchema, { repository: "2ndworld/kodeGPT", number: 23, expectedHeadOid: "a".repeat(40) }, prMergeResult, REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS],
+      ["github.issue.inspect", GitHubIssueInspectInputSchema, GitHubIssueInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 1 }, issueInspectResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
+      ["github.issue.list", GitHubIssueListInputSchema, GitHubIssueListResultSchema, { repository: "2ndworld/kodeGPT", state: "open", limit: 5 }, issueListResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS]
     ] as const;
     expect([...definitions.keys()].filter((name) => name.startsWith("github."))).toEqual(specs.map(([name]) => name));
 
-    for (const [name, inputSchema, outputSchema, input, expected] of specs) {
+    for (const [name, inputSchema, outputSchema, input, expected, annotations] of specs) {
       const definition = definitions.get(name);
       expect(definition?.inputSchema).toBe(inputSchema);
       expect(definition?.outputSchema).toBe(outputSchema);
-      expect(definition?.annotations).toEqual({
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true
-      });
+      expect(definition?.annotations).toEqual(annotations);
       for (const [field, value] of [
-        ["providerId", "github.read.v1"],
+        ["providerId", "github.write.v1"],
         ["providerInstanceId", "prv_secret"],
         ["workspaceId", "ws_1"],
         ["endpoint", "/user"],
         ["method", "POST"],
         ["headers", { authorization: "secret" }],
         ["token", "secret"],
-        ["credential", "secret"]
+        ["credential", "secret"],
+        ["mergeMethod", "squash"],
+        ["deleteBranch", true]
       ] as const) {
         expect(inputSchema.safeParse({ ...input, [field]: value }).success).toBe(false);
       }

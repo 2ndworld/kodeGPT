@@ -243,7 +243,10 @@ describe("Provider Gateway conformance boundary", () => {
     expect(PROVIDER_MAX_STRUCTURAL_DEPTH).toBe(16);
     expect(PROVIDER_MAX_RESULT_ELEMENTS).toBe(1_000);
     expect(() => createProviderGatewayFixture({ maxProviderRequests: PROVIDER_MAX_REQUESTS + 1 })).toThrow();
-    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
+      "github.read.v1",
+      "github.write.v1"
+    ]);
     expect(PRODUCTION_PROVIDER_MANIFESTS[0]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.repository.inspect",
       "github.pr.inspect",
@@ -251,18 +254,24 @@ describe("Provider Gateway conformance boundary", () => {
       "github.issue.inspect",
       "github.issue.list"
     ]);
+    expect(PRODUCTION_PROVIDER_MANIFESTS[1]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.pr.create",
+      "github.pr.merge"
+    ]);
 
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(MCP_SURFACE_VERSION).toBe("0.8");
-    expect(names).toHaveLength(56);
+    expect(MCP_SURFACE_VERSION).toBe("0.9");
+    expect(names).toHaveLength(58);
     expect(names.filter((name) => name.startsWith("github."))).toEqual([
       "github.issue.inspect",
       "github.issue.list",
+      "github.pr.create",
       "github.pr.inspect",
       "github.pr.list",
+      "github.pr.merge",
       "github.repository.inspect"
     ]);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
-    expect(names.some((name) => /github\..*(create|update|delete|comment|merge|label)/.test(name))).toBe(false);
+    expect(names.some((name) => /github\..*(update|delete|comment|label)/.test(name))).toBe(false);
   });
 });

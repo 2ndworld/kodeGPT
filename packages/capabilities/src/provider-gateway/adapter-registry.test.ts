@@ -47,9 +47,41 @@ function manifest(overrides: Partial<ProviderAdapterManifest> = {}): ProviderAda
   };
 }
 
+function mutationManifest(overrides: Partial<ProviderAdapterManifest> = {}): ProviderAdapterManifest {
+  return manifest({
+    adapterId: "test.fixture.write.v1",
+    operations: [{
+      id: "record.mutate",
+      method: "PUT",
+      origin: "https://api.fixture.example",
+      pathTemplate: "/records/{recordId}",
+      allowedQueryKeys: [],
+      fixedHeaders: { accept: "application/json" },
+      inputSchema: z.object({ recordId: z.string().min(1) }).strict(),
+      encodeRequest: (input) => ({ pathParameters: { recordId: (input as { recordId: string }).recordId } })
+    }],
+    mappings: [{
+      semanticCapabilityId: "test.fixture.record.mutate",
+      adapterId: "test.fixture.write.v1",
+      adapterOperationId: "record.mutate",
+      effect: "REMOTE_MUTATION",
+      workspaceBinding: "NONE",
+      inputSchema: z.object({ recordId: z.string().min(1) }).strict(),
+      outputSchema: z.object({ ok: z.literal(true) }).strict(),
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["recordId"]
+    }],
+    ...overrides
+  });
+}
+
 describe("ProviderAdapterRegistry", () => {
-  it("ships exactly the reviewed GitHub read adapter in the production manifest inventory", () => {
-    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual(["github.read.v1"]);
+  it("ships separate reviewed GitHub read and write adapters in production", () => {
+    expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
+      "github.read.v1",
+      "github.write.v1"
+    ]);
     expect(Object.isFrozen(PRODUCTION_PROVIDER_MANIFESTS)).toBe(true);
     const registry = new ProviderAdapterRegistry(PRODUCTION_PROVIDER_MANIFESTS);
     expect(registry.require("github.read.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
@@ -59,8 +91,14 @@ describe("ProviderAdapterRegistry", () => {
       "github.issue.inspect",
       "github.issue.list"
     ]);
+    expect(registry.require("github.write.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.pr.create",
+      "github.pr.merge"
+    ]);
     expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
     expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
+    expect(registry.requireMapping("github.pr.create").adapterOperationId).toBe("pr.create");
+    expect(registry.requireMapping("github.pr.merge").adapterOperationId).toBe("pr.merge");
   });
 
   it("resolves a compiled manifest and semantic mapping", () => {
@@ -91,10 +129,13 @@ describe("ProviderAdapterRegistry", () => {
     })])).toThrowError(/owned operation/i);
   });
 
-  it("rejects non-read effects, invalid request budgets, and unsupported retry or binding values", () => {
+  it("accepts only reviewed read or single-attempt mutation effects", () => {
+    const registry = new ProviderAdapterRegistry([mutationManifest()]);
+    expect(registry.requireMapping("test.fixture.record.mutate").effect).toBe("REMOTE_MUTATION");
+
     expect(() => new ProviderAdapterRegistry([manifest({
       mappings: [{ ...manifest().mappings[0]!, effect: "REMOTE_WRITE" as "REMOTE_READ" }]
-    })])).toThrowError(/REMOTE_READ/i);
+    })])).toThrowError(/effect/i);
     expect(() => new ProviderAdapterRegistry([manifest({
       mappings: [{ ...manifest().mappings[0]!, maxProviderRequests: 9 }]
     })])).toThrowError(/request budget/i);
@@ -104,6 +145,12 @@ describe("ProviderAdapterRegistry", () => {
     expect(() => new ProviderAdapterRegistry([manifest({
       mappings: [{ ...manifest().mappings[0]!, workspaceBinding: "ANY" as "NONE" }]
     })])).toThrowError(/workspace binding/i);
+    expect(() => new ProviderAdapterRegistry([mutationManifest({
+      mappings: [{ ...mutationManifest().mappings[0]!, retry: "one-idempotent-read" }]
+    })])).toThrowError(/mutation.*retry/i);
+    expect(() => new ProviderAdapterRegistry([mutationManifest({
+      mappings: [{ ...mutationManifest().mappings[0]!, maxProviderRequests: 2 }]
+    })])).toThrowError(/mutation.*one request|exactly one/i);
   });
 
   it("rejects generic transport-shaped operations and non-exact origins", () => {

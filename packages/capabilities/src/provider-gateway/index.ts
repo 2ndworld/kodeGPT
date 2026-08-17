@@ -37,4 +37,17 @@ export type {
   GitHubIssueListInput,
   GitHubIssueListResult
 } from "./github.js";
+export {
+  GitHubPrCreateInputSchema,
+  GitHubPrCreateResultSchema,
+  GitHubPrMergeInputSchema,
+  GitHubPrMergeResultSchema
+} from "./github-write.js";
+export type {
+  GitHubPrCreateInput,
+  GitHubPrCreateResult,
+  GitHubPrMergeInput,
+  GitHubPrMergeResult
+} from "./github-write.js";
 export * from "./github-tool-adapter.js";
+export * from "./github-write-tool-adapter.js";

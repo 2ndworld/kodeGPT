@@ -38,7 +38,7 @@ export interface ProviderHttpsRequestInput {
   readonly hostname: string;
   readonly servername: string;
   readonly port: number;
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "PUT";
   readonly path: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Buffer | null;
@@ -150,7 +150,7 @@ export class DefaultProviderNetworkTransport implements ProviderNetworkTransport
 
   async #requestOnce(input: {
     url: URL;
-    method: "GET" | "POST";
+    method: "GET" | "POST" | "PUT";
     headers: Readonly<Record<string, string>>;
     body: Buffer | null;
     signal: AbortSignal;
@@ -298,7 +298,7 @@ function buildCompiledRequest(input: {
   allowedQueryKeys: readonly string[];
   fixedHeaders: Readonly<Record<string, string>>;
   encoded: ProviderEncodedRequest;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   credential: ProviderCredential | null;
 }): { url: URL; headers: Record<string, string>; body: Buffer | null } {
   assertExactEncoderKeys(input.encoded);

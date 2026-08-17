@@ -7,9 +7,11 @@ import {
   type ProviderSemanticMappingDefinition
 } from "./contracts.js";
 import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
+import { GITHUB_WRITE_PROVIDER_MANIFEST } from "./github-write.js";
 
 export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([
-  GITHUB_READ_PROVIDER_MANIFEST
+  GITHUB_READ_PROVIDER_MANIFEST,
+  GITHUB_WRITE_PROVIDER_MANIFEST
 ]);
 
 export class ProviderAdapterRegistry {
@@ -196,7 +198,7 @@ function validateOperation(operation: ProviderAdapterManifest["operations"][numb
     "encodeRequest"
   ], "operation");
   requireAuthorityId(operation.id, "provider operation id");
-  if (operation.method !== "GET" && operation.method !== "POST") {
+  if (operation.method !== "GET" && operation.method !== "POST" && operation.method !== "PUT") {
     throw invalid("Provider adapters must use a fixed provider operation method");
   }
   if (!origins.includes(operation.origin)) {
@@ -260,8 +262,8 @@ function validateMapping(
   if (!ownedOperations.has(mapping.adapterOperationId)) {
     throw invalid("Provider semantic mapping must reference an owned operation");
   }
-  if (mapping.effect !== "REMOTE_READ") {
-    throw invalid("Provider Gateway v1 mappings must use REMOTE_READ only");
+  if (mapping.effect !== "REMOTE_READ" && mapping.effect !== "REMOTE_MUTATION") {
+    throw invalid("Provider semantic mapping has invalid effect");
   }
   if (!["REQUIRED", "OPTIONAL", "NONE"].includes(mapping.workspaceBinding)) {
     throw invalid("Provider semantic mapping has invalid workspace binding");
@@ -271,6 +273,12 @@ function validateMapping(
   }
   if (mapping.retry !== "none" && mapping.retry !== "one-idempotent-read") {
     throw invalid("Provider semantic mapping has invalid retry policy");
+  }
+  if (mapping.effect === "REMOTE_MUTATION" && mapping.retry !== "none") {
+    throw invalid("Provider mutation mappings may not retry");
+  }
+  if (mapping.effect === "REMOTE_MUTATION" && mapping.maxProviderRequests !== 1) {
+    throw invalid("Provider mutation mappings must use exactly one request");
   }
   if (typeof mapping.inputSchema?.safeParse !== "function" || typeof mapping.outputSchema?.safeParse !== "function") {
     throw invalid("Provider semantic mapping must provide reviewed input and output schemas");

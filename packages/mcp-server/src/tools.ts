@@ -21,10 +21,14 @@ import {
   GitHubIssueInspectResultSchema,
   GitHubIssueListInputSchema,
   GitHubIssueListResultSchema,
+  GitHubPrCreateInputSchema,
+  GitHubPrCreateResultSchema,
   GitHubPrInspectInputSchema,
   GitHubPrInspectResultSchema,
   GitHubPrListInputSchema,
   GitHubPrListResultSchema,
+  GitHubPrMergeInputSchema,
+  GitHubPrMergeResultSchema,
   GitHubRepositoryInspectInputSchema,
   GitHubRepositoryInspectResultSchema,
   GitStageInputSchema,
@@ -67,6 +71,8 @@ import {
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
+  REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GIT_FETCH_TOOL_ANNOTATIONS,
   REMOTE_GIT_MUTATION_TOOL_ANNOTATIONS,
@@ -113,8 +119,10 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "git.status", required: ["workspaceId"] },
   { name: "github.issue.inspect", required: ["repository", "number"] },
   { name: "github.issue.list", required: ["repository"] },
+  { name: "github.pr.create", required: ["repository", "title", "headBranch", "baseBranch"] },
   { name: "github.pr.inspect", required: ["repository", "number"] },
   { name: "github.pr.list", required: ["repository"] },
+  { name: "github.pr.merge", required: ["repository", "number", "expectedHeadOid"] },
   { name: "github.repository.inspect", required: ["repository"] },
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
@@ -281,6 +289,20 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "github.pr.create",
+    {
+      description: "Create one bounded GitHub pull request through the separately admitted write provider.",
+      inputSchema: GitHubPrCreateInputSchema,
+      outputSchema: GitHubPrCreateResultSchema,
+      annotations: REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubPrCreateResultSchema.parse(await context.github.prCreate(input))
+      )
+  );
+
+  server.registerTool(
     "github.pr.inspect",
     {
       description: "Inspect one bounded normalized GitHub pull request through the admitted read-only provider.",
@@ -304,6 +326,20 @@ export function registerKodegptTools(
     },
     async (input) =>
       nativeCapabilityResult(async () => GitHubPrListResultSchema.parse(await context.github.prList(input)))
+  );
+
+  server.registerTool(
+    "github.pr.merge",
+    {
+      description: "Merge one GitHub pull request only when its head matches the exact expected object ID.",
+      inputSchema: GitHubPrMergeInputSchema,
+      outputSchema: GitHubPrMergeResultSchema,
+      annotations: REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubPrMergeResultSchema.parse(await context.github.prMerge(input))
+      )
   );
 
   server.registerTool(
