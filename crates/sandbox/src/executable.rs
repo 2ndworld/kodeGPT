@@ -5,8 +5,12 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rustix::fs::{StatVfsMountFlags, statvfs};
+
 use crate::PROCESS_SPAWN_LOCK;
 
+pub(crate) const SANDBOX_MARKER_ENV: &str = "KODEGPT_SANDBOX";
+const SANDBOX_MARKER_VALUE: &str = "1";
 const TRUSTED_EXECUTABLE_DIRS: [&str; 3] = ["/usr/local/bin", "/usr/bin", "/bin"];
 
 pub const BUBBLEWRAP_MINIMUM_VERSION: ExecutableVersion = ExecutableVersion {
@@ -359,6 +363,32 @@ fn canonical_location_is_trusted(canonical: &Path) -> bool {
     })
 }
 
+fn system_owner_is_trusted(
+    uid: u32,
+    overflow_uid: Option<u32>,
+    sandbox_view: bool,
+    read_only: bool,
+) -> bool {
+    uid == 0 || (sandbox_view && read_only && overflow_uid == Some(uid))
+}
+
+fn kernel_overflow_uid() -> Option<u32> {
+    fs::read_to_string("/proc/sys/kernel/overflowuid")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn system_path_owner_is_trusted(path: &Path, uid: u32) -> bool {
+    let sandbox_view =
+        std::env::var_os(SANDBOX_MARKER_ENV).is_some_and(|value| value == SANDBOX_MARKER_VALUE);
+    let read_only = statvfs(path)
+        .ok()
+        .is_some_and(|stat| stat.f_flag.contains(StatVfsMountFlags::RDONLY));
+    system_owner_is_trusted(uid, kernel_overflow_uid(), sandbox_view, read_only)
+}
+
 fn trusted_directory_chain_is_safe(path: &Path) -> bool {
     let Ok(canonical) = fs::canonicalize(path) else {
         return false;
@@ -367,7 +397,9 @@ fn trusted_directory_chain_is_safe(path: &Path) -> bool {
         let Ok(metadata) = fs::metadata(ancestor) else {
             return false;
         };
-        metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0
+        metadata.is_dir()
+            && system_path_owner_is_trusted(ancestor, metadata.uid())
+            && metadata.mode() & 0o022 == 0
     })
 }
 
@@ -377,7 +409,7 @@ fn inspect_trusted_path(path: &Path) -> Result<ExecutableIdentity, TrustedExecut
     if !file_type.is_file() || file_type.is_dir() || file_type.is_symlink() {
         return Err(TrustedExecutableError::NotRegularFile);
     }
-    if metadata.uid() != 0 {
+    if !system_path_owner_is_trusted(path, metadata.uid()) {
         return Err(TrustedExecutableError::OwnerNotRoot);
     }
 
@@ -511,10 +543,30 @@ mod tests {
     #[test]
     fn remapped_system_owner_is_trusted_only_for_read_only_kodegpt_sandbox_view() {
         assert!(super::system_owner_is_trusted(0, Some(65534), false, false));
-        assert!(super::system_owner_is_trusted(65534, Some(65534), true, true));
-        assert!(!super::system_owner_is_trusted(65534, Some(65534), false, true));
-        assert!(!super::system_owner_is_trusted(65534, Some(65534), true, false));
-        assert!(!super::system_owner_is_trusted(1000, Some(65534), true, true));
+        assert!(super::system_owner_is_trusted(
+            65534,
+            Some(65534),
+            true,
+            true
+        ));
+        assert!(!super::system_owner_is_trusted(
+            65534,
+            Some(65534),
+            false,
+            true
+        ));
+        assert!(!super::system_owner_is_trusted(
+            65534,
+            Some(65534),
+            true,
+            false
+        ));
+        assert!(!super::system_owner_is_trusted(
+            1000,
+            Some(65534),
+            true,
+            true
+        ));
         assert!(!super::system_owner_is_trusted(65534, None, true, true));
     }
 

@@ -13,7 +13,7 @@ use rustix::io::{FdFlags, fcntl_setfd};
 
 use crate::PROCESS_SPAWN_LOCK;
 use crate::executable::{
-    ExplicitExecutableMount, TrustedExecutable, TrustedExecutableError,
+    ExplicitExecutableMount, SANDBOX_MARKER_ENV, TrustedExecutable, TrustedExecutableError,
     open_explicit_directory_from_env, resolve_bubblewrap,
 };
 
@@ -25,7 +25,14 @@ const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const RUNTIME_SYSTEM_PATHS: [&str; 5] = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
 const RESOLVER_RUNTIME_DIRECTORY: &str = "/run/systemd/resolve";
-const RESERVED_ENV: [&str; 5] = ["COREPACK_HOME", "HOME", "PATH", "TMPDIR", "PWD"];
+const RESERVED_ENV: [&str; 6] = [
+    "COREPACK_HOME",
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "PWD",
+    SANDBOX_MARKER_ENV,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxNetworkMode {
@@ -389,6 +396,9 @@ impl BubblewrapProvider {
             "--setenv",
             "TMPDIR",
             "/tmp",
+            "--setenv",
+            SANDBOX_MARKER_ENV,
+            "1",
         ]);
         if corepack_fd.is_some() {
             command.args(["--setenv", "COREPACK_HOME", CHILD_COREPACK_HOME]);
@@ -493,6 +503,7 @@ mod tests {
         BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
         cwd_is_beneath_workspace,
     };
+    use crate::executable::SANDBOX_MARKER_ENV;
     use crate::resolve_trusted_executable;
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -754,7 +765,7 @@ mod tests {
         let mut spec = SandboxLaunchSpec::new(
             resolve_trusted_executable("env").expect("trusted env executable"),
         );
-        for reserved in ["HOME", "PATH", "TMPDIR", "PWD"] {
+        for reserved in ["HOME", "PATH", "TMPDIR", "PWD", SANDBOX_MARKER_ENV] {
             spec.env = BTreeMap::from([(reserved.to_owned(), "/host".to_owned())]);
             assert!(
                 matches!(
