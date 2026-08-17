@@ -15,6 +15,7 @@ import {
   NativeCapabilityService,
   PRODUCTION_PROVIDER_MANIFESTS,
   ProviderAuditClient,
+  createGitHubReadToolAdapter,
   createGitHubRemoteCiToolAdapter,
   createProviderGatewayRuntime,
   type GitHubRemoteCiToolAdapterDependencies,
@@ -187,7 +188,7 @@ export interface ProductionServiceStackDependencies {
   createRemoteCi?(options: GitHubRemoteCiToolAdapterDependencies): RemoteCiToolAdapter;
   createProviderGateway?(
     input: Parameters<typeof createProviderGatewayRuntime>[0]
-  ): Pick<ProviderGatewayRuntime, "close">;
+  ): ProviderGatewayRuntime;
 }
 
 export interface ProductionServiceStack {
@@ -212,7 +213,7 @@ export async function createProductionServiceStack(
 
   let kernel: StartKernel | undefined;
   let skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined;
-  let providerRuntime: Pick<ProviderGatewayRuntime, "close"> | undefined;
+  let providerRuntime: ProviderGatewayRuntime | undefined;
   try {
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
@@ -413,6 +414,7 @@ export async function createProductionServiceStack(
       artifactStore,
       nativeCapabilities,
       remoteCi,
+      githubRead: createGitHubReadToolAdapter(providerRuntime),
       extensionRegistry,
       skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
