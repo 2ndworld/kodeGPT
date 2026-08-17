@@ -13,8 +13,11 @@ import type {
   VerificationWorkspaceAdapter,
   WorkspaceInspectionAdapter
 } from "./adapters.js";
+import { impactCode } from "./code-impact.js";
 import { searchCode } from "./code-search.js";
 import type {
+  CodeImpactInput,
+  CodeImpactResult,
   CodeSearchInput,
   CodeSearchResult,
   ContextBuildInput,
@@ -57,6 +60,7 @@ import { inspectWorkspace } from "./workspace-inspect.js";
 export type NativeCapabilityName =
   | "workspace.inspect"
   | "code.search"
+  | "code.impact"
   | "git.changes"
   | "git.stage"
   | "git.commit"
@@ -124,6 +128,14 @@ export class NativeCapabilityService {
 
   async searchCode(input: CodeSearchInput): Promise<CodeSearchResult> {
     return searchCode(
+      this.#dependencies.workspace.inspection,
+      this.#dependencies.workspace.search,
+      input
+    );
+  }
+
+  async impactCode(input: CodeImpactInput): Promise<CodeImpactResult> {
+    return impactCode(
       this.#dependencies.workspace.inspection,
       this.#dependencies.workspace.search,
       input

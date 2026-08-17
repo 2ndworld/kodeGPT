@@ -10,6 +10,8 @@ import {
   CiRunsResultSchema,
   CiStatusInputSchema,
   CiStatusResultSchema,
+  CodeImpactInputSchema,
+  CodeImpactResultSchema,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
   ContextBuildInputSchema,
@@ -52,6 +54,7 @@ import {
   VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
+  type CodeImpactResult,
   type CodeSearchResult,
   type ContextBuildResult,
   type FilePatchResult,
@@ -136,6 +139,16 @@ const typedCodeSearchResult: CodeSearchResult = {
       preview: "function needle() {}"
     }
   ],
+  truncated: false,
+  truncationReasons: []
+};
+
+const typedCodeImpactResult: CodeImpactResult = {
+  schemaVersion: 1,
+  target: { kind: "symbol", value: "needle", resolvedPaths: ["src/main.ts"] },
+  dependents: [{ path: "src/use.ts", relationship: "reference", line: 4 }],
+  relatedTests: ["src/main.test.ts"],
+  affectedAreas: ["src"],
   truncated: false,
   truncationReasons: []
 };
@@ -322,7 +335,8 @@ function makeContext(): KodegptToolContext {
       health: async () => ({ ok: true })
     },
     code: {
-      search: async () => typedCodeSearchResult
+      search: async () => typedCodeSearchResult,
+      impact: async () => typedCodeImpactResult
     },
     file: {
       patch: async () => typedFilePatchResult
@@ -799,6 +813,37 @@ describe("structured MCP tool results", () => {
     };
 
     expect(result.structuredContent).toEqual(typedCodeSearchResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("keeps code.impact schemas, annotations, and structured fallback aligned", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const handler = handlers.get("code.impact");
+    const definition = definitions.get("code.impact");
+    expect(handler).toBeDefined();
+    expect(definition?.inputSchema).toBe(CodeImpactInputSchema);
+    expect(definition?.outputSchema).toBe(CodeImpactResultSchema);
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      target: "needle",
+      kind: "symbol"
+    } as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+
+    expect(result.structuredContent).toEqual(typedCodeImpactResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 

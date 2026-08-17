@@ -34,6 +34,13 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "find reference",
     "find definition"
   ]),
+  "code.impact": entry("code.impact", "Find bounded dependents, references, tests, and affected repository areas.", [
+    "impact analysis",
+    "find dependents",
+    "affected tests",
+    "affected areas",
+    "dependency impact"
+  ]),
   "file.read": entry("file.read", "Read bounded file content.", [
     "read file",
     "inspect file",

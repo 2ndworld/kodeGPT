@@ -10,6 +10,8 @@ import type {
   CiRunsResult,
   CiStatusInput,
   CiStatusResult,
+  CodeImpactInput,
+  CodeImpactResult,
   CodeSearchInput,
   CodeSearchResult,
   ContextBuildInput,
@@ -181,6 +183,7 @@ export interface SystemToolContext {
 
 export interface CodeToolContext {
   search(input: CodeSearchInput): Promise<CodeSearchResult>;
+  impact(input: CodeImpactInput): Promise<CodeImpactResult>;
 }
 
 export interface FileCapabilityToolContext {
@@ -271,6 +274,7 @@ export type ExtensionRegistryToolAdapter = Pick<ExtensionRegistry, "listEnabled"
 export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
   searchCode(input: CodeSearchInput): Promise<CodeSearchResult>;
+  impactCode(input: CodeImpactInput): Promise<CodeImpactResult>;
   gitChanges(input: GitChangesInput): Promise<GitChangesResult>;
   gitStage(input: GitStageInput): Promise<GitLocalMutationResult>;
   gitCommit(input: GitCommitInput): Promise<GitLocalMutationResult>;
@@ -396,7 +400,8 @@ export function createKodegptToolContext(options: {
       health: async () => requireJsonObject(await options.health(), "system.health")
     },
     code: {
-      search: (input) => native.searchCode(input)
+      search: (input) => native.searchCode(input),
+      impact: (input) => native.impactCode(input)
     },
     file: {
       patch: (input) => native.patchFile(input)
@@ -493,6 +498,7 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
   return {
     inspectWorkspace: () => unavailable("workspace.inspect"),
     searchCode: () => unavailable("code.search"),
+    impactCode: () => unavailable("code.impact"),
     gitChanges: () => unavailable("git.changes"),
     gitStage: () => unavailable("git.stage"),
     gitCommit: () => unavailable("git.commit"),

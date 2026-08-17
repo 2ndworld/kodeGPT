@@ -9,6 +9,8 @@ import {
   CiRunsResultSchema,
   CiStatusInputSchema,
   CiStatusResultSchema,
+  CodeImpactInputSchema,
+  CodeImpactResultSchema,
   CodeSearchInputSchema,
   CodeSearchResultSchema,
   ContextBuildInputSchema,
@@ -89,6 +91,7 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "ci.run", required: ["runId"] },
   { name: "ci.runs", required: [] },
   { name: "ci.status", required: [] },
+  { name: "code.impact", required: ["workspaceId", "target"] },
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
@@ -470,6 +473,22 @@ export function registerKodegptTools(
       nativeCapabilityResult(async () =>
         CodeSearchResultSchema.parse(
           await context.code.search({ workspaceId, query, mode, path, maxResults })
+        )
+      )
+  );
+
+  server.registerTool(
+    "code.impact",
+    {
+      description: "Find bounded repository dependents, references, related tests, and affected areas for a file or symbol.",
+      inputSchema: CodeImpactInputSchema,
+      outputSchema: CodeImpactResultSchema,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, target, kind, path, maxResults }) =>
+      nativeCapabilityResult(async () =>
+        CodeImpactResultSchema.parse(
+          await context.code.impact({ workspaceId, target, kind, path, maxResults })
         )
       )
   );
