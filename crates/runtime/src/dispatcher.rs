@@ -88,6 +88,7 @@ fn ci_error_code_str(value: CiErrorCode) -> &'static str {
         CiErrorCode::ResponseLimitExceeded => "CI_RESPONSE_LIMIT_EXCEEDED",
         CiErrorCode::LogUnavailable => "CI_LOG_UNAVAILABLE",
         CiErrorCode::LogLimitExceeded => "CI_LOG_LIMIT_EXCEEDED",
+        CiErrorCode::MutationOutcomeUnknown => "CI_MUTATION_OUTCOME_UNKNOWN",
     }
 }
 
@@ -357,6 +358,9 @@ async fn dispatch_one(
                 CiCapability::Runs => AuditAction::CiRuns,
                 CiCapability::Run => AuditAction::CiRun,
                 CiCapability::Failure => AuditAction::CiFailure,
+                CiCapability::Rerun => AuditAction::CiRerun,
+                CiCapability::Cancel => AuditAction::CiCancel,
+                CiCapability::Dispatch => AuditAction::CiDispatch,
             };
             let metadata = CiAuditMetadata {
                 provider: match params.provider {
@@ -3469,6 +3473,7 @@ mod tests {
         audit: Arc<AuditSink>,
         id: &str,
         operation_id: &str,
+        capability: &str,
         phase: &str,
     ) -> Value {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
@@ -3481,7 +3486,7 @@ mod tests {
                 json!({
                     "capabilityId": "kc_ci_audit",
                     "operationId": operation_id,
-                    "ciCapability": "ci.status",
+                    "ciCapability": capability,
                     "phase": phase,
                     "provider": "github",
                     "repository": "2ndworld/kodeGPT",
@@ -3601,6 +3606,7 @@ mod tests {
             Arc::clone(&audit),
             "req_ci_decision",
             "op_ci_control_plane",
+            "ci.status",
             "decision",
         )
         .await;
@@ -3610,6 +3616,7 @@ mod tests {
             Arc::clone(&audit),
             "req_ci_failed",
             "op_ci_control_plane",
+            "ci.status",
             "failed",
         )
         .await;
@@ -3622,6 +3629,37 @@ mod tests {
         assert!(audit_text.contains("CI_RATE_LIMITED"));
         assert!(!audit_text.contains("https://github.com"));
         assert!(!audit_text.contains("Authorization"));
+
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn ci_mutation_audit_capabilities_route_to_distinct_durable_actions() {
+        let (audit, audit_root) = audit_sink("ci-mutation-control-plane");
+
+        for (index, (capability, action)) in [
+            ("ci.rerun", "ci_rerun"),
+            ("ci.cancel", "ci_cancel"),
+            ("ci.dispatch", "ci_dispatch"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let response = ci_audit_once(
+                Arc::clone(&audit),
+                &format!("req_ci_mutation_{index}"),
+                &format!("op_ci_mutation_{index}"),
+                capability,
+                "decision",
+            )
+            .await;
+            assert_eq!(response["result"]["ok"], true, "{capability}");
+            let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+            assert!(
+                audit_text.contains(action),
+                "missing durable action {action}"
+            );
+        }
 
         fs::remove_dir_all(audit_root).expect("audit root removed");
     }
@@ -3645,6 +3683,7 @@ mod tests {
             Arc::clone(&audit),
             "req_ci_fault",
             "op_ci_fault",
+            "ci.status",
             "decision",
         )
         .await;
