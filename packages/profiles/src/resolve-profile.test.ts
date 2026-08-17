@@ -8,6 +8,18 @@ import {
 } from "./index.js";
 
 describe("monotonic project profile resolution", () => {
+  it("exposes bash and sh only through the built-in trusted preset", () => {
+    const trusted = getProfilePreset("trusted");
+    const develop = getProfilePreset("develop");
+    const observe = getProfilePreset("observe");
+
+    expect(trusted.allowedExecutableNames).toEqual(expect.arrayContaining(["bash", "sh"]));
+    for (const shell of ["bash", "sh"]) {
+      expect(develop.allowedExecutableNames).not.toContain(shell);
+      expect(observe.allowedExecutableNames).not.toContain(shell);
+    }
+  });
+
   it("rejects a trusted/write/process request above an observe ceiling", () => {
     const ceiling = getProfilePreset("observe");
     const requested = profilePolicySchema.parse({

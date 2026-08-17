@@ -28,7 +28,17 @@ export function getProfilePreset(name: ProfileName): ProfilePolicy {
         allowWrite: true,
         allowProcess: true,
         network: "unrestricted",
-        allowedExecutableNames: ["cargo", "node", "npm", "npx", "pnpm", "python3", "rustc"],
+        allowedExecutableNames: [
+          "bash",
+          "cargo",
+          "node",
+          "npm",
+          "npx",
+          "pnpm",
+          "python3",
+          "rustc",
+          "sh"
+        ],
         inheritEnv: false,
         envAllowlist: ["CI", "LANG", "LC_ALL", "TERM"]
       };
