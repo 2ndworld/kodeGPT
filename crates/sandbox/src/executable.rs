@@ -64,6 +64,7 @@ struct ExecutableRootIdentity {
 
 pub(crate) struct ExplicitExecutableMount {
     pub(crate) root_fd: OwnedFd,
+    pub(crate) root_canonical_path: PathBuf,
     pub(crate) relative_program: PathBuf,
 }
 
@@ -175,6 +176,7 @@ impl TrustedExecutable {
         }
         Ok(Some(ExplicitExecutableMount {
             root_fd: OwnedFd::from(root_file),
+            root_canonical_path: root.canonical_path.clone(),
             relative_program,
         }))
     }

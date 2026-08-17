@@ -258,6 +258,21 @@ pub fn run_process(
     let program =
         resolve_trusted_executable(&request.logical_executable).map_err(SandboxError::from)?;
     let mut spec = SandboxLaunchSpec::new(program);
+    if policy.name == ProfileName::Trusted {
+        for candidates in [&["node", "npm", "npx", "pnpm"][..], &["cargo", "rustc"][..]] {
+            let Some(name) = candidates.iter().find(|candidate| {
+                policy
+                    .allowed_executable_names
+                    .iter()
+                    .any(|allowed| allowed == **candidate)
+            }) else {
+                continue;
+            };
+            if let Ok(auxiliary) = resolve_trusted_executable(name) {
+                spec.auxiliary_programs.push(auxiliary);
+            }
+        }
+    }
     spec.args = request.argv.into_iter().map(OsString::from).collect();
     spec.env = request.env;
     spec.cwd = child_cwd;
@@ -642,7 +657,9 @@ fn terminate_child(child: &mut kodegpt_sandbox::SandboxChild) {
 mod tests {
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -683,6 +700,18 @@ mod tests {
         }
     }
 
+    fn trusted_toolchain_policy() -> RuntimePolicy {
+        RuntimePolicy {
+            name: ProfileName::Trusted,
+            allow_write: true,
+            allow_process: true,
+            network: NetworkMode::Deny,
+            allowed_executable_names: vec!["node".to_owned(), "cargo".to_owned()],
+            inherit_env: InheritEnvDisabled,
+            env_allowlist: Vec::new(),
+        }
+    }
+
     fn run_python(
         workspace: &PathBuf,
         state: &PathBuf,
@@ -717,6 +746,99 @@ mod tests {
     }
 
     use std::collections::BTreeMap;
+
+    #[test]
+    fn trusted_node_process_can_compose_validated_rust_toolchain_without_host_path() {
+        let node_root = temporary_root("trusted-node-root");
+        let rust_root = temporary_root("trusted-rust-root");
+        let workspace = temporary_root("trusted-toolchain-workspace");
+        let state = temporary_root("trusted-toolchain-state");
+        fs::create_dir_all(node_root.join("bin")).expect("node bin");
+        fs::create_dir_all(rust_root.join("bin")).expect("rust bin");
+
+        let node = node_root.join("bin/node");
+        fs::write(
+            &node,
+            b"#!/bin/sh\ncase \"$PATH\" in *kodegpt-host-path-sentinel*) exit 91;; esac\ncargo\n",
+        )
+        .expect("node fixture");
+        let mut node_permissions = fs::metadata(&node).expect("node metadata").permissions();
+        node_permissions.set_mode(0o755);
+        fs::set_permissions(&node, node_permissions).expect("node executable mode");
+
+        let cargo = rust_root.join("bin/cargo");
+        fs::write(&cargo, b"#!/bin/sh\nprintf 'nested-cargo-ok\\n'\n").expect("cargo fixture");
+        let mut cargo_permissions = fs::metadata(&cargo).expect("cargo metadata").permissions();
+        cargo_permissions.set_mode(0o755);
+        fs::set_permissions(&cargo, cargo_permissions).expect("cargo executable mode");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "process::tests::trusted_toolchain_composition_subprocess_helper",
+            ])
+            .env("KODEGPT_HOST_NODE_ROOT", &node_root)
+            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &rust_root)
+            .env("KODEGPT_TEST_WORKSPACE", &workspace)
+            .env("KODEGPT_TEST_STATE", &state)
+            .env("PATH", "/tmp/kodegpt-host-path-sentinel")
+            .output()
+            .expect("nested process test runs");
+
+        assert!(
+            output.status.success(),
+            "trusted toolchain composition failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        fs::remove_dir_all(node_root).expect("node root cleanup");
+        fs::remove_dir_all(rust_root).expect("rust root cleanup");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    #[ignore = "invoked by trusted_node_process_can_compose_validated_rust_toolchain_without_host_path"]
+    fn trusted_toolchain_composition_subprocess_helper() {
+        let workspace = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
+        );
+        let state =
+            PathBuf::from(std::env::var_os("KODEGPT_TEST_STATE").expect("state fixture env"));
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = Arc::new(RawSpoolStore::open(&state, audit).expect("spool store"));
+        let executions = Arc::new(Mutex::new(ExecutionRegistry::default()));
+        let operations = Arc::new(ProcessOperationRegistry::default());
+        let view = run_process(
+            root_fd,
+            "kc_toolchain_fixture".to_owned(),
+            "req_toolchain_fixture".to_owned(),
+            next_process_operation_id(),
+            trusted_toolchain_policy(),
+            ProcessLaunchRequest {
+                logical_executable: "node".to_owned(),
+                argv: Vec::new(),
+                cwd: ".".to_owned(),
+                env: BTreeMap::new(),
+                background: false,
+            },
+            spool,
+            executions,
+            operations,
+        )
+        .expect("trusted node process starts");
+        assert_eq!(
+            view.state,
+            ProcessState::Completed,
+            "{}",
+            view.stderr_preview
+        );
+        assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
+        assert_eq!(view.stdout_preview, "nested-cargo-ok\n");
+    }
 
     #[test]
     fn policy_denies_observe_unknown_executable_and_non_allowlisted_environment() {
