@@ -81,4 +81,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# Trigger after the CI fix workflow exists in the branch parent.
+# Rerun after adding browser annotation transport coverage.
