@@ -63,12 +63,12 @@ Complete-diff review found no new process/network/provider authority, no retry/a
 
 The production addition is deliberately opt-in. This preserves KodeGPT's existing flexibility while giving callers a compare-and-swap path when they are acting from previously observed file state.
 
-## Remaining closure
+## Post-merge closure
 
-1. commit this evidence separately;
-2. push the exact branch and create a focused PR against `main`;
-3. require deterministic CI PASS and exact-head merge;
-4. fast-forward canonical `main` to the merge commit;
-5. build/stage an immutable merged-main release without hidden cutover;
-6. explicitly restart/cut over and verify service status/health at `0.1 / 2026-07-28 / 0.10`;
-7. if the KodeGPT connector is exposed in the session, live-dogfood a guarded stale write; otherwise do not claim a synthetic MCP result.
+PR #37 merged with exact head `db82820750bfe5dd63b0f4a89938fa26e15eb91a` as merge commit `a15934e8457cb274930356b3b3dd9b1cf0398651`. Both deterministic CI runs on that exact amended head passed: push run `32105275834` and pull-request run `32105279200`. Canonical `main` was then fast-forwarded exactly to the merge commit with a clean working tree.
+
+Merged-main `pnpm --filter kodegpt build` completed successfully and produced clean artifact provenance with `sourceRevision=a15934e8457cb274930356b3b3dd9b1cf0398651`, `sourceDirty=false`, pair `pair_d97c7a6daaf511685164e718668a609f`, CLI SHA-256 `0b7c3b6b239b649d05a6ad32c8df80eeb198b76b6f3a781b41a9b3f39952ac98`, and runtime SHA-256 `b1095606a8e55e43bdab589e605b612bd0bc18e7de844b0c1ddc271de9acc98e`.
+
+`service install --name public:kodegpt-dev --port 43121` staged immutable release `rel_10e8b6a2dcd15560fd1a515578840caf` while `rel_ef2a32659085c0fccc419e2a6ed3d007` remained active, proving there was no hidden cutover. Explicit `service restart` then promoted `rel_10e8b6a2dcd15560fd1a515578840caf` and retained `rel_ef2a32659085c0fccc419e2a6ed3d007` as rollback. Final service status is running, enabled, listener-ready, managed-exposure ready, and reports runtime/protocol/semantic surface `0.1 / 2026-07-28 / 0.10`; `kodegpt doctor --json` returns `ok=true` with the packaged runtime executable available.
+
+The running server contains the optional precondition schema, but this ChatGPT session does not expose a refreshed KodeGPT connector action snapshot after the input-definition change. Per host compatibility policy, the connector/tool actions must be refreshed/rescanned before host-level evidence can exercise `file.write.precondition`. No synthetic guarded-write MCP result is claimed. Source, focused tests, complete local verification, and exact-head CI prove the guarded semantics; host-schema acceptance remains a refresh step rather than an implementation gap.
