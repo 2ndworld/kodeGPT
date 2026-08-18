@@ -85,6 +85,7 @@ jobs:
           rm .github/workflows/phase2-recovery.yml
           rm .github/phase2-recovery.py
           rm .github/phase2-recovery.patch
+          rm .github/phase2-recovery-extra.patch
           git add -A
           git diff --cached --check
           git config user.name "github-actions[bot]"
