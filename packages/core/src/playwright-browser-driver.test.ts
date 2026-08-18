@@ -5,6 +5,7 @@ import {
   isAllowedPreviewDocumentUrl,
   isAllowedPreviewRequest,
   isAllowedPreviewWebSocket,
+  isCurrentPreviewWebSocketAllowed,
   isScreenshotGeometryAllowed
 } from "./playwright-browser-driver.js";
 
@@ -39,6 +40,23 @@ describe("Playwright preview navigation guard", () => {
     expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "localhost")).toBe(false);
     expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "unrestricted")).toBe(true);
     expect(isAllowedPreviewWebSocket(origin, "https://example.test/not-websocket", "unrestricted")).toBe(false);
+  });
+
+  it("re-evaluates active WebSocket authority when workspace policy tightens", async () => {
+    const origin = "http://127.0.0.1:4173";
+    const external = "wss://example.test/socket";
+    let mode: "unrestricted" | "deny" = "unrestricted";
+    let fail = false;
+    const resolve = () => {
+      if (fail) throw new Error("policy unavailable");
+      return mode;
+    };
+
+    expect(await isCurrentPreviewWebSocketAllowed(origin, external, resolve)).toBe(true);
+    mode = "deny";
+    expect(await isCurrentPreviewWebSocketAllowed(origin, external, resolve)).toBe(false);
+    fail = true;
+    expect(await isCurrentPreviewWebSocketAllowed(origin, external, resolve)).toBe(false);
   });
 
   it("rejects oversized full-page screenshot geometry before capture", () => {
