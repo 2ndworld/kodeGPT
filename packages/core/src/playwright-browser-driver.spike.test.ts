@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, it } from "vitest";
@@ -51,7 +51,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
 }
 
 spike("launches sandboxed system Chrome and enforces dynamic loopback WebSocket policy", async () => {
-  const webSockets = new Set<Socket>();
+  const webSockets = new Set<Duplex>();
   const received: string[] = [];
   const webSocketServer = createServer();
   webSocketServer.on("upgrade", (request, socket) => {
