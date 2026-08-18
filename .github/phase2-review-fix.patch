@@ -1,0 +1,279 @@
+diff --git a/packages/core/src/browser-manager.ts b/packages/core/src/browser-manager.ts
+--- a/packages/core/src/browser-manager.ts
++++ b/packages/core/src/browser-manager.ts
+@@
+ export interface BrowserDriverOpenInput {
+   url: string;
+   origin: string;
+   viewport: BrowserViewport;
+-  networkMode: BrowserNetworkMode;
++  networkMode(): BrowserNetworkMode | Promise<BrowserNetworkMode>;
+   onConsole(event: BrowserConsoleEvent): void;
+   onNetworkFailure(event: BrowserNetworkFailureEvent): void;
+   onDisconnect(): void;
+ }
+@@
+     if (this.#sessions.size >= MAX_BROWSER_SESSIONS) {
+       throw new BrowserManagerError("BROWSER_LIMIT_REACHED", "browser session limit reached");
+     }
+     const viewport = validateViewport(input.viewport);
+-    let networkMode: BrowserNetworkMode = "deny";
+-    if (this.#authority) {
++    const networkMode = async (): Promise<BrowserNetworkMode> => {
++      if (!this.#authority) return "deny";
+       try {
+-        networkMode = await this.#authority.networkMode(input.workspaceId);
++        return await this.#authority.networkMode(input.workspaceId);
+       } catch {
+-        throw new BrowserManagerError("BROWSER_PREVIEW_NOT_READY", "workspace browser authority is unavailable");
++        return "deny";
+       }
+-    }
++    };
+     const consoleEntries: BrowserConsoleEntry[] = [];
+@@
+-    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES;
++    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES * 2;
+     const body = truncateUtf8(evidence.bodyText, Math.floor(textEvidenceBudget / 2));
+     const aria = truncateUtf8(evidence.ariaSnapshot, Math.ceil(textEvidenceBudget / 2));
+     const title = truncateUtf8(evidence.title, BROWSER_ENTRY_MAX_BYTES);
++    const url = truncateUtf8(evidence.url, BROWSER_ENTRY_MAX_BYTES);
+     const reasons = [
+       ...(body.truncated ? ["bodyText"] : []),
+       ...(aria.truncated ? ["ariaSnapshot"] : []),
+-      ...(title.truncated ? ["title"] : [])
++      ...(title.truncated ? ["title"] : []),
++      ...(url.truncated ? ["url"] : [])
+     ];
+@@
+-      url: evidence.url,
++      url: url.value,
+diff --git a/packages/core/src/browser-manager.test.ts b/packages/core/src/browser-manager.test.ts
+--- a/packages/core/src/browser-manager.test.ts
++++ b/packages/core/src/browser-manager.test.ts
+@@
+-  it("passes the effective workspace network mode to the browser driver", async () => {
++  it("resolves the effective workspace network mode dynamically and fails closed", async () => {
+     const fixture = manager();
++    let mode: "localhost" | "deny" = "localhost";
++    let fail = false;
+     const bounded = new BrowserManager(fixture.preview, fixture.driver, fixture.artifacts, {
+-      networkMode: () => "localhost"
++      networkMode: () => {
++        if (fail) throw new Error("policy unavailable");
++        return mode;
++      }
+     });
+ 
+     await bounded.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
+ 
+-    expect(fixture.driver.opens[0]?.networkMode).toBe("localhost");
++    const resolver = fixture.driver.opens[0]?.networkMode;
++    if (!resolver) throw new Error("network resolver missing");
++    expect(await resolver()).toBe("localhost");
++    mode = "deny";
++    expect(await resolver()).toBe("deny");
++    fail = true;
++    expect(await resolver()).toBe("deny");
+   });
+@@
+     fixture.driver.sessions[0]!.inspectValue = {
+       ...fixture.driver.sessions[0]!.inspectValue,
++      url: `http://127.0.0.1:4173/${"u".repeat(4000)}`,
+       bodyText: "x".repeat(40_000),
+       ariaSnapshot: "y".repeat(40_000)
+@@
+     });
+     expect(inspected.truncated).toBe(true);
+-    expect(Buffer.byteLength(inspected.bodyText) + Buffer.byteLength(inspected.ariaSnapshot)).toBeLessThanOrEqual(32 * 1024);
++    expect(inspected.truncationReasons).toContain("url");
++    expect(Buffer.byteLength(inspected.url)).toBeLessThanOrEqual(2048);
++    expect(
++      Buffer.byteLength(inspected.title) +
++        Buffer.byteLength(inspected.url) +
++        Buffer.byteLength(inspected.bodyText) +
++        Buffer.byteLength(inspected.ariaSnapshot)
++    ).toBeLessThanOrEqual(32 * 1024);
+diff --git a/packages/core/src/playwright-browser-driver.ts b/packages/core/src/playwright-browser-driver.ts
+--- a/packages/core/src/playwright-browser-driver.ts
++++ b/packages/core/src/playwright-browser-driver.ts
+@@
+ const BROWSER_ACTION_TIMEOUT_MS = 5_000;
++export const BROWSER_FULL_PAGE_MAX_PIXELS = 3840 * 2160;
+@@
+ export function isAllowedPreviewRequest(
+@@
+   );
+ }
++
++export function isAllowedPreviewWebSocket(
++  origin: string,
++  urlText: string,
++  networkMode: BrowserNetworkMode
++): boolean {
++  let preview: URL;
++  let url: URL;
++  try {
++    preview = new URL(origin);
++    url = new URL(urlText);
++  } catch {
++    return false;
++  }
++  const expectedProtocol = preview.protocol === "https:" ? "wss:" : "ws:";
++  if (
++    url.protocol === expectedProtocol &&
++    url.hostname === preview.hostname &&
++    url.port === preview.port
++  ) {
++    return true;
++  }
++  if (networkMode === "unrestricted") return url.protocol === "ws:" || url.protocol === "wss:";
++  if (networkMode !== "localhost") return false;
++  return (
++    (url.protocol === "ws:" || url.protocol === "wss:") &&
++    (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
++  );
++}
++
++export function isScreenshotGeometryAllowed(width: number, height: number): boolean {
++  return (
++    Number.isFinite(width) &&
++    Number.isFinite(height) &&
++    width > 0 &&
++    height > 0 &&
++    width * height <= BROWSER_FULL_PAGE_MAX_PIXELS
++  );
++}
++
++async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<BrowserNetworkMode | null> {
++  try {
++    return await input.networkMode();
++  } catch {
++    return null;
++  }
++}
+@@
+   async screenshot(fullPage: boolean): Promise<Uint8Array> {
++    if (fullPage) {
++      const [htmlBox, bodyBox] = await Promise.all([
++        this.#page.locator("html").boundingBox(),
++        this.#page.locator("body").boundingBox()
++      ]);
++      const boxes = [htmlBox, bodyBox].filter(
++        (box): box is NonNullable<typeof box> => box !== null
++      );
++      if (boxes.length === 0) {
++        throw new Error("browser full-page screenshot geometry is unavailable");
++      }
++      const width = Math.max(...boxes.map((box) => box.width));
++      const height = Math.max(...boxes.map((box) => box.height));
++      if (!isScreenshotGeometryAllowed(width, height)) {
++        throw new Error("browser full-page screenshot geometry exceeds bounded limit");
++      }
++    }
+     return this.#page.screenshot({
+@@
+       const context = await browser.newContext({
+         acceptDownloads: false,
+         viewport: { ...input.viewport },
+         locale: "en-US",
+-        colorScheme: "light"
++        colorScheme: "light",
++        serviceWorkers: "block"
+       });
+       context.setDefaultTimeout(BROWSER_ACTION_TIMEOUT_MS);
+-      const page = await context.newPage();
++
++      await context.route("**/*", async (route) => {
++        const request = route.request();
++        const networkMode = await currentNetworkMode(input);
++        if (
++          networkMode === null ||
++          !isAllowedPreviewRequest(
++            input.origin,
++            request.url(),
++            request.resourceType(),
++            networkMode
++          )
++        ) {
++          await route.abort("blockedbyclient");
++          return;
++        }
++        await route.continue();
++      });
++
++      await context.routeWebSocket("**/*", async (webSocket) => {
++        const networkMode = await currentNetworkMode(input);
++        if (
++          networkMode === null ||
++          !isAllowedPreviewWebSocket(input.origin, webSocket.url(), networkMode)
++        ) {
++          await webSocket.close({ code: 1008, reason: "KodeGPT network policy denied" });
++          return;
++        }
++        webSocket.connectToServer();
++      });
++
++      const page = await context.newPage();
+@@
+-      await page.route("**/*", async (route) => {
+-        const request = route.request();
+-        if (
+-          !isAllowedPreviewRequest(
+-            input.origin,
+-            request.url(),
+-            request.resourceType(),
+-            input.networkMode
+-          )
+-        ) {
+-          await route.abort("blockedbyclient");
+-          return;
+-        }
+-        await route.continue();
+-      });
+-
+       await page.goto(input.url, {
+diff --git a/packages/core/src/playwright-browser-driver.test.ts b/packages/core/src/playwright-browser-driver.test.ts
+--- a/packages/core/src/playwright-browser-driver.test.ts
++++ b/packages/core/src/playwright-browser-driver.test.ts
+@@
+ import {
++  BROWSER_FULL_PAGE_MAX_PIXELS,
+   isAllowedPreviewDocumentUrl,
+-  isAllowedPreviewRequest
++  isAllowedPreviewRequest,
++  isAllowedPreviewWebSocket,
++  isScreenshotGeometryAllowed
+ } from "./playwright-browser-driver.js";
+@@
+   it("re-applies workspace network policy to page-initiated subresources", () => {
+@@
+     expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "allowlist")).toBe(false);
+   });
++
++  it("applies the same bounded authority to WebSocket connections", () => {
++    const origin = "http://127.0.0.1:4173";
++    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:4173/socket", "deny")).toBe(true);
++    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:4174/socket", "deny")).toBe(false);
++    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:9999/socket", "localhost")).toBe(true);
++    expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "localhost")).toBe(false);
++    expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "unrestricted")).toBe(true);
++    expect(isAllowedPreviewWebSocket(origin, "https://example.test/not-websocket", "unrestricted")).toBe(false);
++  });
++
++  it("rejects oversized full-page screenshot geometry before capture", () => {
++    expect(isScreenshotGeometryAllowed(3840, 2160)).toBe(true);
++    expect(isScreenshotGeometryAllowed(3840, 2161)).toBe(false);
++    expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS, 1)).toBe(true);
++    expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS + 1, 1)).toBe(false);
++  });
+diff --git a/packages/core/src/playwright-browser-driver.spike.test.ts b/packages/core/src/playwright-browser-driver.spike.test.ts
+--- a/packages/core/src/playwright-browser-driver.spike.test.ts
++++ b/packages/core/src/playwright-browser-driver.spike.test.ts
+@@
+       url,
+       origin: new URL(url).origin,
+       viewport: { width: 800, height: 600 },
+-      networkMode: "deny",
++      networkMode: () => "deny",
+       onConsole: (entry) => consoleEntries.push(entry.text),
