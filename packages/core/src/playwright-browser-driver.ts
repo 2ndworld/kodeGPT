@@ -100,6 +100,16 @@ export function isScreenshotGeometryAllowed(width: number, height: number): bool
   );
 }
 
+export function fullPageScreenshotGeometry(input: {
+  contentSize: { width: number; height: number };
+  viewport: { width: number; height: number };
+}): { width: number; height: number } {
+  return {
+    width: Math.max(input.contentSize.width, input.viewport.width),
+    height: Math.max(input.contentSize.height, input.viewport.height)
+  };
+}
+
 async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<BrowserNetworkMode | null> {
   try {
     return await input.networkMode();
@@ -108,9 +118,13 @@ async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<Browse
   }
 }
 
+export function toPlaywrightCssSelector(selector: string): string {
+  return `css=${selector}`;
+}
+
 function locatorFor(page: Page, target: BrowserTarget): Locator {
   if (target.kind === "css") {
-    return page.locator(target.selector).first();
+    return page.locator(toPlaywrightCssSelector(target.selector)).first();
   }
   return page
     .getByRole(target.role as Parameters<Page["getByRole"]>[0], {
@@ -168,20 +182,29 @@ class PlaywrightBrowserSession implements BrowserDriverSession {
 
   async screenshot(fullPage: boolean): Promise<Uint8Array> {
     if (fullPage) {
-      const [htmlBox, bodyBox] = await Promise.all([
-        this.#page.locator("html").boundingBox(),
-        this.#page.locator("body").boundingBox()
-      ]);
-      const boxes = [htmlBox, bodyBox].filter(
-        (box): box is NonNullable<typeof box> => box !== null
-      );
-      if (boxes.length === 0) {
-        throw new Error("browser full-page screenshot geometry is unavailable");
-      }
-      const width = Math.max(...boxes.map((box) => box.width));
-      const height = Math.max(...boxes.map((box) => box.height));
-      if (!isScreenshotGeometryAllowed(width, height)) {
-        throw new Error("browser full-page screenshot geometry exceeds bounded limit");
+      const cdp = await this.#context.newCDPSession(this.#page);
+      try {
+        const metrics = (await cdp.send("Page.getLayoutMetrics")) as {
+          cssContentSize?: { width?: unknown; height?: unknown };
+          contentSize?: { width?: unknown; height?: unknown };
+        };
+        const contentSize = metrics.cssContentSize ?? metrics.contentSize;
+        if (
+          contentSize === undefined ||
+          typeof contentSize.width !== "number" ||
+          typeof contentSize.height !== "number"
+        ) {
+          throw new Error("browser full-page screenshot geometry is unavailable");
+        }
+        const geometry = fullPageScreenshotGeometry({
+          contentSize: { width: contentSize.width, height: contentSize.height },
+          viewport: this.#page.viewportSize() ?? { ...this.#viewport }
+        });
+        if (!isScreenshotGeometryAllowed(geometry.width, geometry.height)) {
+          throw new Error("browser full-page screenshot geometry exceeds bounded limit");
+        }
+      } finally {
+        await cdp.detach().catch(() => undefined);
       }
     }
     return this.#page.screenshot({
