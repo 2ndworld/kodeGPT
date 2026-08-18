@@ -118,6 +118,12 @@ describe("native capability public package boundary", () => {
         schemaVersion: 1,
         intent: "review",
         target: "src/main.ts",
+        evidenceStatus: {
+          workspace: "available",
+          git: "available",
+          search: "available",
+          verification: "available"
+        },
         workspace: {
           schemaVersion: 1,
           workspaceId: "ws_public",

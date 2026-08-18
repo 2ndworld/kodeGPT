@@ -41,6 +41,8 @@ export type {
   CodeSearchTruncationReason,
   ContextBuildInput,
   ContextBuildResult,
+  ContextEvidenceState,
+  ContextEvidenceStatus,
   ContextIntent,
   ContextSelectedFile,
   FilePatchFileResult,

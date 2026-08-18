@@ -26,6 +26,7 @@ import { CapabilityNotImplementedError } from "./native-capability-service.js";
 import {
   CodeSearchInputSchema,
   CodeSearchResultSchema,
+  ContextBuildResultSchema,
   GitChangesInputSchema,
   GitChangesResultSchema,
   VerifyListInputSchema,
@@ -233,6 +234,142 @@ describe("capability contracts", () => {
     };
     expect(GitChangesResultSchema.parse(validResult)).toEqual(validResult);
     expect(() => GitChangesResultSchema.parse({ ...validResult, fingerprint: "not-a-sha" })).toThrow();
+  });
+
+  it("validates context.build evidence status and truthful unavailable Git results", () => {
+    const partialResult = {
+      schemaVersion: 1 as const,
+      intent: "debug" as const,
+      evidenceStatus: {
+        workspace: "available" as const,
+        git: "unavailable" as const,
+        search: "available" as const,
+        verification: "available" as const
+      },
+      workspace: {
+        schemaVersion: 1 as const,
+        workspaceId: "ws_1",
+        root: ".",
+        projectTypes: [],
+        languages: [],
+        entrypoints: [],
+        areas: [],
+        manifests: [],
+        symbols: [],
+        relationships: [],
+        warnings: [],
+        truncated: false
+      },
+      selectedFiles: [],
+      relevantMatches: [],
+      verifications: [],
+      warnings: ["git-evidence-unavailable"],
+      totalBytes: 0,
+      truncated: true
+    };
+
+    expect(ContextBuildResultSchema.parse(partialResult)).toEqual(partialResult);
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, git: "missing" }
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, provider: "available" }
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, git: "available" }
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        git: {
+          schemaVersion: 1,
+          workspaceId: "ws_1",
+          clean: true,
+          changedPaths: [],
+          summary: { changedFiles: 0 },
+          truncated: false,
+          fingerprint: "a".repeat(64)
+        }
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, workspace: "unavailable" }
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, workspace: "incomplete" }
+      })
+    ).toThrow();
+
+    const completeGit = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      clean: false,
+      changedPaths: [{ path: "src/main.ts", worktreeStatus: "M" }],
+      summary: { changedFiles: 1 },
+      truncated: false,
+      fingerprint: "b".repeat(64)
+    };
+    expect(
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, git: "available" },
+        git: completeGit
+      })
+    ).toMatchObject({ evidenceStatus: { git: "available" }, git: { truncated: false } });
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, git: "incomplete" },
+        git: completeGit
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, git: "available" },
+        git: { ...completeGit, truncated: true }
+      })
+    ).toThrow();
+    expect(() => ContextBuildResultSchema.parse({ ...partialResult, truncated: false })).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, search: "unavailable" },
+        relevantMatches: [{ path: "src/main.ts", kind: "path" }]
+      })
+    ).toThrow();
+    expect(() =>
+      ContextBuildResultSchema.parse({
+        ...partialResult,
+        evidenceStatus: { ...partialResult.evidenceStatus, verification: "unavailable" },
+        verifications: [
+          {
+            id: "package:test",
+            label: "Package test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: ".",
+            source: "package-script",
+            allowed: true
+          }
+        ]
+      })
+    ).toThrow();
   });
 
   it("validates verify.list and verify.run contracts at runtime", () => {

@@ -274,6 +274,12 @@ const typedContextBuildResult: ContextBuildResult = {
   schemaVersion: 1,
   intent: "review",
   target: "src/main.ts",
+  evidenceStatus: {
+    workspace: "available",
+    git: "available",
+    search: "available",
+    verification: "available"
+  },
   workspace: typedWorkspaceInspectResult,
   git: typedGitChangesResult,
   selectedFiles: [
