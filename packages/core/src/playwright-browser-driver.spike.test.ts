@@ -139,6 +139,8 @@ spike("launches sandboxed system Chrome and enforces dynamic loopback WebSocket 
     expect(inspected.title).toBe("KodeGPT Browser Spike");
     expect(inspected.bodyText).toContain("Ready");
     expect(inspected.ariaSnapshot).toContain("heading \"Ready\"");
+    await session.setViewport({ width: 390, height: 844 });
+    expect((await session.inspect()).viewport).toEqual({ width: 390, height: 844 });
     await session.type({ kind: "css", selector: "#email" }, "user@example.test", false);
 
     await session.click({ kind: "css", selector: "#send" });

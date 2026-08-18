@@ -79,6 +79,7 @@ export interface BrowserDriverSession {
   inspect(): Promise<BrowserDriverInspectResult>;
   click(target: BrowserTarget): Promise<void>;
   type(target: BrowserTarget, text: string, submit: boolean): Promise<void>;
+  setViewport(viewport: BrowserViewport): Promise<void>;
   screenshot(fullPage: boolean): Promise<Uint8Array>;
   close(): Promise<void>;
 }
@@ -120,6 +121,10 @@ export interface BrowserTypeInput extends BrowserPreviewInput {
   target: BrowserTarget;
   text: string;
   submit?: boolean;
+}
+
+export interface BrowserSetViewportInput extends BrowserPreviewInput {
+  viewport: BrowserViewport;
 }
 
 export interface BrowserScreenshotInput extends BrowserPreviewInput {
@@ -426,6 +431,18 @@ export class BrowserManager {
       truncated: reasons.length > 0,
       truncationReasons: reasons
     };
+  }
+
+  async setViewport(input: BrowserSetViewportInput): Promise<BrowserOpenResult> {
+    const viewport = validateViewport(input.viewport);
+    const record = await this.#requireLiveSession(input);
+    try {
+      await record.driver.setViewport(viewport);
+    } catch (error) {
+      throw new BrowserManagerError("BROWSER_ACTION_FAILED", `browser viewport resize failed: ${String(error)}`);
+    }
+    record.viewport = { ...viewport };
+    return this.#openResult(record);
   }
 
   async click(input: BrowserClickInput): Promise<BrowserActionResult> {

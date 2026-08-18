@@ -41,6 +41,7 @@ class FakeDriverSession implements BrowserDriverSession {
     viewport: { width: 1280, height: 720 }
   };
   screenshotBytes = Uint8Array.from([137, 80, 78, 71]);
+  resizeError: Error | null = null;
 
   async inspect() {
     return this.inspectValue;
@@ -52,6 +53,12 @@ class FakeDriverSession implements BrowserDriverSession {
 
   async type(target: BrowserTarget, text: string, submit: boolean): Promise<void> {
     this.actions.push({ kind: "type", target, text, submit });
+  }
+
+  async setViewport(viewport: { width: number; height: number }): Promise<void> {
+    if (this.resizeError) throw this.resizeError;
+    this.actions.push({ kind: "setViewport", viewport: { ...viewport } });
+    this.inspectValue = { ...this.inspectValue, viewport: { ...viewport } };
   }
 
   async screenshot(fullPage: boolean): Promise<Uint8Array> {
@@ -180,6 +187,61 @@ describe("BrowserManager", () => {
     expect(await resolver()).toBe("deny");
     fail = true;
     expect(await resolver()).toBe("deny");
+  });
+
+  it("resizes the existing live browser session without opening a second session", async () => {
+    const fixture = manager();
+    await fixture.manager.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
+
+    const resized = await fixture.manager.setViewport({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      viewport: { width: 390, height: 844 }
+    });
+
+    expect(fixture.driver.opens).toHaveLength(1);
+    expect(fixture.driver.sessions[0]?.actions).toEqual([
+      { kind: "setViewport", viewport: { width: 390, height: 844 } }
+    ]);
+    expect(resized.viewport).toEqual({ width: 390, height: 844 });
+    expect(
+      (await fixture.manager.inspect({ workspaceId: "ws_test", previewId: "pv_test" })).viewport
+    ).toEqual({ width: 390, height: 844 });
+  });
+
+  it("rejects invalid viewport resize and preserves stored viewport after driver failure", async () => {
+    const fixture = manager();
+    const opened = await fixture.manager.openPreview({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      viewport: { width: 1024, height: 768 }
+    });
+
+    await expect(
+      fixture.manager.setViewport({
+        workspaceId: "ws_test",
+        previewId: "pv_test",
+        viewport: { width: 319, height: 844 }
+      })
+    ).rejects.toMatchObject({ code: "BROWSER_TARGET_INVALID" });
+
+    fixture.driver.sessions[0]!.resizeError = new Error("resize failed");
+    await expect(
+      fixture.manager.setViewport({
+        workspaceId: "ws_test",
+        previewId: "pv_test",
+        viewport: { width: 390, height: 844 }
+      })
+    ).rejects.toMatchObject({ code: "BROWSER_ACTION_FAILED" });
+
+    expect(opened.viewport).toEqual({ width: 1024, height: 768 });
+    fixture.driver.sessions[0]!.resizeError = null;
+    const afterFailure = await fixture.manager.setViewport({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      viewport: { width: 1024, height: 768 }
+    });
+    expect(afterFailure.viewport).toEqual({ width: 1024, height: 768 });
   });
 
   it("dispatches only bounded CSS/role click and type targets", async () => {
