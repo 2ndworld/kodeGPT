@@ -28,6 +28,7 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
   const source = join(root, "source");
   const runtimePackageRoot = join(source, "runtime");
   const yamlPackageRoot = join(source, "yaml");
+  const playwrightCorePackageRoot = join(source, "playwright-core");
   const serviceDataRoot = join(root, "service-data");
   const cliPath = join(source, "kodegpt.mjs");
   const cliBytes = "#!/usr/bin/env node\nconsole.log('release-a');\n";
@@ -35,6 +36,7 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
 
   await mkdir(join(runtimePackageRoot, "bin"), { recursive: true });
   await mkdir(yamlPackageRoot, { recursive: true });
+  await mkdir(playwrightCorePackageRoot, { recursive: true });
   await writeFile(cliPath, cliBytes, { mode: 0o755 });
   await writeFile(
     join(runtimePackageRoot, "package.json"),
@@ -44,6 +46,12 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
   await writeFile(join(runtimePackageRoot, "bin", "kodegpt-runtime"), runtimeBytes, { mode: 0o755 });
   await writeFile(join(yamlPackageRoot, "package.json"), JSON.stringify({ name: "yaml", version: "2.9.0" }), "utf8");
   await writeFile(join(yamlPackageRoot, "index.js"), "export default {};\n", "utf8");
+  await writeFile(
+    join(playwrightCorePackageRoot, "package.json"),
+    JSON.stringify({ name: "playwright-core", version: "1.62.1" }),
+    "utf8"
+  );
+  await writeFile(join(playwrightCorePackageRoot, "index.js"), "module.exports = {};\n", "utf8");
 
   const cliSha256 = sha256(cliBytes);
   const runtimeSha256 = sha256(runtimeBytes);
@@ -65,6 +73,7 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
     cliPath,
     runtimePackageRoot,
     yamlPackageRoot,
+    playwrightCorePackageRoot,
     nodePath: "/opt/node/bin/node",
     zrokPath: "/opt/zrok/bin/zrok2",
     reservedName: "public:kodegpt-dev",

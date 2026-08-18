@@ -258,12 +258,14 @@ async function createServiceOperatorDependencies(
       const runtimePackageRoot = dirname(dirname(runtimePath));
       const require = createRequire(import.meta.url);
       const yamlPackageRoot = dirname(require.resolve("yaml/package.json"));
+      const playwrightCorePackageRoot = dirname(require.resolve("playwright-core/package.json"));
       const zrokPath = await resolveExecutableOnPath("zrok2");
       return materializeServiceRelease({
         serviceDataRoot,
         cliPath: fileURLToPath(import.meta.url),
         runtimePackageRoot,
         yamlPackageRoot,
+        playwrightCorePackageRoot,
         nodePath: process.execPath,
         zrokPath,
         reservedName: options.name,

@@ -21,10 +21,12 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
   const source = join(root, "source");
   const runtimePackageRoot = join(source, "runtime");
   const yamlPackageRoot = join(source, "yaml");
+  const playwrightCorePackageRoot = join(source, "playwright-core");
   const serviceDataRoot = join(root, "service-data");
   const cliPath = join(source, "kodegpt.mjs");
   await mkdir(join(runtimePackageRoot, "bin"), { recursive: true });
   await mkdir(yamlPackageRoot, { recursive: true });
+  await mkdir(playwrightCorePackageRoot, { recursive: true });
   await writeFile(cliPath, "#!/usr/bin/env node\nconsole.log('release-a');\n", { mode: 0o755 });
   await writeFile(
     join(runtimePackageRoot, "package.json"),
@@ -34,11 +36,18 @@ async function fixture(): Promise<MaterializeServiceReleaseInput> {
   await writeFile(join(runtimePackageRoot, "bin", "kodegpt-runtime"), "runtime-a", { mode: 0o755 });
   await writeFile(join(yamlPackageRoot, "package.json"), JSON.stringify({ name: "yaml", version: "2.9.0" }), "utf8");
   await writeFile(join(yamlPackageRoot, "index.js"), "export default {};\n", "utf8");
+  await writeFile(
+    join(playwrightCorePackageRoot, "package.json"),
+    JSON.stringify({ name: "playwright-core", version: "1.62.1" }),
+    "utf8"
+  );
+  await writeFile(join(playwrightCorePackageRoot, "index.js"), "module.exports = {};\n", "utf8");
   const input: MaterializeServiceReleaseInput = {
     serviceDataRoot,
     cliPath,
     runtimePackageRoot,
     yamlPackageRoot,
+    playwrightCorePackageRoot,
     nodePath: "/opt/node/bin/node",
     zrokPath: "/opt/zrok/bin/zrok2",
     reservedName: "public:kodegpt-dev",
@@ -72,6 +81,19 @@ describe("immutable KodeGPT service releases", () => {
     await access(join(first.releaseRoot, "bin", "kodegpt.provenance.json"));
     await access(join(first.releaseRoot, "node_modules", "@kodegpt", "runtime-linux-x64", "provenance.json"));
     await access(join(first.releaseRoot, "node_modules", "yaml", "package.json"));
+    await access(join(first.releaseRoot, "node_modules", "playwright-core", "package.json"));
+  });
+
+  it("fails verification when the staged Playwright package identity changes", async () => {
+    const input = await fixture();
+    const release = await materializeServiceRelease(input);
+    await writeFile(
+      join(release.releaseRoot, "node_modules", "playwright-core", "package.json"),
+      JSON.stringify({ name: "playwright-core", version: "0.0.0" }),
+      "utf8"
+    );
+
+    await expect(verifyServiceRelease(release)).rejects.toThrow(/package identity mismatch.*playwright-core/i);
   });
 
   it("changes release identity when CLI or runtime bytes change", async () => {

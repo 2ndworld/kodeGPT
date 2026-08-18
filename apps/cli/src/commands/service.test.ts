@@ -615,7 +615,7 @@ describe("installed service run entrypoint", () => {
       localPort: 43_121,
       runtimeVersion: "0.1",
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.11",
+      surfaceVersion: "0.12",
       reservedName: fixture.release.reservedName,
       publicUrl: "https://kodegpt.example.invalid/mcp"
     });

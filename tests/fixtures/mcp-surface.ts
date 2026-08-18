@@ -1,5 +1,12 @@
 export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "artifact.read", required: ["uri"] },
+  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
+  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
+  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
+  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
+  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
+  { name: "browser.console", required: ["workspaceId", "previewId"] },
+  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },
