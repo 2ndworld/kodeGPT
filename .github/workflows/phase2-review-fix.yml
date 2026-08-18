@@ -1,0 +1,75 @@
+name: Phase 2 Review Fix
+
+on:
+  push:
+    branches: ["feat/preview-scoped-browser-evidence"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[phase2-review-fixed]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: feat/preview-scoped-browser-evidence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Setup pnpm 10.15.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          test "$(pnpm --version)" = "10.15.0"
+
+      - name: Frozen dependency install
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply exact review fixes
+        run: python .github/phase2-review-fix.py
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Focused browser and MCP tests
+        run: |
+          set -euo pipefail
+          pnpm --filter @kodegpt/core test
+          pnpm --filter @kodegpt/mcp-server test
+
+      - name: Host Chrome compatibility spike
+        env:
+          KODEGPT_BROWSER_SPIKE: "1"
+        run: |
+          set -euo pipefail
+          google-chrome --version
+          pnpm exec vitest run packages/core/src/playwright-browser-driver.spike.test.ts
+
+      - name: Remove review machinery and commit verified fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/phase2-review-fix.yml
+          rm .github/phase2-review-fix.py
+          rm .github/phase2-review-fix.patch
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: harden preview browser network and evidence bounds [phase2-review-fixed]"
+          git push origin "HEAD:feat/preview-scoped-browser-evidence"
