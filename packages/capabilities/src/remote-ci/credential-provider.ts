@@ -129,12 +129,12 @@ export class GitHubGhCredentialProvider implements GitHubCredentialProvider {
       throw new CapabilityError("CI_AUTH_FAILED", "GitHub credential bootstrap failed");
     }
     if (result.exitCode !== 0) {
-      throw new CapabilityError("CI_AUTH_REQUIRED", "GitHub authentication is required");
+      throw authenticationRequired("GitHub authentication is required");
     }
 
     const token = result.stdout.trim();
     if (token.length === 0) {
-      throw new CapabilityError("CI_AUTH_REQUIRED", "GitHub authentication is required");
+      throw authenticationRequired("GitHub authentication is required");
     }
     if (
       Buffer.byteLength(token, "utf8") > GH_COMMAND_MAX_BYTES ||
@@ -169,8 +169,16 @@ export class GitHubGhCredentialProvider implements GitHubCredentialProvider {
       }
       return canonical;
     }
-    throw new CapabilityError("CI_AUTH_REQUIRED", "GitHub CLI authentication is not available");
+    throw authenticationRequired("GitHub CLI authentication is not available");
   }
+}
+
+function authenticationRequired(message: string): CapabilityError {
+  return new CapabilityError("CI_AUTH_REQUIRED", message, {
+    reason: "AUTHENTICATION_REQUIRED",
+    retryable: false,
+    suggestedAction: "authenticate"
+  });
 }
 
 function cleanChildEnvironment(

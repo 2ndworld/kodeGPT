@@ -304,7 +304,12 @@ describe("ProviderGatewayServiceImpl", () => {
       const fx = fixture({ mutation: true });
       fx.state.transportError = new CapabilityError(code, "transport failed");
       await expect(fx.service.execute(mutationExecInput())).rejects.toMatchObject({
-        code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN"
+        code: "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
+        details: {
+          reason: "MUTATION_OUTCOME_UNKNOWN",
+          retryable: false,
+          suggestedAction: "refresh-state"
+        }
       });
       expect(fx.state.transportCalls).toBe(1);
       expect(fx.state.events.filter((event) => event === "transport")).toHaveLength(1);

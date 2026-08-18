@@ -67,6 +67,19 @@ describe("GitHubHttp", () => {
     await expectCode(http.getJson("/repos/owner/repository"), code);
   });
 
+  it("marks HTTP 401 as requiring fresh authentication", async () => {
+    const fake = fakeFetch([new Response("provider detail must not leak", { status: 401 })]);
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl });
+    await expect(http.getJson("/repos/owner/repository")).rejects.toMatchObject({
+      code: "CI_AUTH_FAILED",
+      details: {
+        reason: "AUTHENTICATION_REQUIRED",
+        retryable: false,
+        suggestedAction: "authenticate"
+      }
+    });
+  });
+
   it("maps rate limits to bounded safe details only", async () => {
     const fake = fakeFetch([
       new Response("rate detail", {
@@ -90,12 +103,20 @@ describe("GitHubHttp", () => {
       code: "CI_RATE_LIMITED",
       details: {
         retryAfter: 30,
-        resetAt: expect.stringMatching(/^2026-/)
+        resetAt: expect.stringMatching(/^2026-/),
+        reason: "RATE_LIMITED",
+        retryable: true,
+        suggestedAction: "retry"
       }
     });
     await expect(http.getJson("/repos/owner/repository")).rejects.toMatchObject({
       code: "CI_RATE_LIMITED",
-      details: { resetAt: expect.stringMatching(/^2026-/) }
+      details: {
+        resetAt: expect.stringMatching(/^2026-/),
+        reason: "RATE_LIMITED",
+        retryable: true,
+        suggestedAction: "retry"
+      }
     });
   });
 
@@ -190,7 +211,12 @@ describe("GitHubHttp", () => {
     };
 
     await expect(http.postMutation("/repos/owner/repository/actions/runs/123/rerun", 201)).rejects.toMatchObject({
-      code: "CI_MUTATION_OUTCOME_UNKNOWN"
+      code: "CI_MUTATION_OUTCOME_UNKNOWN",
+      details: {
+        reason: "MUTATION_OUTCOME_UNKNOWN",
+        retryable: false,
+        suggestedAction: "refresh-state"
+      }
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.github.com/repos/owner/repository/actions/runs/123/rerun");
