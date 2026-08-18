@@ -122,6 +122,17 @@ async function main() {
       iterations: DEFAULT_ITERATIONS,
       operation: () => callTool(port, token, "git.status", { workspaceId })
     });
+    const contextBuildSamples = await benchmark({
+      warmups: DEFAULT_WARMUPS,
+      iterations: DEFAULT_ITERATIONS,
+      operation: () =>
+        callTool(port, token, "context.build", {
+          workspaceId,
+          intent: "understand",
+          target: "bench/small.txt",
+          maxBytes: 8 * 1024
+        })
+    });
     const processSamples = await benchmark({
       warmups: DEFAULT_WARMUPS,
       iterations: DEFAULT_ITERATIONS,
@@ -180,6 +191,7 @@ async function main() {
         smallFileRead: summarizeDurations(readSamples),
         smallTree: summarizeDurations(treeSamples),
         gitStatus: summarizeDurations(gitStatusSamples),
+        contextBuild: summarizeDurations(contextBuildSamples),
         trivialProcess: summarizeDurations(processSamples)
       }
     };

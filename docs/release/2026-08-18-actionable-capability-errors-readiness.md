@@ -71,13 +71,10 @@ Two deliberate distinctions remain:
 
 These boundaries avoid overstating recovery guidance.
 
-## Remaining closure
+## Post-merge closure
 
-Before final phase closure:
+PR #35 merged with exact head `fb395c9560592f33f343086ca13e5cad58157b09` as merge commit `c744687291c05c3910d71671c6e54dd75590e9be` after both deterministic CI runs passed. Canonical `main` was fast-forwarded exactly to that merge.
 
-1. push the exact branch and create a focused PR against `main`;
-2. require deterministic CI PASS;
-3. merge with exact-head protection;
-4. fast-forward canonical `main` to the merge commit;
-5. build/stage an immutable merged-main release and perform explicit restart/cutover;
-6. live-dogfood a safe stale patch precondition and confirm the public failure contains `STALE_EXPECTED_STATE`, `retryable=false`, `refresh-state`, while health and `0.1 / 2026-07-28 / 0.10` remain unchanged.
+Merged-main build staged immutable release `rel_ef2a32659085c0fccc419e2a6ed3d007` without hidden cutover while `rel_4db1c37f6068a307539610b1705e38d3` remained active. Explicit `service restart` then promoted the new release and retained the prior release as rollback. Final service status is running, enabled, listener-ready, managed-exposure healthy, and still reports runtime/protocol/surface `0.1 / 2026-07-28 / 0.10`.
+
+The ChatGPT session did not expose the KodeGPT connector after the restart, so this closure does not claim a synthetic live stale-patch MCP invocation that was not actually run. The exact public stale-precondition metadata shape remains covered by the focused, full local, and deterministic CI contract suites.
