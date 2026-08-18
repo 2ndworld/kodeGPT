@@ -35,7 +35,13 @@ await build({
   format: "esm",
   target: ["node22"],
   packages: "bundle",
-  external: ["@kodegpt/runtime-linux-x64", "@kodegpt/runtime-linux-x64/package.json", "yaml"],
+  external: [
+    "@kodegpt/runtime-linux-x64",
+    "@kodegpt/runtime-linux-x64/package.json",
+    "yaml",
+    "chromium-bidi/lib/cjs/bidiMapper/BidiMapper",
+    "chromium-bidi/lib/cjs/cdp/CdpConnection"
+  ],
   banner: { js: "#!/usr/bin/env node" },
   legalComments: "none"
 });
