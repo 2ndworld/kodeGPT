@@ -1,0 +1,21 @@
+diff --git a/packages/mcp-server/src/structured-results.test.ts b/packages/mcp-server/src/structured-results.test.ts
+--- a/packages/mcp-server/src/structured-results.test.ts
++++ b/packages/mcp-server/src/structured-results.test.ts
+@@
+     preview: {
+       start: async () => ({} as never),
+       inspect: async () => ({} as never),
+       stop: async () => ({} as never)
+     },
++    browser: {
++      openPreview: async () => ({} as never),
++      inspect: async () => ({} as never),
++      click: async () => ({} as never),
++      type: async () => ({} as never),
++      screenshot: async () => ({} as never),
++      console: async () => ({} as never),
++      networkFailures: async () => ({} as never),
++      releasePreview: async () => undefined,
++      releaseWorkspace: async () => undefined
++    },
+     artifact: {
