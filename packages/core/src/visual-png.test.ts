@@ -222,4 +222,13 @@ describe("deterministic visual pixel comparison", () => {
     expect(result.changedPixels).toBe(1);
     expect(result.changedPixelRatio).toBe(0.5);
   });
+
+  it("rejects a comparison union that exceeds the fixed pixel bound", () => {
+    expect(() =>
+      compareVisualPixels(
+        decoded(3840, 2160, new Uint8Array()),
+        decoded(2160, 3840, new Uint8Array())
+      )
+    ).toThrowError(expect.objectContaining({ code: "VISUAL_ARTIFACT_TOO_LARGE" }));
+  });
 });

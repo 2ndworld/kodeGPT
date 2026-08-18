@@ -67,7 +67,7 @@ For equal dimensions:
 - `changedPixels = count(currentRGBA != referenceRGBA)`
 - `changedPixelRatio = changedPixels / totalPixels`
 
-For unequal dimensions, comparison uses the union rectangle `max(width) * max(height)`. A coordinate that exists in only one image counts as changed. This keeps the result numeric and deterministic while forcing a dimension mismatch to contribute directly to failure evidence.
+For unequal dimensions, comparison uses the union rectangle `max(width) * max(height)`. A coordinate that exists in only one image counts as changed. The union rectangle itself must not exceed `3840 * 2160` pixels; otherwise comparison fails closed with `VISUAL_ARTIFACT_TOO_LARGE`. This keeps CPU work bounded while forcing a dimension mismatch to contribute directly to deterministic failure evidence.
 
 `passed` is true only when dimensions match and `changedPixelRatio <= threshold`.
 

@@ -238,6 +238,12 @@ export function compareVisualPixels(
   const width = Math.max(current.width, reference.width);
   const height = Math.max(current.height, reference.height);
   const totalPixels = width * height;
+  if (totalPixels > VISUAL_MAX_PIXELS) {
+    throw new VisualVerificationError(
+      "VISUAL_ARTIFACT_TOO_LARGE",
+      "visual comparison union exceeds the bounded pixel limit"
+    );
+  }
   let changedPixels = 0;
 
   for (let y = 0; y < height; y += 1) {
