@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCH = ROOT / ".github" / "phase2-ci-fix.patch"
+PATCHES = [
+    ROOT / ".github" / "phase2-ci-fix.patch",
+    ROOT / ".github" / "phase2-packaging-fix.patch",
+]
 
 
 @dataclass
@@ -70,15 +73,16 @@ def apply_patch(patch: FilePatch) -> None:
 
 
 def main() -> None:
-    patches = parse_patch(PATCH.read_text(encoding="utf-8"))
-    if not patches:
-        raise RuntimeError("CI fix patch is empty")
-    for patch in patches:
+    all_patches: list[FilePatch] = []
+    for patch_path in PATCHES:
+        parsed = parse_patch(patch_path.read_text(encoding="utf-8"))
+        if not parsed:
+            raise RuntimeError(f"CI fix patch is empty: {patch_path.name}")
+        all_patches.extend(parsed)
+    for patch in all_patches:
         apply_patch(patch)
         print(f"applied {patch.path.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
     main()
-
-# Rerun after adding browser annotation transport coverage.
