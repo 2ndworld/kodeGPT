@@ -1,7 +1,7 @@
 # KodeGPT Trusted Linked-Worktree Git Metadata — Follow-up Design Record
 
 Date: 2026-08-18  
-Status: **Separate design required; not approved for implementation in Trusted Development Parity P0/P1**
+Status: **Approved for the focused P0 implementation on 2026-08-18; no public-surface expansion approved**
 
 ## Goal
 
@@ -33,10 +33,16 @@ Any future implementation must:
 9. prove ordinary non-worktree repositories remain unchanged;
 10. avoid adding a public tool solely to hide the metadata problem.
 
+## Approved implementation decision
+
+The approved P0 treats the validated Git common directory as the smallest reliable repository-metadata unit that preserves the existing typed Git surface and trusted-shell behavior without inventing a brittle per-file mount matrix. Admission is derived internally from the retained worktree `.git` pointer, requires the standard `<common>/.git/worktrees/<name>` structure, exact `commondir=../..`, a reciprocal `gitdir` backlink to the retained worktree, canonical non-symlink paths, and bounded pointer files.
+
+Bubblewrap materializes only empty parent directories plus that validated common Git metadata directory at its original absolute location. It never mounts the canonical checkout source tree. Git metadata is not admitted to a process by default, even when the retained source workspace itself is writable. Existing typed Git reads explicitly request read-only metadata; existing typed Git mutations and `trusted` write-capable process execution may explicitly receive metadata read-write so trusted linked worktrees do not become less capable than ordinary trusted repositories. `observe` and `develop` process execution receive no external Git metadata authority. This is intentionally Git-specific and does not create generic external-mount or arbitrary host-path request authority.
+
 ## Non-goals
 
-This record does not authorize implementation, broad `.git` mounting, canonical-repository mounting, host-root access, generic path admission, generic Git argv, or weaker workspace identity checks.
+This approval does not authorize canonical-repository source mounting, host-root access, generic path admission, generic external mounts, generic Git argv, weaker workspace identity checks, or a new MCP tool solely for metadata admission. Runtime `0.1`, protocol `2026-07-28`, and MCP surface `0.10` remain unchanged.
 
-## Next decision
+## P1 decision rule
 
-If linked-worktree Git parity is prioritized, produce a focused approved design and TDD plan around validated Git metadata admission. Until then, use the canonical ordinary checkout for typed Git/merged-main release operations and keep linked-worktree failures fail-closed and explicit.
+After P0, dogfood the development loop from a linked worktree. Do not add `git.worktree*` tools merely for API symmetry. If trusted-shell worktree lifecycle remains materially awkward after real use, record the evidence and require a separate small design before any new public authority is added.

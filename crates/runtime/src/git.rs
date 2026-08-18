@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use kodegpt_sandbox::{
-    BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable,
-    WorkspaceAccess, resolve_trusted_executable,
+    BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
+    TrustedExecutable, WorkspaceAccess, resolve_trusted_executable,
 };
 use kodegpt_workspace_io::{PathIdentityKind, PathIdentityResult, path_identity_beneath};
 use serde::Serialize;
@@ -1517,6 +1517,10 @@ fn hardened_git_spec_with_access(
     }
     spec.network = SandboxNetworkMode::Deny;
     spec.workspace_access = workspace_access;
+    spec.git_metadata_access = match workspace_access {
+        WorkspaceAccess::ReadOnly => GitMetadataAccess::ReadOnly,
+        WorkspaceAccess::ReadWrite => GitMetadataAccess::ReadWrite,
+    };
     spec
 }
 
@@ -2487,6 +2491,91 @@ mod tests {
         );
 
         fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn linked_worktree_typed_git_inspection_and_local_mutation_share_validated_metadata() {
+        let repository = temporary_root("linked-worktree-typed-git");
+        let state = temporary_root("linked-worktree-typed-git-state");
+        git(&repository, &["init", "-b", "main"]);
+        git(&repository, &["config", "user.name", "KodeGPT Test"]);
+        git(
+            &repository,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(repository.join("tracked.txt"), "base\n").expect("tracked file");
+        git(&repository, &["add", "tracked.txt"]);
+        git(&repository, &["commit", "-m", "base"]);
+        let worktree = repository.join(".worktrees").join("feature");
+        git(
+            &repository,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.to_str().expect("utf8 worktree path"),
+            ],
+        );
+        fs::write(worktree.join("tracked.txt"), "changed\n").expect("worktree change");
+
+        let root_fd = OwnedFd::from(File::open(&worktree).expect("worktree root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let status = run_git_inspection(
+            &root_fd,
+            "kc_linked_git",
+            "req_linked_status",
+            "op_linked_status",
+            GitOperation::Status,
+            &spool,
+            &executions,
+        )
+        .expect("linked worktree status");
+        assert_eq!(status.exit_code, 0, "{}", status.stderr_preview);
+        assert!(status.stdout_preview.contains("tracked.txt"));
+
+        let stage = run_git_local_mutation(
+            &root_fd,
+            "kc_linked_git",
+            "req_linked_stage",
+            "op_linked_stage",
+            GitLocalMutation::Stage {
+                paths: vec!["tracked.txt".to_owned()],
+            },
+            &spool,
+            &executions,
+        )
+        .expect("linked worktree stage");
+        assert_eq!(stage.exit_code, 0, "{}", stage.stderr_preview);
+
+        let commit = run_git_local_mutation(
+            &root_fd,
+            "kc_linked_git",
+            "req_linked_commit",
+            "op_linked_commit",
+            GitLocalMutation::Commit {
+                message: "linked worktree change".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("linked worktree commit");
+        assert_eq!(commit.exit_code, 0, "{}", commit.stderr_preview);
+        assert_eq!(
+            git_stdout(&worktree, &["branch", "--show-current"]).trim(),
+            "feature"
+        );
+        assert_eq!(
+            git_stdout(&worktree, &["log", "-1", "--pretty=%s"]).trim(),
+            "linked worktree change"
+        );
+
+        drop(root_fd);
+        fs::remove_dir_all(repository).expect("repository cleanup");
         fs::remove_dir_all(state).expect("state cleanup");
     }
 

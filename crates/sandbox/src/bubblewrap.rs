@@ -16,6 +16,7 @@ use crate::executable::{
     ExplicitExecutableMount, SANDBOX_MARKER_ENV, TrustedExecutable, TrustedExecutableError,
     open_explicit_directory_from_env, resolve_bubblewrap,
 };
+use crate::git_metadata::{LinkedWorktreeGitMetadata, open_linked_worktree_git_metadata};
 
 const CHILD_COREPACK_HOME: &str = "/opt/kodegpt-corepack";
 const CHILD_HOME: &str = "/home/kodegpt";
@@ -48,6 +49,13 @@ pub enum WorkspaceAccess {
     ReadWrite,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitMetadataAccess {
+    None,
+    ReadOnly,
+    ReadWrite,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLaunchSpec {
     pub program: TrustedExecutable,
@@ -57,6 +65,7 @@ pub struct SandboxLaunchSpec {
     pub cwd: PathBuf,
     pub network: SandboxNetworkMode,
     pub workspace_access: WorkspaceAccess,
+    pub git_metadata_access: GitMetadataAccess,
     pub cargo_home: Option<PathBuf>,
 }
 
@@ -70,6 +79,7 @@ impl SandboxLaunchSpec {
             cwd: PathBuf::from(CHILD_WORKSPACE),
             network: SandboxNetworkMode::Deny,
             workspace_access: WorkspaceAccess::ReadOnly,
+            git_metadata_access: GitMetadataAccess::None,
             cargo_home: None,
         }
     }
@@ -166,6 +176,20 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let linked_git_metadata = match spec.git_metadata_access {
+            GitMetadataAccess::None => None,
+            GitMetadataAccess::ReadOnly | GitMetadataAccess::ReadWrite => {
+                open_linked_worktree_git_metadata(workspace_root).map_err(|error| {
+                    SandboxError::SandboxUnavailable(format!(
+                        "linked worktree Git metadata rejected: {error}"
+                    ))
+                })?
+            }
+        };
+        if let Some(metadata) = &linked_git_metadata {
+            fcntl_setfd(&metadata.common_dir_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
 
         let mut explicit_mounts = Vec::new();
         for program in std::iter::once(&spec.program).chain(spec.auxiliary_programs.iter()) {
@@ -227,6 +251,7 @@ impl BubblewrapProvider {
         let mut command = self.build_command(
             inherited_workspace_fd.as_raw_fd(),
             Some(status_writer.as_raw_fd()),
+            linked_git_metadata.as_ref(),
             &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
             resolver_mount.as_ref().map(AsRawFd::as_raw_fd),
@@ -270,6 +295,7 @@ impl BubblewrapProvider {
         &self,
         workspace_fd: i32,
         status_fd: Option<i32>,
+        linked_git_metadata: Option<&LinkedWorktreeGitMetadata>,
         explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
         resolver_fd: Option<i32>,
@@ -344,6 +370,29 @@ impl BubblewrapProvider {
                 &cargo_home_fd.to_string(),
                 CHILD_CARGO_HOME,
             ]);
+        }
+
+        if let Some(metadata) = linked_git_metadata {
+            if !git_metadata_target_is_allowed(&metadata.common_dir_path) {
+                return Err(SandboxError::SandboxUnavailable(
+                    "linked worktree Git metadata target collides with sandbox-owned paths"
+                        .to_owned(),
+                ));
+            }
+            append_parent_directories(&mut command, &metadata.common_dir_path);
+            let bind_flag = match spec.git_metadata_access {
+                GitMetadataAccess::None => {
+                    return Err(SandboxError::SandboxUnavailable(
+                        "linked worktree Git metadata was resolved without admission".to_owned(),
+                    ));
+                }
+                GitMetadataAccess::ReadOnly => "--ro-bind-fd",
+                GitMetadataAccess::ReadWrite => "--bind-fd",
+            };
+            command
+                .arg(bind_flag)
+                .arg(metadata.common_dir_fd.as_raw_fd().to_string())
+                .arg(&metadata.common_dir_path);
         }
 
         if !explicit_mounts.is_empty() {
@@ -438,6 +487,40 @@ fn child_tool_root(index: usize) -> String {
     }
 }
 
+fn git_metadata_target_is_allowed(path: &Path) -> bool {
+    let reserved = [
+        Path::new(CHILD_WORKSPACE),
+        Path::new(CHILD_HOME),
+        Path::new("/proc"),
+        Path::new("/dev"),
+        Path::new("/sys"),
+        Path::new("/usr"),
+        Path::new("/bin"),
+        Path::new("/lib"),
+        Path::new("/lib64"),
+        Path::new("/etc"),
+        Path::new("/run"),
+        Path::new("/opt"),
+    ];
+    path.is_absolute() && !reserved.iter().any(|root| path.starts_with(root))
+}
+
+fn append_parent_directories(command: &mut Command, target: &Path) {
+    let mut parents = target
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter(|path| *path != Path::new("/"))
+        .collect::<Vec<_>>();
+    parents.reverse();
+    for parent in parents {
+        if parent == Path::new("/home") || parent == Path::new("/tmp") {
+            continue;
+        }
+        command.arg("--dir").arg(parent);
+    }
+}
+
 fn read_child_pid(status_reader: &UnixStream) -> Result<i32, SandboxError> {
     let mut reader = BufReader::new(status_reader.try_clone()?);
     let mut total_bytes = 0_usize;
@@ -500,8 +583,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
-        cwd_is_beneath_workspace,
+        BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
+        WorkspaceAccess, cwd_is_beneath_workspace,
     };
     use crate::executable::SANDBOX_MARKER_ENV;
     use crate::resolve_trusted_executable;
@@ -517,6 +600,103 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("temporary root");
         root
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .env("HOME", "/tmp")
+            .status()
+            .expect("test git available");
+        assert!(status.success(), "test git command failed: {args:?}");
+    }
+
+    #[test]
+    fn linked_worktree_git_metadata_is_available_inside_sandbox() {
+        let repository = temporary_root("linked-git-repository");
+        git(&repository, &["init", "-b", "main"]);
+        git(&repository, &["config", "user.name", "KodeGPT Test"]);
+        git(
+            &repository,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(repository.join("tracked.txt"), "base\n").expect("tracked fixture");
+        git(&repository, &["add", "tracked.txt"]);
+        git(&repository, &["commit", "-m", "base"]);
+
+        let worktree = repository.join(".worktrees").join("feature");
+        git(
+            &repository,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "feature",
+                worktree.to_str().expect("utf8 worktree path"),
+            ],
+        );
+
+        let workspace_fd = OwnedFd::from(File::open(&worktree).expect("worktree root fd"));
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("git").expect("trusted git executable"),
+        );
+        spec.args = vec!["status".into(), "--short".into()];
+        spec.git_metadata_access = GitMetadataAccess::ReadOnly;
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let output = provider
+            .run_capture(&workspace_fd, &spec)
+            .expect("linked worktree sandbox execution");
+
+        assert!(
+            output.status.success(),
+            "linked worktree Git failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let mut source_probe = SandboxLaunchSpec::new(
+            resolve_trusted_executable("test").expect("trusted test executable"),
+        );
+        source_probe.args = vec!["-e".into(), repository.join("tracked.txt").into_os_string()];
+        source_probe.git_metadata_access = GitMetadataAccess::ReadOnly;
+        let source_probe_output = provider
+            .run_capture(&workspace_fd, &source_probe)
+            .expect("canonical source isolation probe");
+        assert!(
+            !source_probe_output.status.success(),
+            "canonical checkout source must remain outside the sandbox"
+        );
+
+        let metadata_probe = repository.join(".git/kodegpt-metadata-write-probe");
+        let mut metadata_write_probe = SandboxLaunchSpec::new(
+            resolve_trusted_executable("touch").expect("trusted touch executable"),
+        );
+        metadata_write_probe.args = vec![metadata_probe.clone().into_os_string()];
+        metadata_write_probe.workspace_access = WorkspaceAccess::ReadWrite;
+        metadata_write_probe.git_metadata_access = GitMetadataAccess::ReadOnly;
+        let metadata_write_output = provider
+            .run_capture(&workspace_fd, &metadata_write_probe)
+            .expect("metadata write isolation probe");
+        assert!(
+            !metadata_write_output.status.success(),
+            "source write authority must not imply external Git metadata write authority"
+        );
+        assert!(!metadata_probe.exists());
+
+        git(
+            &repository,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                worktree.to_str().expect("utf8 worktree path"),
+            ],
+        );
+        fs::remove_dir_all(repository).expect("repository cleanup");
     }
 
     #[test]
@@ -539,7 +719,7 @@ mod tests {
         );
         spec.network = SandboxNetworkMode::Unrestricted;
         let command = provider
-            .build_command(3, None, &[], None, Some(9), None, &spec)
+            .build_command(3, None, None, &[], None, Some(9), None, &spec)
             .expect("unrestricted command construction");
         let args = command
             .get_args()
@@ -781,7 +961,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, &[], None, None, None, &spec),
+                provider.build_command(3, None, None, &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }
