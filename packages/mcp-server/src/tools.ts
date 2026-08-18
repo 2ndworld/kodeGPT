@@ -73,6 +73,10 @@ import {
 import { z } from "zod";
 
 import {
+  BROWSER_CAPTURE_TOOL_ANNOTATIONS,
+  BROWSER_INTERACTION_TOOL_ANNOTATIONS,
+  BROWSER_READ_ONLY_TOOL_ANNOTATIONS,
+  BROWSER_SESSION_TOOL_ANNOTATIONS,
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_CANCEL_TOOL_ANNOTATIONS,
@@ -92,6 +96,13 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
+  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
+  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
+  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
+  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
+  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
+  { name: "browser.console", required: ["workspaceId", "previewId"] },
+  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },
@@ -225,6 +236,112 @@ export function registerKodegptTools(
     },
     async ({ uri, offset, maxBytes }) =>
       structuredToolResult(await context.artifact.read({ uri, offset, maxBytes }))
+  );
+
+  const browserPreviewFields = {
+    workspaceId: z.string().min(1),
+    previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
+  };
+  const browserTargetSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("css"), selector: z.string().min(1).max(2048) }).strict(),
+    z
+      .object({
+        kind: z.literal("role"),
+        role: z.string().min(1).max(128),
+        name: z.string().max(2048).optional()
+      })
+      .strict()
+  ]);
+
+  server.registerTool(
+    "browser.openPreview",
+    {
+      description: "Open one ephemeral browser session bound only to an existing live KodeGPT preview origin.",
+      inputSchema: {
+        ...browserPreviewFields,
+        viewport: z
+          .object({
+            width: z.number().int().min(320).max(3840),
+            height: z.number().int().min(240).max(2160)
+          })
+          .strict()
+          .optional()
+      },
+      annotations: BROWSER_SESSION_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId, viewport }) =>
+      browserToolResult(() => context.browser.openPreview({ workspaceId, previewId, viewport }))
+  );
+
+  server.registerTool(
+    "browser.inspect",
+    {
+      description: "Inspect bounded title, body text, accessibility snapshot, URL, and viewport evidence for one preview browser session.",
+      inputSchema: browserPreviewFields,
+      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      browserToolResult(() => context.browser.inspect({ workspaceId, previewId }))
+  );
+
+  server.registerTool(
+    "browser.click",
+    {
+      description: "Click one bounded CSS or role target inside an existing preview-scoped browser session.",
+      inputSchema: { ...browserPreviewFields, target: browserTargetSchema },
+      annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId, target }) =>
+      browserToolResult(() => context.browser.click({ workspaceId, previewId, target }))
+  );
+
+  server.registerTool(
+    "browser.type",
+    {
+      description: "Fill one bounded CSS or role target inside an existing preview-scoped browser session.",
+      inputSchema: {
+        ...browserPreviewFields,
+        target: browserTargetSchema,
+        text: z.string().max(16 * 1024),
+        submit: z.boolean().optional()
+      },
+      annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId, target, text, submit }) =>
+      browserToolResult(() => context.browser.type({ workspaceId, previewId, target, text, submit }))
+  );
+
+  server.registerTool(
+    "browser.screenshot",
+    {
+      description: "Capture one bounded PNG screenshot from an existing preview browser session into the normal artifact spool.",
+      inputSchema: { ...browserPreviewFields, fullPage: z.boolean().optional() },
+      annotations: BROWSER_CAPTURE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId, fullPage }) =>
+      browserToolResult(() => context.browser.screenshot({ workspaceId, previewId, fullPage }))
+  );
+
+  server.registerTool(
+    "browser.console",
+    {
+      description: "Read bounded normalized console evidence from one existing preview browser session.",
+      inputSchema: browserPreviewFields,
+      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      browserToolResult(() => context.browser.console({ workspaceId, previewId }))
+  );
+
+  server.registerTool(
+    "browser.networkFailures",
+    {
+      description: "Read bounded redacted failed-request evidence from one existing preview browser session.",
+      inputSchema: browserPreviewFields,
+      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      browserToolResult(() => context.browser.networkFailures({ workspaceId, previewId }))
   );
 
   server.registerTool(
@@ -1105,6 +1222,17 @@ async function previewToolResult<T>(operation: () => Promise<T> | T) {
       ) {
         throw new Error(`${error.code}: Preview request failed`);
       }
+    }
+    throw error;
+  }
+}
+
+async function browserToolResult<T>(operation: () => Promise<T> | T) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    if (isRecord(error) && typeof error.code === "string" && error.code.startsWith("BROWSER_")) {
+      throw new Error(`${error.code}: Browser request failed`);
     }
     throw error;
   }

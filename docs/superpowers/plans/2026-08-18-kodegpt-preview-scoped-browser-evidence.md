@@ -5,11 +5,11 @@ Design: `docs/superpowers/specs/2026-08-18-kodegpt-preview-scoped-browser-eviden
 
 ## Task 1 — Private binary artifact ingestion
 
-Files: `packages/protocol/src/runtime-types.ts`, protocol tests, `crates/protocol/src/types.rs`, Rust protocol tests, `crates/runtime/src/spool.rs`, `crates/runtime/src/dispatcher.rs`, runtime tests, `packages/artifacts/src/artifact-store.ts`, artifact tests.
+Files: `crates/runtime/src/dispatcher.rs`, runtime integration tests, `packages/artifacts/src/artifact-store.ts`, artifact tests. Canonical runtime protocol/schema files remain unchanged.
 
-1. RED: add strict TS/Rust protocol fixtures for `artifact.write`; add artifact-store test that writes bytes and expects opaque metadata; add spool/dispatcher tests proving canonical base64, 5 MiB hard cap, media type validation, readback and audit without content.
+1. RED: add artifact-store test that writes bytes and expects opaque metadata; add dispatcher integration tests proving canonical base64, 5 MiB hard cap, media type validation, readback and audit without content; assert canonical runtime protocol parity remains unchanged.
 2. Run focused tests and confirm expected failures.
-3. GREEN: add private runtime method/schema, spool ingestion helper, dispatcher branch, and `ArtifactStore.write`.
+3. GREEN: add a private dispatcher-only kernel extension and `ArtifactStore.write`; reuse the existing spool writer and artifact metadata without adding a canonical protocol method.
 4. Run focused TS + Rust tests and typecheck.
 
 ## Task 2 — BrowserManager behavior with injected browser driver

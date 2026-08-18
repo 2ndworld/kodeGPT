@@ -583,7 +583,7 @@ describe("installed service run entrypoint", () => {
                 host: "127.0.0.1",
                 port: 43_121,
                 protocolVersion: "2026-07-28",
-                surfaceVersion: "0.11",
+                surfaceVersion: "0.12",
                 runtimeVersion: "0.1",
                 auditHealthy: true,
                 filesystemBoundaryAvailable: true

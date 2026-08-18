@@ -48,7 +48,7 @@ Top-level document navigation is restricted to the exact stored preview origin. 
 
 ## Artifact ingestion
 
-The existing Rust `RawSpoolStore` remains the only artifact authority. Add private runtime method `artifact.write` taking media type plus bounded base64 bytes. It validates canonical base64, decodes at most 5 MiB, creates one raw spool artifact through existing retention/audit/0600 protections, writes bytes, and returns existing opaque artifact metadata. This method is internal kernel transport only; no new public MCP `artifact.write` tool is added.
+The existing Rust `RawSpoolStore` remains the only artifact authority. Add private kernel extension `artifact.write` taking media type plus bounded base64 bytes. It validates canonical base64, decodes at most 5 MiB, creates one raw spool artifact through existing retention/audit/0600 protections, writes bytes, and returns existing opaque artifact metadata. The dispatcher parses this extension through a local closed params type; it is intentionally excluded from canonical `RUNTIME_METHODS`, shared runtime JSON Schema, and the Rust protocol request enum. No public MCP `artifact.write` tool is added.
 
 `@kodegpt/artifacts` gains `ArtifactStore.write(mediaType, bytes)` which calls the private runtime method and returns public opaque metadata.
 
@@ -75,7 +75,7 @@ Existing preview/runtime/artifact errors pass through where appropriate. Public 
 
 ## MCP/versioning
 
-Bump MCP surface `0.11 -> 0.12`; public tool count `65 -> 72`. Runtime version remains `0.1`; protocol identifier remains `2026-07-28` because `artifact.write` is an internal kernel method within the same runtime protocol family and is not a public MCP protocol change.
+Bump MCP surface `0.11 -> 0.12`; public tool count `65 -> 72`. Runtime version remains `0.1`; protocol identifier remains `2026-07-28`. The screenshot-ingestion extension is deliberately private to the Node↔Rust implementation boundary and does not change the canonical runtime protocol method set.
 
 ## Testing
 

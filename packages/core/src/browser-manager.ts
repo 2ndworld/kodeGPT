@@ -404,8 +404,9 @@ export class BrowserManager {
       await this.releasePreview(input.workspaceId, input.previewId);
       throw new BrowserManagerError("BROWSER_ORIGIN_INVALID", "browser left preview origin");
     }
-    const body = truncateUtf8(evidence.bodyText, BROWSER_EVIDENCE_MAX_BYTES / 2);
-    const aria = truncateUtf8(evidence.ariaSnapshot, BROWSER_EVIDENCE_MAX_BYTES / 2);
+    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES;
+    const body = truncateUtf8(evidence.bodyText, Math.floor(textEvidenceBudget / 2));
+    const aria = truncateUtf8(evidence.ariaSnapshot, Math.ceil(textEvidenceBudget / 2));
     const title = truncateUtf8(evidence.title, BROWSER_ENTRY_MAX_BYTES);
     const reasons = [
       ...(body.truncated ? ["bodyText"] : []),
@@ -415,7 +416,7 @@ export class BrowserManager {
     return {
       schemaVersion: 1,
       previewId: record.previewId,
-      url: record.url,
+      url: evidence.url,
       viewport: { ...evidence.viewport },
       title: title.value,
       bodyText: body.value,

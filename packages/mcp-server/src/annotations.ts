@@ -102,3 +102,31 @@ export const PROCESS_CANCEL_TOOL_ANNOTATIONS = Object.freeze({
   idempotentHint: true,
   openWorldHint: false
 });
+
+export const BROWSER_SESSION_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+});
+
+export const BROWSER_CAPTURE_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
+export const BROWSER_INTERACTION_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
+export const BROWSER_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+});

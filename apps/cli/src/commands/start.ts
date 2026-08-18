@@ -24,9 +24,11 @@ import {
   type RemoteCiToolAdapter
 } from "@kodegpt/capabilities";
 import {
+  BrowserManager,
   ExecutionManager,
   KernelClient,
   NodeLoopbackPreviewProbe,
+  PlaywrightBrowserDriver,
   PreviewManager,
   WorkspaceManager,
   type KernelHello
@@ -217,6 +219,7 @@ export async function createProductionServiceStack(
   let kernel: StartKernel | undefined;
   let skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined;
   let providerRuntime: ProviderGatewayRuntime | undefined;
+  let browserManager: BrowserManager | undefined;
   try {
     await dependencies.prepareStateRoot(stateRoot);
     await dependencies.prepareAudit(stateRoot);
@@ -286,6 +289,15 @@ export async function createProductionServiceStack(
       probe: new NodeLoopbackPreviewProbe()
     });
     const artifactStore = new ArtifactStore(kernel);
+    browserManager = new BrowserManager(
+      previewManager,
+      new PlaywrightBrowserDriver(),
+      artifactStore,
+      {
+        networkMode: (workspaceId) =>
+          managers.workspaceManager.requireReady(workspaceId).effectivePolicy.network
+      }
+    );
     const auditReader = new AuditReader(stateRoot);
     const nativeCapabilities = new NativeCapabilityService({
       workspace: {
@@ -418,6 +430,7 @@ export async function createProductionServiceStack(
       workspaceManager: managers.workspaceManager,
       executionManager,
       preview: previewManager,
+      browser: browserManager,
       artifactStore,
       nativeCapabilities,
       remoteCi,
@@ -443,11 +456,11 @@ export async function createProductionServiceStack(
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
-        await closeProductionStack(providerRuntime, skillCatalog, kernel);
+        await closeProductionStack(browserManager, providerRuntime, skillCatalog, kernel);
       }
     };
   } catch (error) {
-    await closeProductionStack(providerRuntime, skillCatalog, kernel).catch(() => undefined);
+    await closeProductionStack(browserManager, providerRuntime, skillCatalog, kernel).catch(() => undefined);
     throw error;
   }
 }
@@ -666,12 +679,14 @@ async function bindLoopback(mcp: McpNodeHandle, port: number): Promise<BoundLoop
 }
 
 async function closeProductionStack(
+  browserManager: Pick<BrowserManager, "close"> | undefined,
   providerRuntime: Pick<ProviderGatewayRuntime, "close"> | undefined,
   skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined,
   kernel: StartKernel | undefined
 ): Promise<void> {
   let firstError: unknown;
   for (const close of [
+    browserManager === undefined ? undefined : () => browserManager.close(),
     providerRuntime === undefined ? undefined : () => providerRuntime.close(),
     skillCatalog === undefined ? undefined : () => skillCatalog.close(),
     kernel === undefined ? undefined : () => kernel.stop()

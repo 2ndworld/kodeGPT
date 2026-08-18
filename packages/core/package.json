@@ -15,6 +15,7 @@
     "@kodegpt/artifacts": "workspace:*",
     "@kodegpt/profiles": "workspace:*",
     "@kodegpt/protocol": "workspace:*",
-    "@kodegpt/trust": "workspace:*"
+    "@kodegpt/trust": "workspace:*",
+    "playwright-core": "1.62.1"
   }
 }

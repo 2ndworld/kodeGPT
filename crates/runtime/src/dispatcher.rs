@@ -61,6 +61,13 @@ struct SystemInspectRootParams {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ArtifactWriteParams {
+    media_type: String,
+    data_base64: String,
+}
+
 fn valid_audit_operation_id(value: &str) -> bool {
     value.strip_prefix("op_").is_some_and(|suffix| {
         !suffix.is_empty()
@@ -1533,6 +1540,20 @@ async fn dispatch_one(
                 }
             };
             dispatch_artifact_read(raw_spool, request.id, params).await
+        }
+        "artifact.write" => {
+            let params = match serde_json::from_value::<ArtifactWriteParams>(request.params) {
+                Ok(params)
+                    if valid_artifact_media_type(&params.media_type)
+                        && params.data_base64.len() <= 6_990_508 =>
+                {
+                    params
+                }
+                Ok(_) | Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            dispatch_artifact_write(raw_spool, request.id, params).await
         }
         #[cfg(feature = "runtime-test-methods")]
         "test.sleep" if test_methods_enabled => {
@@ -3061,6 +3082,61 @@ async fn dispatch_process_operation(
             let (code, message) = process_error_contract(&error);
             audited_failure(audit, &context, request_id, code, message)
         }
+    }
+}
+
+fn valid_artifact_media_type(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && value.is_ascii()
+        && !value.bytes().any(|byte| byte.is_ascii_control())
+}
+
+async fn dispatch_artifact_write(
+    spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    params: ArtifactWriteParams,
+) -> Value {
+    let Some(spool) = spool else {
+        return error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE");
+    };
+    let bytes = match BASE64_STANDARD.decode(params.data_base64.as_bytes()) {
+        Ok(bytes)
+            if bytes.len() <= 5 * 1024 * 1024
+                && BASE64_STANDARD.encode(&bytes) == params.data_base64 =>
+        {
+            bytes
+        }
+        Ok(_) | Err(_) => return error_response(Some(request_id), -32602, "INVALID_PARAMS"),
+    };
+    let operation_id = next_process_operation_id();
+    let execution_id = format!(
+        "ex_{}",
+        operation_id.strip_prefix("op_").unwrap_or("artifact")
+    );
+    let request_for_write = request_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut writer = spool.create(
+            &request_for_write,
+            &operation_id,
+            &execution_id,
+            &params.media_type,
+        )?;
+        let accepted = writer.write_source(&bytes)?;
+        if accepted != bytes.len() {
+            return Err(RawSpoolError::QuotaExceeded);
+        }
+        writer.finish()
+    })
+    .await;
+
+    match result {
+        Ok(Ok(metadata)) => success_response(request_id, json!(metadata)),
+        Ok(Err(error)) => {
+            let (code, message) = artifact_error_contract(&error);
+            error_response(Some(request_id), code, message)
+        }
+        Err(_) => error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE"),
     }
 }
 

@@ -69,6 +69,12 @@ export type {
 } from "./browser-manager.js";
 
 export {
+  PlaywrightBrowserDriver,
+  isAllowedPreviewDocumentUrl,
+  isAllowedPreviewRequest
+} from "./playwright-browser-driver.js";
+
+export {
   ProjectProfileInvalidError,
   WorkspaceCloseIncompleteError,
   WorkspaceManager,

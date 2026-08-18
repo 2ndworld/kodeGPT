@@ -160,6 +160,17 @@ describe("BrowserManager", () => {
     ).rejects.toMatchObject({ code: "BROWSER_LIMIT_REACHED" });
   });
 
+  it("passes the effective workspace network mode to the browser driver", async () => {
+    const fixture = manager();
+    const bounded = new BrowserManager(fixture.preview, fixture.driver, fixture.artifacts, {
+      networkMode: () => "localhost"
+    });
+
+    await bounded.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
+
+    expect(fixture.driver.opens[0]?.networkMode).toBe("localhost");
+  });
+
   it("dispatches only bounded CSS/role click and type targets", async () => {
     const fixture = manager();
     await fixture.manager.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
