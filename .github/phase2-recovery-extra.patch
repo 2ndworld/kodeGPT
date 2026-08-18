@@ -32,6 +32,13 @@ diff --git a/apps/cli/src/service/runtime-status.ts b/apps/cli/src/service/runti
 +    value.surfaceVersion !== "0.11" &&
 +    value.surfaceVersion !== "0.12"
    ) {
+diff --git a/apps/cli/src/commands/service.ts b/apps/cli/src/commands/service.ts
+--- a/apps/cli/src/commands/service.ts
++++ b/apps/cli/src/commands/service.ts
+@@
+-  surfaceVersion?: "0.3" | "0.4" | "0.5" | "0.6" | "0.7" | "0.8" | "0.9" | "0.10" | "0.11";
++  surfaceVersion?: "0.3" | "0.4" | "0.5" | "0.6" | "0.7" | "0.8" | "0.9" | "0.10" | "0.11" | "0.12";
+   localPort?: number;
 diff --git a/apps/cli/src/commands/service.test.ts b/apps/cli/src/commands/service.test.ts
 --- a/apps/cli/src/commands/service.test.ts
 +++ b/apps/cli/src/commands/service.test.ts
