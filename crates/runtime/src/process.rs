@@ -1364,6 +1364,120 @@ mod tests {
     }
 
     #[test]
+    fn background_operation_survives_blocking_worker_retirement_and_second_process() {
+        let workspace = temporary_root("background-lifetime-workspace");
+        let state = temporary_root("background-lifetime-state");
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = Arc::new(RawSpoolStore::open(&state, audit).expect("spool store"));
+        let executions = Arc::new(Mutex::new(ExecutionRegistry::default()));
+        let operations = Arc::new(ProcessOperationRegistry::default());
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .thread_keep_alive(Duration::from_millis(50))
+            .enable_time()
+            .build()
+            .expect("test runtime");
+
+        let workspace_for_background = workspace.clone();
+        let state_for_background = state.clone();
+        let spool_for_background = Arc::clone(&spool);
+        let executions_for_background = Arc::clone(&executions);
+        let operations_for_background = Arc::clone(&operations);
+        let background = runtime.block_on(async move {
+            tokio::task::spawn_blocking(move || {
+                let root_fd = OwnedFd::from(
+                    File::open(&workspace_for_background).expect("background workspace root fd"),
+                );
+                run_process(
+                    root_fd,
+                    &state_for_background,
+                    "kc_background_lifetime_fixture".to_owned(),
+                    "req_background_lifetime".to_owned(),
+                    next_process_operation_id(),
+                    policy(true),
+                    ProcessLaunchRequest {
+                        logical_executable: "python3".to_owned(),
+                        argv: vec!["-c".to_owned(), "import time; time.sleep(30)".to_owned()],
+                        cwd: ".".to_owned(),
+                        env: BTreeMap::new(),
+                        background: true,
+                    },
+                    spool_for_background,
+                    executions_for_background,
+                    operations_for_background,
+                )
+                .expect("background process starts")
+            })
+            .await
+            .expect("background blocking task joins")
+        });
+        assert_eq!(background.state, ProcessState::Running);
+
+        thread::sleep(Duration::from_millis(250));
+
+        let workspace_for_second = workspace.clone();
+        let state_for_second = state.clone();
+        let spool_for_second = Arc::clone(&spool);
+        let executions_for_second = Arc::clone(&executions);
+        let operations_for_second = Arc::clone(&operations);
+        let second = runtime.block_on(async move {
+            tokio::task::spawn_blocking(move || {
+                let root_fd = OwnedFd::from(
+                    File::open(&workspace_for_second).expect("second workspace root fd"),
+                );
+                run_process(
+                    root_fd,
+                    &state_for_second,
+                    "kc_background_lifetime_fixture".to_owned(),
+                    "req_background_lifetime_second".to_owned(),
+                    next_process_operation_id(),
+                    policy(true),
+                    ProcessLaunchRequest {
+                        logical_executable: "python3".to_owned(),
+                        argv: vec!["-c".to_owned(), "print('second')".to_owned()],
+                        cwd: ".".to_owned(),
+                        env: BTreeMap::new(),
+                        background: false,
+                    },
+                    spool_for_second,
+                    executions_for_second,
+                    operations_for_second,
+                )
+                .expect("second process runs")
+            })
+            .await
+            .expect("second blocking task joins")
+        });
+        assert_eq!(second.state, ProcessState::Completed);
+
+        let mut status = operations
+            .status("kc_background_lifetime_fixture", &background.operation_id)
+            .expect("background status");
+        for _ in 0..50 {
+            if status.state != ProcessState::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+            status = operations
+                .status("kc_background_lifetime_fixture", &background.operation_id)
+                .expect("background status");
+        }
+        assert_eq!(
+            status.state,
+            ProcessState::Running,
+            "background process died after its blocking worker retired: {status:?}"
+        );
+
+        let cancelled = operations
+            .cancel("kc_background_lifetime_fixture", &background.operation_id)
+            .expect("background operation cancels");
+        assert_eq!(cancelled.state, ProcessState::Cancelled);
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
     fn background_operation_can_be_cancelled_as_a_process_group() {
         let workspace = temporary_root("cancel-workspace");
         let state = temporary_root("cancel-state");

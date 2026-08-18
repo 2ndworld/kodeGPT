@@ -7,6 +7,8 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use rustix::io::{FdFlags, fcntl_setfd};
@@ -130,6 +132,7 @@ pub struct SandboxChild {
     child: Child,
     process_group: i32,
     _status_reader: UnixStream,
+    _parent_lifetime: mpsc::Sender<()>,
 }
 
 impl SandboxChild {
@@ -269,7 +272,30 @@ impl BubblewrapProvider {
         for auxiliary in &spec.auxiliary_programs {
             auxiliary.revalidate()?;
         }
-        let mut child = command.spawn()?;
+        let (spawn_sender, spawn_receiver) = mpsc::sync_channel(1);
+        let (parent_lifetime, parent_lifetime_receiver) = mpsc::channel();
+        thread::Builder::new()
+            .name("kodegpt-sandbox-parent".to_owned())
+            .spawn(move || match command.spawn() {
+                Ok(child) => match spawn_sender.send(Ok(child)) {
+                    Ok(()) => {
+                        let _ = parent_lifetime_receiver.recv();
+                    }
+                    Err(mpsc::SendError(Ok(mut child))) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                    Err(mpsc::SendError(Err(_))) => unreachable!("spawn succeeded"),
+                },
+                Err(error) => {
+                    let _ = spawn_sender.send(Err(error));
+                }
+            })?;
+        let mut child = spawn_receiver.recv().map_err(|_| {
+            SandboxError::SandboxUnavailable(
+                "sandbox parent thread exited before publishing child".to_owned(),
+            )
+        })??;
         drop(status_writer);
         drop(inherited_workspace_fd);
         let process_group = match read_child_pid(&status_reader) {
@@ -284,6 +310,7 @@ impl BubblewrapProvider {
             child,
             process_group,
             _status_reader: status_reader,
+            _parent_lifetime: parent_lifetime,
         })
     }
 
