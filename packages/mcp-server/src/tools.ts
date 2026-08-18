@@ -139,6 +139,9 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
   { name: "process.status", required: ["workspaceId", "operationId"] },
+  { name: "preview.inspect", required: ["workspaceId", "previewId"] },
+  { name: "preview.start", required: ["workspaceId", "logicalExecutable", "argv", "port"] },
+  { name: "preview.stop", required: ["workspaceId", "previewId"] },
   { name: "profile.current", required: ["workspaceId"] },
   { name: "profile.inspect", required: ["name"] },
   { name: "skill.list", required: [] },
@@ -940,6 +943,69 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "preview.start",
+    {
+      description: "Start a bounded workspace preview through existing background process authority and bind it to fixed loopback HTTP readiness evidence.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        logicalExecutable: z.string().min(1),
+        argv: z.array(z.string()),
+        port: z.number().int().min(1024).max(65_535).safe(),
+        cwd: z.string().min(1).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+        requestPath: z
+          .string()
+          .min(1)
+          .refine((value) => isPreviewRequestPath(value), "Invalid preview request path")
+          .optional(),
+        waitMs: z.number().int().nonnegative().max(10_000).safe().optional()
+      },
+      annotations: PROCESS_RUN_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, logicalExecutable, argv, port, cwd, env, requestPath, waitMs }) =>
+      previewToolResult(() =>
+        context.preview.start({
+          workspaceId,
+          logicalExecutable,
+          argv,
+          port,
+          cwd,
+          env,
+          requestPath,
+          waitMs
+        })
+      )
+  );
+
+  server.registerTool(
+    "preview.inspect",
+    {
+      description: "Inspect process and fixed-loopback readiness state for one KodeGPT-owned preview.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      previewToolResult(() => context.preview.inspect({ workspaceId, previewId }))
+  );
+
+  server.registerTool(
+    "preview.stop",
+    {
+      description: "Stop one KodeGPT-owned preview through existing process cancellation authority.",
+      inputSchema: {
+        workspaceId: z.string().min(1),
+        previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
+      },
+      annotations: PROCESS_CANCEL_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      previewToolResult(() => context.preview.stop({ workspaceId, previewId }))
+  );
+
+  server.registerTool(
     "profile.current",
     {
       description: "Return the effective monotonic policy for a READY workspace.",
@@ -1027,6 +1093,23 @@ export function registerKodegptTools(
   );
 }
 
+async function previewToolResult<T>(operation: () => Promise<T> | T) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    if (isRecord(error) && typeof error.code === "string") {
+      if (
+        error.code === "PREVIEW_NOT_FOUND" ||
+        error.code === "PREVIEW_LIMIT_REACHED" ||
+        error.code === "PREVIEW_ENDPOINT_IN_USE"
+      ) {
+        throw new Error(`${error.code}: Preview request failed`);
+      }
+    }
+    throw error;
+  }
+}
+
 async function skillToolResult<T>(operation: () => Promise<T>) {
   try {
     return structuredToolResult(await operation());
@@ -1071,6 +1154,24 @@ function currentRequestSupportsUi(requestContext: unknown): boolean {
   if (!isRecord(extensions)) return false;
   const ui = extensions["io.modelcontextprotocol/ui"];
   return isRecord(ui) && Array.isArray(ui.mimeTypes) && ui.mimeTypes.includes("text/html;profile=mcp-app");
+}
+
+function isPreviewRequestPath(value: string): boolean {
+  if (
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    Buffer.byteLength(value, "utf8") > 2048 ||
+    value.includes("#") ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value, "http://127.0.0.1");
+    return `${parsed.pathname}${parsed.search}` === value;
+  } catch {
+    return false;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

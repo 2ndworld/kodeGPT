@@ -344,6 +344,11 @@ function makeContext(): KodegptToolContext {
       status: async () => ({} as never),
       cancel: async () => ({} as never)
     },
+    preview: {
+      start: async () => ({} as never),
+      inspect: async () => ({} as never),
+      stop: async () => ({} as never)
+    },
     artifact: {
       read: async () => ({} as never)
     },
@@ -1073,6 +1078,91 @@ describe("structured MCP tool results", () => {
       consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).processes
         .operations
     ).toContainEqual(typedVerifyRunResult.operation);
+  });
+
+  it("keeps preview schemas closed to caller-selected network targets", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const previewResult = {
+      schemaVersion: 1 as const,
+      previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      operationId: "op_preview",
+      url: "http://127.0.0.1:3000/",
+      processState: "running" as const,
+      reachable: true,
+      httpStatus: 200
+    };
+    context.preview.start = async () => previewResult;
+    context.preview.inspect = async () => previewResult;
+    context.preview.stop = async () => ({ ...previewResult, processState: "cancelled" as const, reachable: false, httpStatus: null });
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const startDefinition = definitions.get("preview.start");
+    const startSchema = z.object(startDefinition?.inputSchema as z.ZodRawShape).strict();
+    const base = {
+      workspaceId: "ws_1",
+      logicalExecutable: "node",
+      argv: ["server.mjs"],
+      port: 3000
+    };
+    expect(startSchema.safeParse(base).success).toBe(true);
+    expect(startDefinition?.annotations).toEqual(PROCESS_RUN_TOOL_ANNOTATIONS);
+    for (const extra of [
+      { host: "example.invalid" },
+      { url: "https://example.invalid" },
+      { scheme: "https" },
+      { endpoint: "https://example.invalid" }
+    ]) {
+      expect(startSchema.safeParse({ ...base, ...extra }).success).toBe(false);
+    }
+    expect(startSchema.safeParse({ ...base, port: 80 }).success).toBe(false);
+    for (const requestPath of ["//example.invalid", "/bad path", "/bad#fragment"]) {
+      expect(startSchema.safeParse({ ...base, requestPath }).success).toBe(false);
+    }
+
+    const inspectDefinition = definitions.get("preview.inspect");
+    const inspectSchema = z.object(inspectDefinition?.inputSchema as z.ZodRawShape).strict();
+    const lookup = { workspaceId: "ws_1", previewId: previewResult.previewId };
+    expect(inspectSchema.safeParse(lookup).success).toBe(true);
+    expect(inspectDefinition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    expect(inspectSchema.safeParse({ ...lookup, url: "http://127.0.0.1:9999/" }).success).toBe(false);
+
+    const result = (await handlers.get("preview.start")!(base as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(result.structuredContent).toEqual(previewResult);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
+  });
+
+  it("normalizes known preview lifecycle errors at the MCP boundary", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const context = makeContext();
+    context.preview.inspect = async () => {
+      const error = new Error("Preview was not found");
+      Object.assign(error, { code: "PREVIEW_NOT_FOUND" });
+      throw error;
+    };
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    await expect(
+      handlers.get("preview.inspect")!({
+        workspaceId: "ws_1",
+        previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      } as never)
+    ).rejects.toThrow("PREVIEW_NOT_FOUND: Preview request failed");
   });
 
   it("preserves only safe partial-commit details at the MCP boundary", async () => {
