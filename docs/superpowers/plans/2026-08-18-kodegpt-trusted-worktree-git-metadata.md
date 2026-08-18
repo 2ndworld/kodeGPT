@@ -162,7 +162,7 @@ git diff --check
 
 Expected: PASS.
 
-- [ ] **Step 2: Review exact diff**
+- [x] **Step 2: Review exact diff**
 
 Use defect-first review against `af4958cf...`, focusing on arbitrary path admission, source leakage, symlink/traversal, metadata write scope, ordinary-repo regression, and unnecessary abstraction.
 
@@ -173,23 +173,23 @@ Use defect-first review against `af4958cf...`, focusing on arbitrary path admiss
 **Files:**
 - Create/Update: `docs/verification/trusted-worktree-git-metadata-audit-2026-08-18.md`
 
-- [ ] **Step 1: Commit and rebuild a clean-provenance candidate**
+- [x] **Step 1: Commit and rebuild a clean-provenance candidate**
 
 Rebuild after commit so package provenance reports `sourceDirty=false`.
 
-- [ ] **Step 2: Stage candidate release with the existing service lifecycle**
+- [x] **Step 2: Stage candidate release with the existing service lifecycle**
 
 Use the existing CLI `service install` staging path with `public:kodegpt-dev`, port `43121`, and the existing state root; then explicitly restart/cut over. Do not run the service directly from the worktree.
 
-- [ ] **Step 3: Dogfood existing KodeGPT primitives from the linked worktree**
+- [x] **Step 3: Dogfood existing KodeGPT primitives from the linked worktree**
 
 Exercise source inspect/search/read, disposable edit/revert, trusted shell/process, build/typecheck or bounded verification, typed Git status/diff/changes/history, benign failure diagnosis, and background cancellation.
 
-- [ ] **Step 4: Audit worktree lifecycle friction**
+- [x] **Step 4: Audit worktree lifecycle friction**
 
 Record the observed Git 2.43 behavior when `git worktree add` runs inside `/workspace`: absolute sandbox paths can be persisted into worktree metadata and require host-side repair. Do not add `git.worktree*` tools in this phase unless the evidence supports a separately approved public-authority design.
 
-- [ ] **Step 5: Decide P1**
+- [x] **Step 5: Decide P1**
 
 Classify each workflow as `NO_GAP`, `DOC/ERGONOMIC_GAP`, `EXISTING_PRIMITIVE_GAP`, or `NEW_BEHAVIOR_REQUIRES_SEPARATE_SPEC`. Prefer no new tool if existing primitives are sufficient.
 
