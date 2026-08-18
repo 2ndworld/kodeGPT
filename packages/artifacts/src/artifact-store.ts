@@ -1,7 +1,8 @@
 export const ARTIFACT_READ_MAX_BYTES = 1024 * 1024;
+export const ARTIFACT_WRITE_MAX_BYTES = 5 * 1024 * 1024;
 
 export interface ArtifactKernelTransport {
-  request<T>(method: "artifact.read", params: Record<string, unknown>): Promise<T>;
+  request<T>(method: "artifact.read" | "artifact.write", params: Record<string, unknown>): Promise<T>;
 }
 
 export interface KernelArtifactMetadata {
@@ -44,6 +45,22 @@ export class ArtifactStore {
 
   constructor(kernel: ArtifactKernelTransport) {
     this.#kernel = kernel;
+  }
+
+  async write(mediaType: string, bytes: Uint8Array): Promise<ArtifactMetadata> {
+    if (
+      mediaType.length === 0 ||
+      mediaType.length > 255 ||
+      !/^[\x20-\x7e]+$/.test(mediaType) ||
+      bytes.byteLength > ARTIFACT_WRITE_MAX_BYTES
+    ) {
+      throw new ArtifactStoreError("ARTIFACT_WRITE_INVALID", "artifact write input is invalid");
+    }
+    const value = await this.#kernel.request<unknown>("artifact.write", {
+      mediaType,
+      dataBase64: Buffer.from(bytes).toString("base64")
+    });
+    return toPublicArtifactMetadata(value);
   }
 
   async read(

@@ -48,6 +48,15 @@ describe("canonical runtime JSON Schemas", () => {
     );
   });
 
+  it("keeps private screenshot ingestion out of the canonical runtime protocol", async () => {
+    expect(RUNTIME_METHODS).not.toContain("artifact.write");
+    const request = await schema("request.schema.json");
+    const variants = request.oneOf as JsonSchema[];
+    expect(
+      variants.some((variant) => variant.properties.method.const === "artifact.write")
+    ).toBe(false);
+  });
+
   it("locks inheritEnv to false and closes shared policy/identity definitions", async () => {
     const request = await schema("request.schema.json");
     const policy = request.$defs.runtimePolicy as JsonSchema;

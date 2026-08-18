@@ -173,10 +173,10 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust, Git, bounded GitHub, and preview surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.11");
+  it("ships only the intended typed trust, Git, bounded GitHub, preview, and browser surface with no generic authority", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.12");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(65);
+    expect(names).toHaveLength(72);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
@@ -213,6 +213,13 @@ describe("full security acceptance invariants", () => {
       "preview.start",
       "preview.inspect",
       "preview.stop",
+      "browser.openPreview",
+      "browser.inspect",
+      "browser.click",
+      "browser.type",
+      "browser.screenshot",
+      "browser.console",
+      "browser.networkFailures",
       "verify.list",
       "verify.run",
       "file.patch",

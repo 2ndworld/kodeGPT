@@ -349,6 +349,17 @@ function makeContext(): KodegptToolContext {
       inspect: async () => ({} as never),
       stop: async () => ({} as never)
     },
+    browser: {
+      openPreview: async () => ({} as never),
+      inspect: async () => ({} as never),
+      click: async () => ({} as never),
+      type: async () => ({} as never),
+      screenshot: async () => ({} as never),
+      console: async () => ({} as never),
+      networkFailures: async () => ({} as never),
+      releasePreview: async () => undefined,
+      releaseWorkspace: async () => undefined
+    },
     artifact: {
       read: async () => ({} as never)
     },

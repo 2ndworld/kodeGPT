@@ -6,6 +6,13 @@ import type { KodegptToolContext } from "./tool-context.js";
 
 const LOCKED_SURFACE = [
   { name: "artifact.read", required: ["uri"] },
+  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
+  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
+  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
+  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
+  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
+  { name: "browser.console", required: ["workspaceId", "previewId"] },
+  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },
@@ -79,10 +86,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.11");
+    expect(MCP_SURFACE_VERSION).toBe("0.12");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(65);
+    expect(surface).toHaveLength(72);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
@@ -132,6 +139,17 @@ describe("KodeGPT MCP semantic surface", () => {
         start: async () => ({}),
         inspect: async () => ({}),
         stop: async () => ({})
+      },
+      browser: {
+        openPreview: async () => ({}),
+        inspect: async () => ({}),
+        click: async () => ({}),
+        type: async () => ({}),
+        screenshot: async () => ({}),
+        console: async () => ({}),
+        networkFailures: async () => ({}),
+        releasePreview: async () => undefined,
+        releaseWorkspace: async () => undefined
       },
       artifact: {
         read: async () => ({})

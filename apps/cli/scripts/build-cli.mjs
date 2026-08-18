@@ -35,7 +35,13 @@ await build({
   format: "esm",
   target: ["node22"],
   packages: "bundle",
-  external: ["@kodegpt/runtime-linux-x64", "@kodegpt/runtime-linux-x64/package.json", "yaml"],
+  external: [
+    "@kodegpt/runtime-linux-x64",
+    "@kodegpt/runtime-linux-x64/package.json",
+    "playwright-core",
+    "playwright-core/*",
+    "yaml"
+  ],
   banner: { js: "#!/usr/bin/env node" },
   legalComments: "none"
 });

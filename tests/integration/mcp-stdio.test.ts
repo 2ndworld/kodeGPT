@@ -27,6 +27,13 @@ const remoteCiReadOnlyAnnotations = {
   openWorldHint: true
 };
 
+const browserSessionAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+};
+
 const remoteCiMutationAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,
@@ -286,6 +293,14 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(processRunAnnotations);
         } else if (tool.name === "process.cancel" || tool.name === "preview.stop") {
           expect(tool.annotations).toEqual(processCancelAnnotations);
+        } else if (tool.name === "browser.openPreview") {
+          expect(tool.annotations).toEqual(browserSessionAnnotations);
+        } else if (tool.name === "browser.click" || tool.name === "browser.type") {
+          expect(tool.annotations).toEqual(remoteCiCancelAnnotations);
+        } else if (tool.name === "browser.screenshot") {
+          expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
+        } else if (tool.name.startsWith("browser.")) {
+          expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
         } else if (tool.name === "github.pr.create") {
           expect(tool.annotations).toEqual(remoteGitHubCreateAnnotations);
         } else if (tool.name === "github.pr.merge") {

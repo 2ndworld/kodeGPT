@@ -48,6 +48,7 @@ import type {
   WorkspaceInspectResult
 } from "@kodegpt/capabilities";
 import type {
+  BrowserManager,
   ExecutionManager,
   OpenWorkspace,
   PreviewLookupInput,
@@ -178,6 +179,19 @@ export interface PreviewToolContext {
   stop(input: PreviewLookupInput): MaybePromise<PreviewStatusResult>;
 }
 
+export type BrowserToolContext = Pick<
+  BrowserManager,
+  | "openPreview"
+  | "inspect"
+  | "click"
+  | "type"
+  | "screenshot"
+  | "console"
+  | "networkFailures"
+  | "releasePreview"
+  | "releaseWorkspace"
+>;
+
 export interface ArtifactToolContext {
   read(input: { uri: string; offset?: number; maxBytes?: number }): MaybePromise<ArtifactReadResult>;
 }
@@ -249,6 +263,7 @@ export interface KodegptToolContext {
   git: GitToolContext;
   process: ProcessToolContext;
   preview: PreviewToolContext;
+  browser: BrowserToolContext;
   artifact: ArtifactToolContext;
   extension: ExtensionToolContext;
   profile: ProfileToolContext;
@@ -327,7 +342,8 @@ export class NativeCapabilityAdapterUnavailableError extends Error {
 export function createKodegptToolContext(options: {
   workspaceManager: WorkspaceManagerToolAdapter;
   executionManager: ExecutionManagerToolAdapter;
-  preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): void };
+  preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): MaybePromise<void> };
+  browser?: BrowserToolContext;
   artifactStore: ArtifactStoreToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
@@ -344,6 +360,7 @@ export function createKodegptToolContext(options: {
   const githubRead = options.githubRead ?? unavailableGitHubRead();
   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
   const preview = options.preview ?? unavailablePreview();
+  const browser = options.browser ?? unavailableBrowser();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -356,7 +373,8 @@ export function createKodegptToolContext(options: {
       }),
       close: async ({ workspaceId }) => {
         await options.workspaceManager.closeWorkspace(workspaceId);
-        options.preview?.releaseWorkspace?.(workspaceId);
+        await browser.releaseWorkspace(workspaceId);
+        await options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
       info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
@@ -407,7 +425,21 @@ export function createKodegptToolContext(options: {
     preview: {
       start: (input) => preview.start(input),
       inspect: (input) => preview.inspect(input),
-      stop: (input) => preview.stop(input)
+      stop: async (input) => {
+        await browser.releasePreview(input.workspaceId, input.previewId);
+        return preview.stop(input);
+      }
+    },
+    browser: {
+      openPreview: (input) => browser.openPreview(input),
+      inspect: (input) => browser.inspect(input),
+      click: (input) => browser.click(input),
+      type: (input) => browser.type(input),
+      screenshot: (input) => browser.screenshot(input),
+      console: (input) => browser.console(input),
+      networkFailures: (input) => browser.networkFailures(input),
+      releasePreview: (workspaceId, previewId) => browser.releasePreview(workspaceId, previewId),
+      releaseWorkspace: (workspaceId) => browser.releaseWorkspace(workspaceId)
     },
     artifact: {
       read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
@@ -491,6 +523,20 @@ function unavailablePreview(): PreviewToolContext {
     start: () => unavailable("preview.start"),
     inspect: () => unavailable("preview.inspect"),
     stop: () => unavailable("preview.stop")
+  };
+}
+
+function unavailableBrowser(): BrowserToolContext {
+  return {
+    openPreview: () => unavailable("browser.openPreview"),
+    inspect: () => unavailable("browser.inspect"),
+    click: () => unavailable("browser.click"),
+    type: () => unavailable("browser.type"),
+    screenshot: () => unavailable("browser.screenshot"),
+    console: () => unavailable("browser.console"),
+    networkFailures: () => unavailable("browser.networkFailures"),
+    releasePreview: async () => undefined,
+    releaseWorkspace: async () => undefined
   };
 }
 

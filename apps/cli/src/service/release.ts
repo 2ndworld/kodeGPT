@@ -6,11 +6,15 @@ import { RUNTIME_PACKAGE_LINUX_X64 } from "../runtime-resolver.js";
 import { verifyArtifactPair } from "./artifact-provenance.js";
 import type { ServiceMetadataV1, ServiceReleaseRecord } from "./metadata.js";
 
+const PLAYWRIGHT_CORE_PACKAGE = "playwright-core" as const;
+const PLAYWRIGHT_CORE_VERSION = "1.62.1" as const;
+
 export interface MaterializeServiceReleaseInput {
   serviceDataRoot: string;
   cliPath: string;
   runtimePackageRoot: string;
   yamlPackageRoot: string;
+  playwrightCorePackageRoot: string;
   nodePath: string;
   zrokPath: string;
   reservedName: string;
@@ -41,6 +45,7 @@ export async function materializeServiceRelease(
     return record;
   }
 
+  await assertPackageIdentity(input.playwrightCorePackageRoot, PLAYWRIGHT_CORE_PACKAGE, PLAYWRIGHT_CORE_VERSION);
   await mkdir(releasesRoot, { recursive: true, mode: 0o700 });
   const temporaryRoot = join(releasesRoot, `.${releaseId}.${randomUUID()}.tmp`);
   try {
@@ -53,12 +58,14 @@ export async function materializeServiceRelease(
       "runtime-linux-x64"
     );
     const yamlDestinationRoot = join(temporaryRoot, "node_modules", "yaml");
+    const playwrightDestinationRoot = join(temporaryRoot, "node_modules", PLAYWRIGHT_CORE_PACKAGE);
     await mkdir(join(temporaryRoot, "bin"), { recursive: true, mode: 0o700 });
     await mkdir(join(temporaryRoot, "node_modules", "@kodegpt"), { recursive: true, mode: 0o700 });
     await copyFile(input.cliPath, cliDestination);
     await copyFile(join(dirname(input.cliPath), "kodegpt.provenance.json"), cliProvenanceDestination);
     await cp(input.runtimePackageRoot, runtimeDestinationRoot, { recursive: true, force: false });
     await cp(input.yamlPackageRoot, yamlDestinationRoot, { recursive: true, force: false });
+    await cp(input.playwrightCorePackageRoot, playwrightDestinationRoot, { recursive: true, force: false });
     await chmod(cliDestination, 0o755);
     await chmod(join(runtimeDestinationRoot, "bin", "kodegpt-runtime"), 0o755);
     await rename(temporaryRoot, releaseRoot);
@@ -131,6 +138,11 @@ export async function verifyServiceRelease(record: ServiceReleaseRecord): Promis
     throw new Error("service release runtime package identity mismatch");
   }
   await access(join(record.releaseRoot, "node_modules", "yaml", "package.json"));
+  await assertPackageIdentity(
+    join(record.releaseRoot, "node_modules", PLAYWRIGHT_CORE_PACKAGE),
+    PLAYWRIGHT_CORE_PACKAGE,
+    PLAYWRIGHT_CORE_VERSION
+  );
   await verifyArtifactPair({ cliPath: record.cliPath, runtimePackageRoot });
 }
 
@@ -173,6 +185,16 @@ function releaseIdentity(packageVersion: string, cliSha256: string, runtimeSha25
     .update(runtimeSha256)
     .digest("hex");
   return `rel_${digest.slice(0, 32)}`;
+}
+
+async function assertPackageIdentity(root: string, name: string, version: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+    name?: unknown;
+    version?: unknown;
+  };
+  if (manifest.name !== name || manifest.version !== version) {
+    throw new Error(`service release package identity mismatch: ${name}@${version}`);
+  }
 }
 
 async function sha256(path: string): Promise<string> {
