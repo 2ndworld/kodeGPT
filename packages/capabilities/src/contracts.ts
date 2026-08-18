@@ -527,12 +527,22 @@ export interface ContextSelectedFile {
   truncated: boolean;
 }
 
+export type ContextEvidenceState = "available" | "incomplete" | "unavailable";
+
+export interface ContextEvidenceStatus {
+  workspace: ContextEvidenceState;
+  git: ContextEvidenceState;
+  search: ContextEvidenceState;
+  verification: ContextEvidenceState;
+}
+
 export interface ContextBuildResult {
   schemaVersion: 1;
   intent: ContextIntent;
   target?: string;
+  evidenceStatus: ContextEvidenceStatus;
   workspace: WorkspaceInspectResult;
-  git: GitChangesResult;
+  git?: GitChangesResult;
   selectedFiles: ContextSelectedFile[];
   relevantMatches: CodeSearchResult["matches"];
   verifications: VerificationRecipe[];

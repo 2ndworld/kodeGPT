@@ -8,11 +8,21 @@ import {
   type WorkspaceInspectResult
 } from "./contracts.js";
 import { buildContext, INTENT_WEIGHTS } from "./context-build.js";
+import { CapabilityError } from "./errors.js";
 
-function sources(
-  contents: Record<string, string>,
-  options: { extraSearchMatches?: CodeSearchResult["matches"] } = {}
-) {
+type SourceOptions = {
+  extraSearchMatches?: CodeSearchResult["matches"];
+  workspaceTruncated?: boolean;
+  gitTruncated?: boolean;
+  searchTruncated?: boolean;
+  inspectFailure?: unknown;
+  gitFailure?: unknown;
+  searchFailure?: unknown;
+  verifyFailure?: unknown;
+  unreadablePaths?: string[];
+};
+
+function sources(contents: Record<string, string>, options: SourceOptions = {}) {
   const workspace: WorkspaceInspectResult = {
     schemaVersion: 1,
     workspaceId: "ws_1",
@@ -32,7 +42,7 @@ function sources(
     symbols: [],
     relationships: [],
     warnings: [],
-    truncated: false
+    truncated: options.workspaceTruncated ?? false
   };
   const git: GitChangesResult = {
     schemaVersion: 1,
@@ -43,7 +53,7 @@ function sources(
       { path: "packages/other/src/unrelated.ts", worktreeStatus: "M" }
     ],
     summary: { changedFiles: 2 },
-    truncated: false,
+    truncated: options.gitTruncated ?? false,
     fingerprint: "a".repeat(64)
   };
   const search: CodeSearchResult = {
@@ -56,8 +66,8 @@ function sources(
       { path: "packages/core/src/workspace-manager.test.ts", kind: "path" },
       ...(options.extraSearchMatches ?? [])
     ],
-    truncated: false,
-    truncationReasons: []
+    truncated: options.searchTruncated ?? false,
+    truncationReasons: options.searchTruncated ? ["MATCH_LIMIT"] : []
   };
   const verify: VerifyListResult = {
     schemaVersion: 1,
@@ -78,15 +88,28 @@ function sources(
   const readCalls: string[] = [];
   return {
     adapter: {
-      inspect: async () => workspace,
-      git: async () => git,
-      search: async () => search,
-      verify: async () => verify,
-      readFile: async (_workspaceId: string, path: string, options?: { maxBytes?: number }) => {
+      inspect: async () => {
+        if (options.inspectFailure !== undefined) throw options.inspectFailure;
+        return workspace;
+      },
+      git: async () => {
+        if (options.gitFailure !== undefined) throw options.gitFailure;
+        return git;
+      },
+      search: async () => {
+        if (options.searchFailure !== undefined) throw options.searchFailure;
+        return search;
+      },
+      verify: async () => {
+        if (options.verifyFailure !== undefined) throw options.verifyFailure;
+        return verify;
+      },
+      readFile: async (_workspaceId: string, path: string, readOptions?: { maxBytes?: number }) => {
         readCalls.push(path);
+        if (options.unreadablePaths?.includes(path)) throw new Error("unreadable");
         const value = contents[path];
         if (value === undefined) throw new Error("missing");
-        const maxBytes = options?.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
+        const maxBytes = readOptions?.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
         const bytes = Buffer.from(value, "utf8");
         if (bytes.length <= maxBytes) return { contents: value, bytesRead: bytes.length, eof: true };
         return {
@@ -135,6 +158,12 @@ describe("context.build", () => {
       { path: TARGET, kind: "path" }
     ]);
     expect(result.verifications.map((recipe) => recipe.id)).toEqual(["package:test"]);
+    expect(result.evidenceStatus).toEqual({
+      workspace: "available",
+      git: "available",
+      search: "available",
+      verification: "available"
+    });
     expect(result.truncated).toBe(false);
     expect(result.totalBytes).toBe(
       result.selectedFiles.reduce((sum, file) => sum + Buffer.byteLength(file.content ?? ""), 0)
@@ -225,6 +254,186 @@ describe("context.build", () => {
     ]);
     expect(result.truncated).toBe(true);
     expect(fixture.readCalls).toEqual([TARGET, "packages/core/src/helper.ts"]);
+  });
+
+  it("returns partial context when Git evidence is unavailable without fabricating clean Git", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      {
+        gitFailure: new CapabilityError("GIT_INSPECTION_FAILED", "Git checkpoint inspection failed")
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "debug",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.evidenceStatus).toEqual({
+      workspace: "available",
+      git: "unavailable",
+      search: "available",
+      verification: "available"
+    });
+    expect(result.git).toBeUndefined();
+    expect(result.warnings).toContain("git-evidence-unavailable");
+    expect(result.truncated).toBe(true);
+    expect(result.selectedFiles.map((file) => file.path)).toContain(TARGET);
+    expect(result.selectedFiles.some((file) => file.reason === "changed-same-area")).toBe(false);
+    expect(result.verifications.map((recipe) => recipe.id)).toEqual(["package:test"]);
+  });
+
+  it("preserves non-Git evidence when search evidence is unavailable", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "changed\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        searchFailure: new CapabilityError("CAPABILITY_SOURCE_INCOMPLETE", "Search source incomplete")
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.evidenceStatus.search).toBe("unavailable");
+    expect(result.warnings).toContain("search-evidence-unavailable");
+    expect(result.relevantMatches).toEqual([]);
+    expect(result.selectedFiles.map((file) => file.path)).toContain(TARGET);
+    expect(result.selectedFiles.map((file) => file.path)).toContain("packages/core/src/helper.ts");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("preserves workspace and source context when verification discovery is unavailable", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "changed\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      {
+        verifyFailure: new CapabilityError(
+          "VERIFICATION_DISCOVERY_INVALID",
+          "Verification discovery is invalid"
+        )
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.evidenceStatus.verification).toBe("unavailable");
+    expect(result.warnings).toContain("verification-evidence-unavailable");
+    expect(result.verifications).toEqual([]);
+    expect(result.workspace.workspaceId).toBe("ws_1");
+    expect(result.selectedFiles.map((file) => file.path)).toContain(TARGET);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("marks bounded but truncated evidence as incomplete instead of unavailable", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "changed\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      { workspaceTruncated: true, gitTruncated: true, searchTruncated: true }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "review",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.evidenceStatus).toEqual({
+      workspace: "incomplete",
+      git: "incomplete",
+      search: "incomplete",
+      verification: "available"
+    });
+    expect(result.git).toBeDefined();
+    expect(result.warnings).toContain("git-change-evidence-truncated");
+    expect(result.warnings).toContain("search-evidence-truncated");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("keeps workspace inspection foundational and propagates its failure", async () => {
+    const failure = new CapabilityError("CAPABILITY_SOURCE_INCOMPLETE", "Workspace inspection incomplete");
+    const fixture = sources({}, { inspectFailure: failure });
+
+    await expect(
+      buildContext(fixture.adapter, {
+        workspaceId: "ws_1",
+        intent: "understand",
+        target: TARGET
+      })
+    ).rejects.toBe(failure);
+  });
+
+  it("does not normalize unknown optional-source programming errors", async () => {
+    const failure = new Error("unexpected Git implementation bug");
+    const fixture = sources({}, { gitFailure: failure });
+
+    await expect(
+      buildContext(fixture.adapter, {
+        workspaceId: "ws_1",
+        intent: "understand",
+        target: TARGET
+      })
+    ).rejects.toBe(failure);
+  });
+
+  it("retains existing unreadable-file semantics in otherwise healthy context", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "changed\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      { unreadablePaths: [TARGET] }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(result.selectedFiles[0]).toMatchObject({ path: TARGET, reason: "exact-target", truncated: false });
+    expect(result.selectedFiles[0]).not.toHaveProperty("content");
+    expect(result.warnings).toContain(`unreadable:${TARGET}`);
+    expect(result.truncated).toBe(true);
   });
 
   it("uses explicit intent weights while preserving hard priority tiers", () => {

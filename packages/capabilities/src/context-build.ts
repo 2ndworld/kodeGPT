@@ -5,6 +5,7 @@ import {
   type CodeSearchResult,
   type ContextBuildInput,
   type ContextBuildResult,
+  type ContextEvidenceState,
   type ContextIntent,
   type ContextSelectedFile,
   type GitChangesInput,
@@ -35,6 +36,18 @@ type Candidate = {
   score: number;
 };
 
+type EvidenceResult<T> =
+  | { state: Exclude<ContextEvidenceState, "unavailable">; value: T }
+  | { state: "unavailable" };
+
+const GIT_EVIDENCE_UNAVAILABLE_CODES = new Set([
+  "GIT_INSPECTION_FAILED",
+  "GIT_UNAVAILABLE",
+  "NOT_A_GIT_REPOSITORY"
+]);
+const SEARCH_EVIDENCE_UNAVAILABLE_CODES = new Set(["CAPABILITY_SOURCE_INCOMPLETE"]);
+const VERIFICATION_EVIDENCE_UNAVAILABLE_CODES = new Set(["VERIFICATION_DISCOVERY_INVALID"]);
+
 const TIER_BASE: Record<CandidateKind, number> = {
   target: 5_000,
   changed: 4_000,
@@ -63,16 +76,13 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
-  const git = await adapter.git({ workspaceId: input.workspaceId, includePatch: false });
-  const search = input.target === undefined
-    ? emptySearchResult()
-    : await adapter.search({
-        workspaceId: input.workspaceId,
-        query: targetQuery(input.target),
-        mode: "path",
-        maxResults: 100
-      });
-  const verify = await adapter.verify({ workspaceId: input.workspaceId });
+  const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
+  const searchEvidence = await collectSearchEvidence(adapter, input);
+  const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId);
+  const git = gitEvidence.state === "unavailable" ? undefined : gitEvidence.value;
+  const search = searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value;
+  const verifications =
+    verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes;
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
   const relevantMatches = sortedMatches(
@@ -81,11 +91,20 @@ export async function buildContext(
     )
   );
   const warnings = [...workspace.warnings];
-  if (git.truncated) warnings.push("git-change-evidence-truncated");
-  if (search.truncated) warnings.push("search-evidence-truncated");
+  if (gitEvidence.state === "unavailable") warnings.push("git-evidence-unavailable");
+  else if (gitEvidence.value.truncated) warnings.push("git-change-evidence-truncated");
+  if (searchEvidence.state === "unavailable") warnings.push("search-evidence-unavailable");
+  else if (searchEvidence.value.truncated) warnings.push("search-evidence-truncated");
+  if (verificationEvidence.state === "unavailable") {
+    warnings.push("verification-evidence-unavailable");
+  }
 
   let totalBytes = 0;
-  let truncated = workspace.truncated || git.truncated || search.truncated;
+  let truncated =
+    workspace.truncated ||
+    gitEvidence.state !== "available" ||
+    searchEvidence.state !== "available" ||
+    verificationEvidence.state !== "available";
   const selectedFiles: ContextSelectedFile[] = [];
 
   for (let index = 0; index < candidates.length; index += 1) {
@@ -135,20 +154,79 @@ export async function buildContext(
     schemaVersion: 1,
     intent: input.intent,
     ...(input.target === undefined ? {} : { target: input.target }),
+    evidenceStatus: {
+      workspace: workspace.truncated ? "incomplete" : "available",
+      git: gitEvidence.state,
+      search: searchEvidence.state,
+      verification: verificationEvidence.state
+    },
     workspace,
-    git,
+    ...(git === undefined ? {} : { git }),
     selectedFiles,
     relevantMatches,
-    verifications: sortedVerifications(verify.recipes),
+    verifications: sortedVerifications(verifications),
     warnings: [...new Set(warnings)],
     totalBytes,
     truncated
   };
 }
 
+async function collectGitEvidence(
+  adapter: ContextBuildAdapter,
+  workspaceId: string
+): Promise<EvidenceResult<GitChangesResult>> {
+  try {
+    const value = await adapter.git({ workspaceId, includePatch: false });
+    return { state: value.truncated ? "incomplete" : "available", value };
+  } catch (error) {
+    if (isKnownSourceFailure(error, GIT_EVIDENCE_UNAVAILABLE_CODES)) return { state: "unavailable" };
+    throw error;
+  }
+}
+
+async function collectSearchEvidence(
+  adapter: ContextBuildAdapter,
+  input: ContextBuildInput
+): Promise<EvidenceResult<CodeSearchResult>> {
+  if (input.target === undefined) return { state: "available", value: emptySearchResult() };
+  try {
+    const value = await adapter.search({
+      workspaceId: input.workspaceId,
+      query: targetQuery(input.target),
+      mode: "path",
+      maxResults: 100
+    });
+    return { state: value.truncated ? "incomplete" : "available", value };
+  } catch (error) {
+    if (isKnownSourceFailure(error, SEARCH_EVIDENCE_UNAVAILABLE_CODES)) {
+      return { state: "unavailable" };
+    }
+    throw error;
+  }
+}
+
+async function collectVerificationEvidence(
+  adapter: ContextBuildAdapter,
+  workspaceId: string
+): Promise<EvidenceResult<VerifyListResult>> {
+  try {
+    const value = await adapter.verify({ workspaceId });
+    return { state: "available", value };
+  } catch (error) {
+    if (isKnownSourceFailure(error, VERIFICATION_EVIDENCE_UNAVAILABLE_CODES)) {
+      return { state: "unavailable" };
+    }
+    throw error;
+  }
+}
+
+function isKnownSourceFailure(error: unknown, codes: ReadonlySet<string>): boolean {
+  return error instanceof CapabilityError && codes.has(error.code);
+}
+
 function selectCandidates(
   workspace: WorkspaceInspectResult,
-  git: GitChangesResult,
+  git: GitChangesResult | undefined,
   search: CodeSearchResult,
   intent: ContextIntent,
   target: string | undefined
@@ -177,7 +255,7 @@ function selectCandidates(
 
   if (target !== undefined) add(target, "exact-target", "target");
 
-  for (const changed of git.changedPaths) {
+  for (const changed of git?.changedPaths ?? []) {
     if (target === undefined || sameArea(changed.path, targetArea)) {
       add(changed.path, "changed-same-area", "changed");
     }

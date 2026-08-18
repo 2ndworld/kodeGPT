@@ -601,13 +601,23 @@ export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
   })
   .strict();
 
+const contextEvidenceStateSchema = z.enum(["available", "incomplete", "unavailable"]);
+
 export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
   .object({
     schemaVersion: z.literal(1),
     intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
     target: z.string().min(1).optional(),
+    evidenceStatus: z
+      .object({
+        workspace: contextEvidenceStateSchema,
+        git: contextEvidenceStateSchema,
+        search: contextEvidenceStateSchema,
+        verification: contextEvidenceStateSchema
+      })
+      .strict(),
     workspace: WorkspaceInspectResultSchema,
-    git: GitChangesResultSchema,
+    git: GitChangesResultSchema.optional(),
     selectedFiles: z.array(
       z
         .object({
@@ -634,4 +644,66 @@ export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
     totalBytes: z.number().int().nonnegative().max(MAX_CONTEXT_MAX_BYTES).safe(),
     truncated: z.boolean()
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const expectedWorkspaceState = value.workspace.truncated ? "incomplete" : "available";
+    if (value.evidenceStatus.workspace !== expectedWorkspaceState) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidenceStatus", "workspace"],
+        message: "Workspace evidence status must match the foundational workspace result"
+      });
+    }
+
+    if (value.evidenceStatus.git === "unavailable" && value.git !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["git"],
+        message: "Unavailable Git evidence must be omitted"
+      });
+    }
+    if (value.evidenceStatus.git !== "unavailable" && value.git === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["git"],
+        message: "Available or incomplete Git evidence must be present"
+      });
+    }
+    if (value.git !== undefined && value.evidenceStatus.git !== "unavailable") {
+      const expectedGitState = value.git.truncated ? "incomplete" : "available";
+      if (value.evidenceStatus.git !== expectedGitState) {
+        context.addIssue({
+          code: "custom",
+          path: ["evidenceStatus", "git"],
+          message: "Git evidence status must match the Git evidence result"
+        });
+      }
+    }
+
+    const hasPartialEvidence =
+      value.evidenceStatus.workspace !== "available" ||
+      value.evidenceStatus.git !== "available" ||
+      value.evidenceStatus.search !== "available" ||
+      value.evidenceStatus.verification !== "available";
+    if (hasPartialEvidence && !value.truncated) {
+      context.addIssue({
+        code: "custom",
+        path: ["truncated"],
+        message: "Partial evidence must mark the aggregate context as truncated"
+      });
+    }
+    if (value.evidenceStatus.search === "unavailable" && value.relevantMatches.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["relevantMatches"],
+        message: "Unavailable search evidence cannot contribute relevant matches"
+      });
+    }
+    if (value.evidenceStatus.verification === "unavailable" && value.verifications.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["verifications"],
+        message: "Unavailable verification evidence cannot contribute recipes"
+      });
+    }
+  });
