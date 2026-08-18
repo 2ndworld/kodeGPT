@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCH = ROOT / ".github" / "phase2-recovery.patch"
+PATCHES = [
+    ROOT / ".github" / "phase2-recovery.patch",
+    ROOT / ".github" / "phase2-recovery-extra.patch",
+]
 
 
 @dataclass
@@ -105,10 +108,13 @@ def apply_file_patch(patch: FilePatch) -> None:
 
 
 def main() -> None:
-    patches = parse_patch(PATCH.read_text(encoding="utf-8"))
-    if not patches:
-        raise RuntimeError("recovery patch contained no file changes")
-    for patch in patches:
+    all_patches: list[FilePatch] = []
+    for patch_path in PATCHES:
+        parsed = parse_patch(patch_path.read_text(encoding="utf-8"))
+        if not parsed:
+            raise RuntimeError(f"recovery patch contained no file changes: {patch_path.name}")
+        all_patches.extend(parsed)
+    for patch in all_patches:
         apply_file_patch(patch)
         print(f"applied {patch.path.relative_to(ROOT)}")
 
