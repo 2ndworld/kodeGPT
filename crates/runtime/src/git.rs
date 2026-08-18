@@ -2580,6 +2580,39 @@ mod tests {
     }
 
     #[test]
+    fn typed_git_still_fails_closed_when_linked_worktree_metadata_is_rejected() {
+        let workspace = temporary_root("rejected-linked-worktree-typed-git");
+        let state = temporary_root("rejected-linked-worktree-typed-git-state");
+        let stale_git_dir = workspace
+            .with_extension("stale-repository")
+            .join(".git/worktrees/stale");
+        fs::write(
+            workspace.join(".git"),
+            format!("gitdir: {}\n", stale_git_dir.display()),
+        )
+        .expect("stale linked-worktree pointer fixture");
+
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let result = run_git_inspection(
+            &root_fd,
+            "kc_rejected_linked_git",
+            "req_rejected_linked_status",
+            "op_rejected_linked_status",
+            GitOperation::Status,
+            &spool,
+            &executions,
+        );
+
+        assert!(matches!(result, Err(GitInspectionError::Sandbox(_))));
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
     fn local_git_mutation_runs_fixed_workflow_and_rejects_unsafe_inputs() {
         let workspace = temporary_root("local-mutation");
         let state = temporary_root("local-mutation-state");
