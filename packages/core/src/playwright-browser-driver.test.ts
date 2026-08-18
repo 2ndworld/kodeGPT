@@ -2,14 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import {
   BROWSER_FULL_PAGE_MAX_PIXELS,
+  fullPageScreenshotGeometry,
   isAllowedPreviewDocumentUrl,
   isAllowedPreviewRequest,
   isAllowedPreviewWebSocket,
   isCurrentPreviewWebSocketAllowed,
-  isScreenshotGeometryAllowed
+  isScreenshotGeometryAllowed,
+  toPlaywrightCssSelector
 } from "./playwright-browser-driver.js";
 
 describe("Playwright preview navigation guard", () => {
+  it("forces kind css targets through the CSS selector engine", () => {
+    expect(toPlaywrightCssSelector("#save")).toBe("css=#save");
+    expect(toPlaywrightCssSelector("xpath=//button")).toBe("css=xpath=//button");
+  });
+
   it("allows only documents on the exact stored preview origin", () => {
     const origin = "http://127.0.0.1:4173";
     expect(isAllowedPreviewDocumentUrl(origin, "http://127.0.0.1:4173/")).toBe(true);
@@ -64,5 +71,14 @@ describe("Playwright preview navigation guard", () => {
     expect(isScreenshotGeometryAllowed(3840, 2161)).toBe(false);
     expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS, 1)).toBe(true);
     expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS + 1, 1)).toBe(false);
+  });
+
+  it("derives full-page bounds from scrollable document dimensions rather than element boxes", () => {
+    expect(
+      fullPageScreenshotGeometry({
+        contentSize: { width: 1280, height: 20_000 },
+        viewport: { width: 1280, height: 720 }
+      })
+    ).toEqual({ width: 1280, height: 20_000 });
   });
 });
