@@ -76,6 +76,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { OpenWorkspace } from "../../core/src/index.js";
 import {
+  BROWSER_CAPTURE_TOOL_ANNOTATIONS,
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
   MUTATING_FILE_TOOL_ANNOTATIONS,
   PROCESS_RUN_TOOL_ANNOTATIONS,
@@ -1155,6 +1156,137 @@ describe("structured MCP tool results", () => {
     };
     expect(result.structuredContent).toEqual(previewResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
+  });
+
+  it("keeps visual verification schemas bounded, closed, and structured", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const artifact = {
+      schemaVersion: 1 as const,
+      uri: "artifact://ka_visual",
+      mediaType: "image/png",
+      sizeBytes: 123,
+      sourceTruncated: false
+    };
+    const matrixResult = {
+      schemaVersion: 1 as const,
+      previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      captures: [
+        { name: "mobile" as const, viewport: { width: 390, height: 844 }, artifact },
+        { name: "tablet" as const, viewport: { width: 768, height: 1024 }, artifact },
+        { name: "desktop" as const, viewport: { width: 1440, height: 900 }, artifact }
+      ]
+    };
+    const compareResult = {
+      schemaVersion: 1 as const,
+      previewId: matrixResult.previewId,
+      currentArtifact: artifact,
+      referenceArtifact: "artifact://ka_reference",
+      currentDimensions: { width: 390, height: 844 },
+      referenceDimensions: { width: 390, height: 844 },
+      dimensionsMatch: true,
+      changedPixels: 0,
+      totalPixels: 390 * 844,
+      changedPixelRatio: 0,
+      threshold: 0,
+      passed: true
+    };
+    context.visual.captureMatrix = async () => matrixResult;
+    context.visual.compare = async () => compareResult;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const captureDefinition = definitions.get("visual.captureMatrix");
+    const compareDefinition = definitions.get("visual.compare");
+    expect(captureDefinition).toBeDefined();
+    expect(compareDefinition).toBeDefined();
+    expect(captureDefinition?.annotations).toEqual(BROWSER_CAPTURE_TOOL_ANNOTATIONS);
+    expect(compareDefinition?.annotations).toEqual(BROWSER_CAPTURE_TOOL_ANNOTATIONS);
+    expect(captureDefinition?.outputSchema).toBeDefined();
+    expect(compareDefinition?.outputSchema).toBeDefined();
+
+    const captureInput = z.object(captureDefinition?.inputSchema as z.ZodRawShape).strict();
+    const compareInput = z.object(compareDefinition?.inputSchema as z.ZodRawShape).strict();
+    const lookup = { workspaceId: "ws_1", previewId: matrixResult.previewId };
+    expect(captureInput.safeParse(lookup).success).toBe(true);
+    for (const extra of [
+      { url: "https://example.invalid" },
+      { path: "/tmp/reference.png" },
+      { viewport: { width: 390, height: 844 } },
+      { viewports: [{ width: 390, height: 844 }] }
+    ]) {
+      expect(captureInput.safeParse({ ...lookup, ...extra }).success).toBe(false);
+    }
+    expect(compareInput.safeParse({ ...lookup, referenceArtifact: "artifact://ka_reference" }).success).toBe(true);
+    expect(compareInput.safeParse({ ...lookup, referenceArtifact: "file:///tmp/reference.png" }).success).toBe(false);
+    expect(compareInput.safeParse({ ...lookup, referenceArtifact: "artifact://ka_reference", threshold: -0.01 }).success).toBe(false);
+    expect(compareInput.safeParse({ ...lookup, referenceArtifact: "artifact://ka_reference", threshold: 1.01 }).success).toBe(false);
+    for (const forbidden of [
+      { currentArtifact: "artifact://ka_current" },
+      { url: "https://example.invalid" },
+      { baseline: true },
+      { acceptReference: true }
+    ]) {
+      expect(compareInput.safeParse({ ...lookup, referenceArtifact: "artifact://ka_reference", ...forbidden }).success).toBe(false);
+    }
+
+    const captureOutput = captureDefinition?.outputSchema as z.ZodTypeAny;
+    const compareOutput = compareDefinition?.outputSchema as z.ZodTypeAny;
+    expect(captureOutput.safeParse(matrixResult).success).toBe(true);
+    expect(captureOutput.safeParse({ ...matrixResult, captures: matrixResult.captures.slice(0, 2) }).success).toBe(false);
+    expect(compareOutput.safeParse(compareResult).success).toBe(true);
+
+    const captureResponse = (await handlers.get("visual.captureMatrix")!(lookup as never)) as {
+      structuredContent?: unknown;
+    };
+    const compareResponse = (await handlers.get("visual.compare")!({
+      ...lookup,
+      referenceArtifact: "artifact://ka_reference"
+    } as never)) as { structuredContent?: unknown };
+    expect(captureResponse.structuredContent).toEqual(matrixResult);
+    expect(compareResponse.structuredContent).toEqual(compareResult);
+  });
+
+  it("redacts visual and composed browser errors at the visual MCP boundary", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const context = makeContext();
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    context.visual.compare = async () => {
+      const error = new Error("corrupt PNG at /home/sauron/private-reference.png");
+      Object.assign(error, { code: "VISUAL_PNG_INVALID" });
+      throw error;
+    };
+    context.visual.captureMatrix = async () => {
+      const error = new Error("browser session details at /home/sauron/private");
+      Object.assign(error, { code: "BROWSER_SESSION_NOT_FOUND" });
+      throw error;
+    };
+    registerKodegptTools(server, context);
+
+    await expect(
+      handlers.get("visual.compare")!({
+        workspaceId: "ws_1",
+        previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        referenceArtifact: "artifact://ka_reference"
+      } as never)
+    ).rejects.toThrow("VISUAL_PNG_INVALID: Visual verification failed");
+    await expect(
+      handlers.get("visual.captureMatrix")!({
+        workspaceId: "ws_1",
+        previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      } as never)
+    ).rejects.toThrow("BROWSER_SESSION_NOT_FOUND: Browser request failed");
   });
 
   it("normalizes known preview lifecycle errors at the MCP boundary", async () => {

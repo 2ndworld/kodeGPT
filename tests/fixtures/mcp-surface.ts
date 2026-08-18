@@ -7,6 +7,8 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
   { name: "browser.console", required: ["workspaceId", "previewId"] },
   { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
+  { name: "visual.captureMatrix", required: ["workspaceId", "previewId"] },
+  { name: "visual.compare", required: ["workspaceId", "previewId", "referenceArtifact"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },

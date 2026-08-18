@@ -173,10 +173,10 @@ describe("full security acceptance invariants", () => {
     }
   });
 
-  it("ships only the intended typed trust, Git, bounded GitHub, preview, and browser surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.12");
+  it("ships only the intended typed trust, Git, bounded GitHub, preview, browser, and visual surface with no generic authority", () => {
+    expect(MCP_SURFACE_VERSION).toBe("0.13");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(72);
+    expect(names).toHaveLength(74);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
@@ -220,6 +220,8 @@ describe("full security acceptance invariants", () => {
       "browser.screenshot",
       "browser.console",
       "browser.networkFailures",
+      "visual.captureMatrix",
+      "visual.compare",
       "verify.list",
       "verify.run",
       "file.patch",
@@ -260,6 +262,10 @@ describe("full security acceptance invariants", () => {
       "http.request",
       "browser.open",
       "browser.navigate",
+      "visual.open",
+      "visual.navigate",
+      "visual.baseline.update",
+      "visual.evaluate",
       "desktop.control",
       "github.issue.create",
       "github.issue.update",

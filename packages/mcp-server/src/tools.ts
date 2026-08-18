@@ -94,6 +94,72 @@ import {
 } from "./annotations.js";
 import type { KodegptToolContext } from "./tool-context.js";
 
+const VISUAL_ARTIFACT_URI_SCHEMA = z.string().regex(/^artifact:\/\/ka_[A-Za-z0-9_-]{1,93}$/);
+const VISUAL_MAX_PIXELS = 3840 * 2160;
+const VISUAL_ARTIFACT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    uri: VISUAL_ARTIFACT_URI_SCHEMA,
+    mediaType: z.literal("image/png"),
+    sizeBytes: z.number().int().nonnegative().max(5 * 1024 * 1024).safe(),
+    sourceTruncated: z.boolean()
+  })
+  .strict();
+const VISUAL_DIMENSIONS_SCHEMA = z
+  .object({
+    width: z.number().int().positive().max(VISUAL_MAX_PIXELS).safe(),
+    height: z.number().int().positive().max(VISUAL_MAX_PIXELS).safe()
+  })
+  .strict()
+  .refine(({ width, height }) => width * height <= VISUAL_MAX_PIXELS);
+
+export const VisualCaptureMatrixResultSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: z.string().regex(/^pv_[a-f0-9]{32}$/),
+    captures: z.tuple([
+      z
+        .object({
+          name: z.literal("mobile"),
+          viewport: z.object({ width: z.literal(390), height: z.literal(844) }).strict(),
+          artifact: VISUAL_ARTIFACT_SCHEMA
+        })
+        .strict(),
+      z
+        .object({
+          name: z.literal("tablet"),
+          viewport: z.object({ width: z.literal(768), height: z.literal(1024) }).strict(),
+          artifact: VISUAL_ARTIFACT_SCHEMA
+        })
+        .strict(),
+      z
+        .object({
+          name: z.literal("desktop"),
+          viewport: z.object({ width: z.literal(1440), height: z.literal(900) }).strict(),
+          artifact: VISUAL_ARTIFACT_SCHEMA
+        })
+        .strict()
+    ])
+  })
+  .strict();
+
+export const VisualCompareResultSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: z.string().regex(/^pv_[a-f0-9]{32}$/),
+    currentArtifact: VISUAL_ARTIFACT_SCHEMA,
+    referenceArtifact: VISUAL_ARTIFACT_URI_SCHEMA,
+    currentDimensions: VISUAL_DIMENSIONS_SCHEMA,
+    referenceDimensions: VISUAL_DIMENSIONS_SCHEMA,
+    dimensionsMatch: z.boolean(),
+    changedPixels: z.number().int().nonnegative().max(VISUAL_MAX_PIXELS).safe(),
+    totalPixels: z.number().int().positive().max(VISUAL_MAX_PIXELS).safe(),
+    changedPixelRatio: z.number().finite().min(0).max(1),
+    threshold: z.number().finite().min(0).max(1),
+    passed: z.boolean()
+  })
+  .strict();
+
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
   { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
@@ -103,6 +169,8 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
   { name: "browser.console", required: ["workspaceId", "previewId"] },
   { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
+  { name: "visual.captureMatrix", required: ["workspaceId", "previewId"] },
+  { name: "visual.compare", required: ["workspaceId", "previewId", "referenceArtifact"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },
@@ -342,6 +410,42 @@ export function registerKodegptTools(
     },
     async ({ workspaceId, previewId }) =>
       browserToolResult(() => context.browser.networkFailures({ workspaceId, previewId }))
+  );
+
+  server.registerTool(
+    "visual.captureMatrix",
+    {
+      description: "Capture the fixed mobile, tablet, and desktop viewport matrix through one existing preview browser session.",
+      inputSchema: browserPreviewFields,
+      outputSchema: VisualCaptureMatrixResultSchema,
+      annotations: BROWSER_CAPTURE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId }) =>
+      visualToolResult(async () =>
+        VisualCaptureMatrixResultSchema.parse(
+          await context.visual.captureMatrix({ workspaceId, previewId })
+        )
+      )
+  );
+
+  server.registerTool(
+    "visual.compare",
+    {
+      description: "Capture the current preview viewport and compare it deterministically with one explicit PNG artifact reference.",
+      inputSchema: {
+        ...browserPreviewFields,
+        referenceArtifact: VISUAL_ARTIFACT_URI_SCHEMA,
+        threshold: z.number().finite().min(0).max(1).optional()
+      },
+      outputSchema: VisualCompareResultSchema,
+      annotations: BROWSER_CAPTURE_TOOL_ANNOTATIONS
+    },
+    async ({ workspaceId, previewId, referenceArtifact, threshold }) =>
+      visualToolResult(async () =>
+        VisualCompareResultSchema.parse(
+          await context.visual.compare({ workspaceId, previewId, referenceArtifact, threshold })
+        )
+      )
   );
 
   server.registerTool(
@@ -1233,6 +1337,25 @@ async function browserToolResult<T>(operation: () => Promise<T> | T) {
   } catch (error) {
     if (isRecord(error) && typeof error.code === "string" && error.code.startsWith("BROWSER_")) {
       throw new Error(`${error.code}: Browser request failed`);
+    }
+    throw error;
+  }
+}
+
+async function visualToolResult<T>(operation: () => Promise<T> | T) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    if (isRecord(error) && typeof error.code === "string") {
+      if (error.code.startsWith("VISUAL_")) {
+        throw new Error(`${error.code}: Visual verification failed`);
+      }
+      if (error.code.startsWith("BROWSER_")) {
+        throw new Error(`${error.code}: Browser request failed`);
+      }
+      if (error.code.startsWith("ARTIFACT_")) {
+        throw new Error(`${error.code}: Artifact request failed`);
+      }
     }
     throw error;
   }
