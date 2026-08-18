@@ -6,8 +6,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use kodegpt_protocol::{
     ArtifactReadParams, CiAuditParams, CiAuditPhase, CiCapability, CiCredentialSource, CiErrorCode,
     CiProvider, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
-    FileSearchParams, FileTreeParams, FileWriteParams, GitDiffHistoryParams, GitDiffParams,
-    GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
+    FileSearchParams, FileTreeParams, FileWriteParams, FileWritePrecondition, GitDiffHistoryParams,
+    GitDiffParams, GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
     GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
     PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
     ProcessOperationParams, ProcessRunParams, ProfileName, ProviderAuditOperation,
@@ -889,6 +889,7 @@ async fn dispatch_one(
             let audit_capability_id = capability_id.clone();
             let path = PathBuf::from(params.path);
             let content = params.content;
+            let precondition = params.precondition;
             audited_workspace_operation(
                 &audit,
                 &workspace_registry,
@@ -896,12 +897,32 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::FileWrite,
                 move |registry| {
-                    let result = registry.write_file_with_policy(
-                        &capability_id,
-                        &path,
-                        content.as_bytes(),
-                        mutation_allowed,
-                    )?;
+                    let result = match precondition {
+                        None => registry.write_file_with_policy(
+                            &capability_id,
+                            &path,
+                            content.as_bytes(),
+                            mutation_allowed,
+                        )?,
+                        Some(FileWritePrecondition::Missing {}) => registry
+                            .write_file_preconditioned_with_policy(
+                                &capability_id,
+                                &path,
+                                PatchFileAction::Create,
+                                None,
+                                content.as_bytes(),
+                                mutation_allowed,
+                            )?,
+                        Some(FileWritePrecondition::Sha256 { value }) => registry
+                            .write_file_preconditioned_with_policy(
+                                &capability_id,
+                                &path,
+                                PatchFileAction::Update,
+                                Some(&value),
+                                content.as_bytes(),
+                                mutation_allowed,
+                            )?,
+                    };
                     Ok(json!(result))
                 },
             )
@@ -3172,6 +3193,7 @@ fn workspace_registry_error_contract(error: &WorkspaceRegistryError) -> (i64, &'
         WorkspaceRegistryError::FileReadFailed => (-32035, "FILE_READ_FAILED"),
         WorkspaceRegistryError::FileWriteConflict => (-32036, "FILE_EDIT_CONFLICT"),
         WorkspaceRegistryError::FileWriteFailed => (-32037, "FILE_WRITE_FAILED"),
+        WorkspaceRegistryError::FilePreconditionFailed => (-32040, "FILE_PRECONDITION_FAILED"),
         WorkspaceRegistryError::PatchPreconditionFailed => (-32038, "PATCH_PRECONDITION_FAILED"),
         WorkspaceRegistryError::PatchTargetExists => (-32039, "PATCH_TARGET_EXISTS"),
         WorkspaceRegistryError::CapabilityNotFound => (-32025, "WORKSPACE_CAPABILITY_NOT_FOUND"),
@@ -6069,6 +6091,85 @@ mod tests {
         assert_eq!(
             fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
             "created safely"
+        );
+
+        let guarded_create = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_write_missing_precondition_create",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "guarded-created.txt",
+                "content": "guarded create",
+                "precondition": { "kind": "missing" }
+            }),
+        )
+        .await;
+        assert_eq!(guarded_create["result"]["created"], true);
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("guarded-created.txt")).unwrap(),
+            "guarded create"
+        );
+
+        let stale_create = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_write_missing_precondition",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "created.txt",
+                "content": "must-not-overwrite",
+                "precondition": { "kind": "missing" }
+            }),
+        )
+        .await;
+        assert_eq!(stale_create["error"]["message"], "FILE_PRECONDITION_FAILED");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
+            "created safely"
+        );
+
+        let stale_update = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_write_sha_precondition_stale",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "created.txt",
+                "content": "must-not-overwrite",
+                "precondition": { "kind": "sha256", "value": "0".repeat(64) }
+            }),
+        )
+        .await;
+        assert_eq!(stale_update["error"]["message"], "FILE_PRECONDITION_FAILED");
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
+            "created safely"
+        );
+
+        let guarded_update = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_mutation_write_sha_precondition_match",
+            "file.write",
+            json!({
+                "capabilityId": writable_cap,
+                "path": "created.txt",
+                "content": "updated safely",
+                "precondition": {
+                    "kind": "sha256",
+                    "value": "e21ae6d2c174e0e18f1a0c1bb71dc336d51f7cc3aae97096e26bff922a8864db"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(guarded_update["result"]["created"], false);
+        assert_eq!(
+            fs::read_to_string(writable_workspace.join("created.txt")).unwrap(),
+            "updated safely"
         );
 
         for (label, path) in [

@@ -52,6 +52,7 @@ import type {
   OpenWorkspace,
   TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
+  WorkspaceFileWritePrecondition,
   WorkspaceManager,
   WorkspaceSearchMatch,
   WorkspaceTreeEntry
@@ -109,6 +110,7 @@ export interface WorkspaceToolContext {
     workspaceId: string;
     path: string;
     content: string;
+    precondition?: WorkspaceFileWritePrecondition;
   }): MaybePromise<WorkspaceFileWriteResult>;
   editFile(input: {
     workspaceId: string;
@@ -347,8 +349,8 @@ export function createKodegptToolContext(options: {
       info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
-      writeFile: ({ workspaceId, path, content }) =>
-        options.workspaceManager.writeFile(workspaceId, path, content),
+      writeFile: ({ workspaceId, path, content, precondition }) =>
+        options.workspaceManager.writeFile(workspaceId, path, content, { precondition }),
       editFile: ({ workspaceId, path, oldText, newText, expectedReplacements }) =>
         options.workspaceManager.editFile(
           workspaceId,

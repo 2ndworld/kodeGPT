@@ -116,6 +116,7 @@ class FakeKernel implements KernelTransport {
     bytesWritten: 6,
     sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
   };
+  fileWriteError: unknown;
   gitHistoryResult: unknown = {
     schemaVersion: 1,
     resolvedOid: "1".repeat(40),
@@ -161,6 +162,7 @@ class FakeKernel implements KernelTransport {
           hashTruncated: false
         } as T;
       case "file.write":
+        if (this.fileWriteError !== undefined) throw this.fileWriteError;
         return { bytesWritten: 7, created: true } as T;
       case "file.edit":
         return { bytesWritten: 11, replacements: 2 } as T;
@@ -890,6 +892,46 @@ describe("WorkspaceManager", () => {
     expect(kernel.calls.at(-1)).toEqual({
       method: "git.repository_identity",
       params: { capabilityId: "kc_fixture" }
+    });
+  });
+
+  it("forwards optional file.write preconditions and normalizes stale failures", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_write_precondition"
+    });
+    await manager.openWorkspace("/workspace");
+
+    await manager.writeFile("ws_write_precondition", "new.txt", "created", {
+      precondition: { kind: "missing" }
+    });
+    expect(kernel.calls.at(-1)).toEqual({
+      method: "file.write",
+      params: {
+        capabilityId: "kc_fixture",
+        path: "new.txt",
+        content: "created",
+        precondition: { kind: "missing" }
+      }
+    });
+
+    await expect(
+      manager.writeFile("ws_write_precondition", "new.txt", "updated", {
+        precondition: { kind: "sha256", value: "A".repeat(64) }
+      })
+    ).rejects.toThrow("SHA-256 precondition is invalid");
+
+    kernel.fileWriteError = new KernelRpcError(-32040, "FILE_PRECONDITION_FAILED");
+    await expect(
+      manager.writeFile("ws_write_precondition", "new.txt", "updated", {
+        precondition: { kind: "sha256", value: "a".repeat(64) }
+      })
+    ).rejects.toMatchObject({
+      name: "WorkspaceManagerError",
+      code: "FILE_PRECONDITION_FAILED",
+      message: "Workspace file write precondition failed"
     });
   });
 

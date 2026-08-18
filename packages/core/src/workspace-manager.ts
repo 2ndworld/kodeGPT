@@ -57,6 +57,10 @@ export interface WorkspaceFileReadResult {
   eof: boolean;
 }
 
+export type WorkspaceFileWritePrecondition =
+  | { kind: "missing" }
+  | { kind: "sha256"; value: string };
+
 export interface WorkspaceFileWriteResult {
   bytesWritten: number;
   created: boolean;
@@ -739,17 +743,38 @@ export class WorkspaceManager {
   async writeFile(
     workspaceId: string,
     path: string,
-    content: string
+    content: string,
+    options?: { precondition?: WorkspaceFileWritePrecondition }
   ): Promise<WorkspaceFileWriteResult> {
     if (path.length === 0) {
       throw new TypeError("Workspace file path must not be empty");
     }
+    const precondition = options?.precondition;
+    if (
+      precondition?.kind === "sha256" &&
+      !/^[0-9a-f]{64}$/.test(precondition.value)
+    ) {
+      throw new TypeError("Workspace file write SHA-256 precondition is invalid");
+    }
     const state = this.#requireReadyState(workspaceId);
-    const result = await this.#kernel.request<unknown>("file.write", {
-      capabilityId: state.capabilityId,
-      path,
-      content
-    });
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("file.write", {
+        capabilityId: state.capabilityId,
+        path,
+        content,
+        ...(precondition === undefined ? {} : { precondition })
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && error.message === "FILE_PRECONDITION_FAILED") {
+        throw new WorkspaceManagerError(
+          "FILE_PRECONDITION_FAILED",
+          "Workspace file write precondition failed",
+          { cause: error }
+        );
+      }
+      throw error;
+    }
     if (
       !isRecord(result) ||
       !Number.isSafeInteger(result.bytesWritten) ||
