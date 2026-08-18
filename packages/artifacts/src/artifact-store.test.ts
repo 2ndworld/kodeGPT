@@ -13,6 +13,15 @@ class FakeKernel implements ArtifactKernelTransport {
 
   async request<T>(method: string, params: Record<string, unknown>): Promise<T> {
     this.calls.push({ method, params });
+    if (method === "artifact.write") {
+      return {
+        schemaVersion: 1,
+        artifactId: "ka_written123",
+        mediaType: params.mediaType,
+        bytesWritten: Buffer.from(String(params.dataBase64), "base64").byteLength,
+        sourceTruncated: false
+      } as T;
+    }
     return {
       schemaVersion: 1,
       dataBase64: Buffer.from("hello").toString("base64"),
@@ -24,6 +33,31 @@ class FakeKernel implements ArtifactKernelTransport {
 }
 
 describe("ArtifactStore", () => {
+  it("writes bounded binary bytes through the private kernel artifact authority", async () => {
+    const kernel = new FakeKernel();
+    const store = new ArtifactStore(kernel);
+    const bytes = Buffer.from([0, 1, 2, 255]);
+
+    const result = await store.write("image/png", bytes);
+
+    expect(kernel.calls).toEqual([
+      {
+        method: "artifact.write",
+        params: {
+          mediaType: "image/png",
+          dataBase64: "AAEC/w=="
+        }
+      }
+    ]);
+    expect(result).toEqual({
+      schemaVersion: 1,
+      uri: "artifact://ka_written123",
+      mediaType: "image/png",
+      sizeBytes: 4,
+      sourceTruncated: false
+    });
+  });
+
   it("maps private kernel artifact IDs to versioned artifact:// metadata only", () => {
     expect(
       toPublicArtifactMetadata({

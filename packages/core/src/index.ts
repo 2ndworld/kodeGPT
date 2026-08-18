@@ -26,6 +26,49 @@ export type {
 } from "./preview-manager.js";
 
 export {
+  BROWSER_CONSOLE_MAX_ENTRIES,
+  BROWSER_ENTRY_MAX_BYTES,
+  BROWSER_EVIDENCE_MAX_BYTES,
+  BROWSER_NETWORK_FAILURE_MAX_ENTRIES,
+  BROWSER_SCREENSHOT_MAX_BYTES,
+  BROWSER_TARGET_MAX_BYTES,
+  BROWSER_TYPE_MAX_BYTES,
+  DEFAULT_BROWSER_VIEWPORT,
+  MAX_BROWSER_SESSIONS,
+  BrowserManager,
+  BrowserManagerError
+} from "./browser-manager.js";
+export type {
+  BrowserActionResult,
+  BrowserArtifactMetadata,
+  BrowserArtifactWriter,
+  BrowserClickInput,
+  BrowserConsoleEntry,
+  BrowserConsoleEvent,
+  BrowserConsoleResult,
+  BrowserDriver,
+  BrowserDriverInspectResult,
+  BrowserDriverOpenInput,
+  BrowserDriverSession,
+  BrowserInspectResult,
+  BrowserManagerErrorCode,
+  BrowserNetworkMode,
+  BrowserNetworkFailureEntry,
+  BrowserNetworkFailureEvent,
+  BrowserNetworkFailuresResult,
+  BrowserOpenPreviewInput,
+  BrowserOpenResult,
+  BrowserPreviewInput,
+  BrowserScreenshotInput,
+  BrowserScreenshotResult,
+  BrowserTarget,
+  BrowserTypeInput,
+  BrowserViewport,
+  BrowserWorkspaceAuthority,
+  PreviewBrowserAdapter
+} from "./browser-manager.js";
+
+export {
   ProjectProfileInvalidError,
   WorkspaceCloseIncompleteError,
   WorkspaceManager,
