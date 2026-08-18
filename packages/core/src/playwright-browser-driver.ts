@@ -78,6 +78,18 @@ export function isAllowedPreviewWebSocket(
   );
 }
 
+export async function isCurrentPreviewWebSocketAllowed(
+  origin: string,
+  urlText: string,
+  networkMode: BrowserDriverOpenInput["networkMode"]
+): Promise<boolean> {
+  try {
+    return isAllowedPreviewWebSocket(origin, urlText, await networkMode());
+  } catch {
+    return false;
+  }
+}
+
 export function isScreenshotGeometryAllowed(width: number, height: number): boolean {
   return (
     Number.isFinite(width) &&
@@ -94,11 +106,6 @@ async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<Browse
   } catch {
     return null;
   }
-}
-
-async function websocketAllowed(input: BrowserDriverOpenInput, url: string): Promise<boolean> {
-  const networkMode = await currentNetworkMode(input);
-  return networkMode !== null && isAllowedPreviewWebSocket(input.origin, url, networkMode);
 }
 
 function locatorFor(page: Page, target: BrowserTarget): Locator {
@@ -230,7 +237,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
 
       await context.routeWebSocket("**/*", async (webSocket) => {
         const url = webSocket.url();
-        if (!(await websocketAllowed(input, url))) {
+        if (!(await isCurrentPreviewWebSocketAllowed(input.origin, url, input.networkMode))) {
           await webSocket.close({ code: 1008, reason: "KodeGPT network policy denied" });
           return;
         }
@@ -244,14 +251,14 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         };
 
         webSocket.onMessage(async (message) => {
-          if (!(await websocketAllowed(input, url))) {
+          if (!(await isCurrentPreviewWebSocketAllowed(input.origin, url, input.networkMode))) {
             await closeDenied();
             return;
           }
           server.send(message);
         });
         server.onMessage(async (message) => {
-          if (!(await websocketAllowed(input, url))) {
+          if (!(await isCurrentPreviewWebSocketAllowed(input.origin, url, input.networkMode))) {
             await closeDenied();
             return;
           }
