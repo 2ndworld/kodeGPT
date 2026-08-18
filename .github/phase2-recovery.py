@@ -5,7 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / ".github" / "phase2-recovery.patch"
-ALLOW_FIRST_MATCH = {("packages/core/src/browser-manager.ts", 2)}
 
 
 @dataclass
@@ -86,20 +85,22 @@ def apply_file_patch(patch: FilePatch) -> None:
     if not patch.path.is_file():
         raise RuntimeError(f"patch target missing: {relative}")
     content = patch.path.read_text(encoding="utf-8")
+    cursor = 0
     for index, hunk in enumerate(patch.hunks, start=1):
         old = "".join(line[1:] for line in hunk if line.startswith((" ", "-")))
         new = "".join(line[1:] for line in hunk if line.startswith((" ", "+")))
         if not old:
             raise RuntimeError(f"empty replacement hunk {index}: {relative}")
-        occurrences = content.count(old)
-        allow_first = (relative, index) in ALLOW_FIRST_MATCH
-        if occurrences == 0 or (occurrences != 1 and not allow_first):
+        position = content.find(old, cursor)
+        if position < 0:
             raise RuntimeError(
-                f"hunk {index} expected exactly once in {relative}, found {occurrences}"
+                f"hunk {index} was not found after offset {cursor} in {relative}"
             )
-        if allow_first and occurrences > 1:
-            print(f"disambiguated first match for hunk {index} in {relative} ({occurrences} candidates)")
-        content = content.replace(old, new, 1)
+        if old == new:
+            cursor = position + len(old)
+            continue
+        content = content[:position] + new + content[position + len(old):]
+        cursor = position + len(new)
     patch.path.write_text(content, encoding="utf-8")
 
 
