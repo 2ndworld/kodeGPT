@@ -27,7 +27,15 @@ export const INTENT_WEIGHTS = {
   verify: { target: 60, changed: 80, tests: 100, config: 60, search: 40 }
 } as const;
 
-type CandidateKind = "target" | "changed" | "config" | "search" | "tests";
+type CandidateKind =
+  | "target"
+  | "relatedTest"
+  | "dependency"
+  | "dependent"
+  | "changed"
+  | "config"
+  | "search"
+  | "tests";
 
 type Candidate = {
   path: string;
@@ -49,11 +57,14 @@ const SEARCH_EVIDENCE_UNAVAILABLE_CODES = new Set(["CAPABILITY_SOURCE_INCOMPLETE
 const VERIFICATION_EVIDENCE_UNAVAILABLE_CODES = new Set(["VERIFICATION_DISCOVERY_INVALID"]);
 
 const TIER_BASE: Record<CandidateKind, number> = {
-  target: 5_000,
-  changed: 4_000,
-  config: 3_000,
-  search: 2_000,
-  tests: 1_000
+  target: 8_000,
+  relatedTest: 7_000,
+  dependency: 6_500,
+  dependent: 6_000,
+  changed: 5_000,
+  config: 4_000,
+  search: 3_000,
+  tests: 2_000
 };
 
 export interface ContextBuildAdapter {
@@ -241,7 +252,7 @@ function selectCandidates(
       path,
       reason,
       kind,
-      score: TIER_BASE[kind] + INTENT_WEIGHTS[intent][kind]
+      score: TIER_BASE[kind] + intentWeight(intent, kind)
     };
     const current = byPath.get(path);
     if (
@@ -254,6 +265,12 @@ function selectCandidates(
   };
 
   if (target !== undefined) add(target, "exact-target", "target");
+
+  if (target !== undefined) {
+    for (const candidate of relationshipCandidates(workspace, target)) {
+      add(candidate.path, candidate.reason, candidate.kind);
+    }
+  }
 
   for (const changed of git?.changedPaths ?? []) {
     if (target === undefined || sameArea(changed.path, targetArea)) {
@@ -279,6 +296,39 @@ function selectCandidates(
   return [...byPath.values()].sort(
     (left, right) => right.score - left.score || compareLexical(left.path, right.path)
   );
+}
+
+function relationshipCandidates(
+  workspace: WorkspaceInspectResult,
+  target: string
+): Array<{ path: string; reason: string; kind: CandidateKind }> {
+  const candidates: Array<{ path: string; reason: string; kind: CandidateKind }> = [];
+  for (const relationship of workspace.relationships) {
+    if (relationship.kind === "tests" && relationship.to === target) {
+      candidates.push({ path: relationship.from, reason: "related-test", kind: "relatedTest" });
+      continue;
+    }
+    if (relationship.kind === "imports" && relationship.from === target) {
+      candidates.push({ path: relationship.to, reason: "direct-dependency", kind: "dependency" });
+      continue;
+    }
+    if (relationship.kind === "imports" && relationship.to === target) {
+      candidates.push({ path: relationship.from, reason: "direct-dependent", kind: "dependent" });
+    }
+  }
+  return candidates;
+}
+
+function intentWeight(intent: ContextIntent, kind: CandidateKind): number {
+  switch (kind) {
+    case "relatedTest":
+      return INTENT_WEIGHTS[intent].tests;
+    case "dependency":
+    case "dependent":
+      return INTENT_WEIGHTS[intent].search;
+    default:
+      return INTENT_WEIGHTS[intent][kind];
+  }
 }
 
 function resolveTargetArea(workspace: WorkspaceInspectResult, target: string): string {

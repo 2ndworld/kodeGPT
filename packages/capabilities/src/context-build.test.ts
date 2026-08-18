@@ -12,6 +12,8 @@ import { CapabilityError } from "./errors.js";
 
 type SourceOptions = {
   extraSearchMatches?: CodeSearchResult["matches"];
+  relationships?: WorkspaceInspectResult["relationships"];
+  workspaceWarnings?: string[];
   workspaceTruncated?: boolean;
   gitTruncated?: boolean;
   searchTruncated?: boolean;
@@ -40,8 +42,8 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
       { path: "packages/other/package.json", kind: "node-package" }
     ],
     symbols: [],
-    relationships: [],
-    warnings: [],
+    relationships: options.relationships ?? [],
+    warnings: options.workspaceWarnings ?? [],
     truncated: options.workspaceTruncated ?? false
   };
   const git: GitChangesResult = {
@@ -168,6 +170,120 @@ describe("context.build", () => {
     expect(result.totalBytes).toBe(
       result.selectedFiles.reduce((sum, file) => sum + Buffer.byteLength(file.content ?? ""), 0)
     );
+  });
+
+  it("ranks direct related tests dependencies and dependents ahead of weaker lexical hits", async () => {
+    const target = "packages/core/src/session.ts";
+    const relatedTest = "packages/core/tests/session.test.ts";
+    const dependencyA = "packages/core/src/a-store.ts";
+    const dependencyB = "packages/core/src/b-store.ts";
+    const dependent = "packages/core/src/middleware.ts";
+    const lexicalOnly = "packages/core/src/session-view.ts";
+    const fixture = sources(
+      {
+        [target]: "target\n",
+        [relatedTest]: "test\n",
+        [dependencyA]: "dependency-a\n",
+        [dependencyB]: "dependency-b\n",
+        [dependent]: "dependent\n",
+        [lexicalOnly]: "lexical\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [
+          { from: target, to: dependencyB, kind: "imports" },
+          { from: target, to: dependencyA, kind: "imports" },
+          { from: dependent, to: target, kind: "imports" },
+          { from: relatedTest, to: target, kind: "tests" }
+        ],
+        extraSearchMatches: [
+          { path: relatedTest, kind: "path" },
+          { path: lexicalOnly, kind: "path" }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "debug",
+      target,
+      maxBytes: 4096
+    });
+
+    expect(result.selectedFiles.slice(0, 5).map(({ path, reason }) => ({ path, reason }))).toEqual([
+      { path: target, reason: "exact-target" },
+      { path: relatedTest, reason: "related-test" },
+      { path: dependencyA, reason: "direct-dependency" },
+      { path: dependencyB, reason: "direct-dependency" },
+      { path: dependent, reason: "direct-dependent" }
+    ]);
+    expect(result.selectedFiles.find((file) => file.path === relatedTest)?.reason).toBe("related-test");
+    expect(result.selectedFiles.filter((file) => file.path === relatedTest)).toHaveLength(1);
+    expect(result.selectedFiles.findIndex((file) => file.path === dependent)).toBeLessThan(
+      result.selectedFiles.findIndex((file) => file.path === lexicalOnly)
+    );
+  });
+
+  it("uses available direct relationships while preserving truncated workspace evidence", async () => {
+    const target = "packages/core/src/session.ts";
+    const dependency = "packages/core/src/store.ts";
+    const fixture = sources(
+      {
+        [target]: "target\n",
+        [dependency]: "dependency\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [{ from: target, to: dependency, kind: "imports" }],
+        workspaceWarnings: ["INSPECT_SYMBOL_LIMIT_REACHED"],
+        workspaceTruncated: true
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target,
+      maxBytes: 2048
+    });
+
+    expect(result.selectedFiles.find((file) => file.path === dependency)?.reason).toBe("direct-dependency");
+    expect(result.evidenceStatus.workspace).toBe("incomplete");
+    expect(result.warnings).toContain("INSPECT_SYMBOL_LIMIT_REACHED");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("does not traverse repository relationships transitively", async () => {
+    const target = "packages/core/src/a.ts";
+    const directDependency = "packages/core/src/b.ts";
+    const transitiveDependency = "packages/core/src/c.ts";
+    const fixture = sources(
+      {
+        [target]: "a\n",
+        [directDependency]: "b\n",
+        [transitiveDependency]: "c\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [
+          { from: target, to: directDependency, kind: "imports" },
+          { from: directDependency, to: transitiveDependency, kind: "imports" }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target,
+      maxBytes: 2048
+    });
+
+    expect(result.selectedFiles.find((file) => file.path === directDependency)?.reason).toBe("direct-dependency");
+    expect(result.selectedFiles.some((file) => file.path === transitiveDependency)).toBe(false);
   });
 
   it("drops incidental semantic-excluded search evidence before selection and public relevantMatches", async () => {
