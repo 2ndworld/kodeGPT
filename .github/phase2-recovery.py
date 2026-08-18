@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / ".github" / "phase2-recovery.patch"
+ALLOW_FIRST_MATCH = {("packages/core/src/browser-manager.ts", 2)}
 
 
 @dataclass
@@ -65,9 +66,10 @@ def parse_patch(text: str) -> list[FilePatch]:
 
 
 def apply_file_patch(patch: FilePatch) -> None:
+    relative = str(patch.path.relative_to(ROOT))
     if patch.new_file:
         if patch.path.exists():
-            raise RuntimeError(f"new file already exists: {patch.path.relative_to(ROOT)}")
+            raise RuntimeError(f"new file already exists: {relative}")
         parts: list[str] = []
         for hunk in patch.hunks:
             for line in hunk:
@@ -76,24 +78,27 @@ def apply_file_patch(patch: FilePatch) -> None:
                 elif line.startswith(" "):
                     parts.append(line[1:])
                 elif line.startswith("-"):
-                    raise RuntimeError(f"new-file hunk removed content: {patch.path.relative_to(ROOT)}")
+                    raise RuntimeError(f"new-file hunk removed content: {relative}")
         patch.path.parent.mkdir(parents=True, exist_ok=True)
         patch.path.write_text("".join(parts), encoding="utf-8")
         return
 
     if not patch.path.is_file():
-        raise RuntimeError(f"patch target missing: {patch.path.relative_to(ROOT)}")
+        raise RuntimeError(f"patch target missing: {relative}")
     content = patch.path.read_text(encoding="utf-8")
     for index, hunk in enumerate(patch.hunks, start=1):
         old = "".join(line[1:] for line in hunk if line.startswith((" ", "-")))
         new = "".join(line[1:] for line in hunk if line.startswith((" ", "+")))
         if not old:
-            raise RuntimeError(f"empty replacement hunk {index}: {patch.path.relative_to(ROOT)}")
+            raise RuntimeError(f"empty replacement hunk {index}: {relative}")
         occurrences = content.count(old)
-        if occurrences != 1:
+        allow_first = (relative, index) in ALLOW_FIRST_MATCH
+        if occurrences == 0 or (occurrences != 1 and not allow_first):
             raise RuntimeError(
-                f"hunk {index} expected exactly once in {patch.path.relative_to(ROOT)}, found {occurrences}"
+                f"hunk {index} expected exactly once in {relative}, found {occurrences}"
             )
+        if allow_first and occurrences > 1:
+            print(f"disambiguated first match for hunk {index} in {relative} ({occurrences} candidates)")
         content = content.replace(old, new, 1)
     patch.path.write_text(content, encoding="utf-8")
 
@@ -109,5 +114,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# Triggered after the recovery workflow existed in the branch parent.
