@@ -151,7 +151,7 @@ spike("launches sandboxed system Chrome and enforces dynamic loopback WebSocket 
     await waitFor(async () => (await session!.inspect()).bodyText.includes("closed"));
     expect(received).toEqual(["ping"]);
 
-    const screenshot = await session.screenshot(false);
+    const screenshot = await session.screenshot(true);
     expect(Array.from(screenshot.slice(0, 4))).toEqual([137, 80, 78, 71]);
     expect(failures).toEqual([]);
     expect(consoleEntries).toEqual([]);
