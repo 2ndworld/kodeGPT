@@ -38,9 +38,9 @@ await build({
   external: [
     "@kodegpt/runtime-linux-x64",
     "@kodegpt/runtime-linux-x64/package.json",
-    "yaml",
-    "chromium-bidi/lib/cjs/bidiMapper/BidiMapper",
-    "chromium-bidi/lib/cjs/cdp/CdpConnection"
+    "playwright-core",
+    "playwright-core/*",
+    "yaml"
   ],
   banner: { js: "#!/usr/bin/env node" },
   legalComments: "none"
