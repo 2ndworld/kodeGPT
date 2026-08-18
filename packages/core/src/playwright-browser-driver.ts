@@ -96,6 +96,11 @@ async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<Browse
   }
 }
 
+async function websocketAllowed(input: BrowserDriverOpenInput, url: string): Promise<boolean> {
+  const networkMode = await currentNetworkMode(input);
+  return networkMode !== null && isAllowedPreviewWebSocket(input.origin, url, networkMode);
+}
+
 function locatorFor(page: Page, target: BrowserTarget): Locator {
   if (target.kind === "css") {
     return page.locator(target.selector).first();
@@ -224,15 +229,34 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       });
 
       await context.routeWebSocket("**/*", async (webSocket) => {
-        const networkMode = await currentNetworkMode(input);
-        if (
-          networkMode === null ||
-          !isAllowedPreviewWebSocket(input.origin, webSocket.url(), networkMode)
-        ) {
+        const url = webSocket.url();
+        if (!(await websocketAllowed(input, url))) {
           await webSocket.close({ code: 1008, reason: "KodeGPT network policy denied" });
           return;
         }
-        webSocket.connectToServer();
+
+        const server = webSocket.connectToServer();
+        const closeDenied = async (): Promise<void> => {
+          await Promise.allSettled([
+            webSocket.close({ code: 1008, reason: "KodeGPT network policy denied" }),
+            server.close({ code: 1008, reason: "KodeGPT network policy denied" })
+          ]);
+        };
+
+        webSocket.onMessage(async (message) => {
+          if (!(await websocketAllowed(input, url))) {
+            await closeDenied();
+            return;
+          }
+          server.send(message);
+        });
+        server.onMessage(async (message) => {
+          if (!(await websocketAllowed(input, url))) {
+            await closeDenied();
+            return;
+          }
+          webSocket.send(message);
+        });
       });
 
       const page = await context.newPage();
