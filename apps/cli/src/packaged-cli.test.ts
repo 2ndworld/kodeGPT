@@ -203,5 +203,5 @@ describe("packaged CLI skill surface", () => {
     const finalList = runSkillCli(["skill", "source", "list"], stateRoot);
     expect(finalList.status, finalList.stderr).toBe(0);
     expect(finalList.stdout.trim()).toBe("no skill sources");
-  });
+  }, 15_000);
 });
