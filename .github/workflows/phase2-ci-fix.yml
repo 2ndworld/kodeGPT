@@ -40,16 +40,21 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
+      - name: Apply exact final fixes
+        run: python .github/phase2-ci-fix.py
+
       - name: Frozen dependency install
         env:
           CI: "true"
         run: pnpm install --frozen-lockfile
 
-      - name: Apply exact CI fixture fixes
-        run: python .github/phase2-ci-fix.py
-
-      - name: Typecheck
-        run: pnpm run typecheck
+      - name: Typecheck and release unit tests
+        run: |
+          set -euo pipefail
+          pnpm run typecheck
+          pnpm exec vitest run \
+            apps/cli/src/service/release.test.ts \
+            apps/cli/src/service/release-provenance.test.ts
 
       - name: Previously failing surface tests
         run: |
@@ -87,6 +92,7 @@ jobs:
           rm .github/workflows/phase2-ci-fix.yml
           rm .github/phase2-ci-fix.py
           rm .github/phase2-ci-fix.patch
+          rm .github/phase2-packaging-fix.patch
           git add -A
           git diff --cached --check
           git config user.name "github-actions[bot]"
