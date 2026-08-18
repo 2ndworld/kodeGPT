@@ -53,6 +53,9 @@ const LOCKED_SURFACE = [
   { name: "process.cancel", required: ["workspaceId", "operationId"] },
   { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
   { name: "process.status", required: ["workspaceId", "operationId"] },
+  { name: "preview.inspect", required: ["workspaceId", "previewId"] },
+  { name: "preview.start", required: ["workspaceId", "logicalExecutable", "argv", "port"] },
+  { name: "preview.stop", required: ["workspaceId", "previewId"] },
   { name: "profile.current", required: ["workspaceId"] },
   { name: "profile.inspect", required: ["name"] },
   { name: "skill.list", required: [] },
@@ -76,10 +79,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.10");
+    expect(MCP_SURFACE_VERSION).toBe("0.11");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(62);
+    expect(surface).toHaveLength(65);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
@@ -124,6 +127,11 @@ describe("KodeGPT MCP semantic surface", () => {
         run: async () => ({}),
         status: async () => ({}),
         cancel: async () => ({})
+      },
+      preview: {
+        start: async () => ({}),
+        inspect: async () => ({}),
+        stop: async () => ({})
       },
       artifact: {
         read: async () => ({})

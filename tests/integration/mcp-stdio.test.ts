@@ -278,9 +278,13 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(remoteGitFetchAnnotations);
         } else if (tool.name === "git.pull" || tool.name === "git.push") {
           expect(tool.annotations).toEqual(remoteGitMutationAnnotations);
-        } else if (tool.name === "process.run" || tool.name === "verify.run") {
+        } else if (
+          tool.name === "process.run" ||
+          tool.name === "verify.run" ||
+          tool.name === "preview.start"
+        ) {
           expect(tool.annotations).toEqual(processRunAnnotations);
-        } else if (tool.name === "process.cancel") {
+        } else if (tool.name === "process.cancel" || tool.name === "preview.stop") {
           expect(tool.annotations).toEqual(processCancelAnnotations);
         } else if (tool.name === "github.pr.create") {
           expect(tool.annotations).toEqual(remoteGitHubCreateAnnotations);

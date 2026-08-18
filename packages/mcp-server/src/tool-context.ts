@@ -50,6 +50,9 @@ import type {
 import type {
   ExecutionManager,
   OpenWorkspace,
+  PreviewLookupInput,
+  PreviewStartInput,
+  PreviewStatusResult,
   TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
@@ -169,6 +172,12 @@ export interface ProcessToolContext {
   }): MaybePromise<WorkspaceProcessOperationResult>;
 }
 
+export interface PreviewToolContext {
+  start(input: PreviewStartInput): MaybePromise<PreviewStatusResult>;
+  inspect(input: PreviewLookupInput): MaybePromise<PreviewStatusResult>;
+  stop(input: PreviewLookupInput): MaybePromise<PreviewStatusResult>;
+}
+
 export interface ArtifactToolContext {
   read(input: { uri: string; offset?: number; maxBytes?: number }): MaybePromise<ArtifactReadResult>;
 }
@@ -239,6 +248,7 @@ export interface KodegptToolContext {
   trust: TrustToolContext;
   git: GitToolContext;
   process: ProcessToolContext;
+  preview: PreviewToolContext;
   artifact: ArtifactToolContext;
   extension: ExtensionToolContext;
   profile: ProfileToolContext;
@@ -317,6 +327,7 @@ export class NativeCapabilityAdapterUnavailableError extends Error {
 export function createKodegptToolContext(options: {
   workspaceManager: WorkspaceManagerToolAdapter;
   executionManager: ExecutionManagerToolAdapter;
+  preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): void };
   artifactStore: ArtifactStoreToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
@@ -332,6 +343,7 @@ export function createKodegptToolContext(options: {
   const remoteCi = options.remoteCi ?? unavailableRemoteCi();
   const githubRead = options.githubRead ?? unavailableGitHubRead();
   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
+  const preview = options.preview ?? unavailablePreview();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -344,6 +356,7 @@ export function createKodegptToolContext(options: {
       }),
       close: async ({ workspaceId }) => {
         await options.workspaceManager.closeWorkspace(workspaceId);
+        options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
       info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
@@ -390,6 +403,11 @@ export function createKodegptToolContext(options: {
         options.executionManager.status(workspaceId, operationId),
       cancel: ({ workspaceId, operationId }) =>
         options.executionManager.cancel(workspaceId, operationId)
+    },
+    preview: {
+      start: (input) => preview.start(input),
+      inspect: (input) => preview.inspect(input),
+      stop: (input) => preview.stop(input)
     },
     artifact: {
       read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
@@ -466,6 +484,14 @@ function requireJsonObject(value: unknown, source: string): JsonObject {
     throw new TypeError(`${source} must return an object`);
   }
   return value as JsonObject;
+}
+
+function unavailablePreview(): PreviewToolContext {
+  return {
+    start: () => unavailable("preview.start"),
+    inspect: () => unavailable("preview.inspect"),
+    stop: () => unavailable("preview.stop")
+  };
 }
 
 function unavailableRemoteCi(): CiToolContext {

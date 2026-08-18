@@ -399,6 +399,60 @@ describe("kodegpt start orchestration", () => {
     expect(events.slice(-3)).toEqual(["provider.close", "skill.close", "kernel.stop"]);
   });
 
+  it("production-wires preview lifecycle through the existing execution manager", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    const runInputs: unknown[] = [];
+    deps.createManagers = (options) => {
+      const managers = originalCreateManagers(options);
+      const originalRun = managers.workspaceManager.runProcess;
+      managers.workspaceManager.runProcess = async (input) => {
+        runInputs.push(structuredClone(input));
+        return originalRun(input);
+      };
+      return managers;
+    };
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      deps
+    );
+    try {
+      const result = await stack.toolContext.preview.start({
+        workspaceId: "ws_test",
+        logicalExecutable: "node",
+        argv: ["server.mjs"],
+        port: 3000,
+        waitMs: 0
+      });
+      expect(runInputs).toEqual([
+        {
+          workspaceId: "ws_test",
+          logicalExecutable: "node",
+          argv: ["server.mjs"],
+          background: true
+        }
+      ]);
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        operationId: "op_test",
+        url: "http://127.0.0.1:3000/",
+        processState: "completed",
+        exitCode: 0,
+        reachable: false,
+        httpStatus: null
+      });
+      expect(result.previewId).toMatch(/^pv_[a-f0-9]{32}$/);
+      await stack.toolContext.workspace.close({ workspaceId: "ws_test" });
+      await expect(
+        stack.toolContext.preview.inspect({ workspaceId: "ws_test", previewId: result.previewId })
+      ).rejects.toMatchObject({ code: "PREVIEW_NOT_FOUND" });
+    } finally {
+      await stack.close();
+    }
+  });
+
   it("production-wires Remote-CI without invoking provider work during startup", async () => {
     const events: string[] = [];
     const deps = dependencies(events);

@@ -26,6 +26,8 @@ import {
 import {
   ExecutionManager,
   KernelClient,
+  NodeLoopbackPreviewProbe,
+  PreviewManager,
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
@@ -280,6 +282,9 @@ export async function createProductionServiceStack(
       }
     });
     const executionManager = new ExecutionManager(managers.workspaceManager);
+    const previewManager = new PreviewManager(executionManager, {
+      probe: new NodeLoopbackPreviewProbe()
+    });
     const artifactStore = new ArtifactStore(kernel);
     const auditReader = new AuditReader(stateRoot);
     const nativeCapabilities = new NativeCapabilityService({
@@ -412,6 +417,7 @@ export async function createProductionServiceStack(
     const toolContext = createKodegptToolContext({
       workspaceManager: managers.workspaceManager,
       executionManager,
+      preview: previewManager,
       artifactStore,
       nativeCapabilities,
       remoteCi,
