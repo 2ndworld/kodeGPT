@@ -67,6 +67,7 @@ The candidate was staged through the existing immutable service lifecycle as `re
 | Canonical source isolation | Trusted shell probe confirmed `/home/sauron/dev/kodegpt/package.json` is hidden | `NO_GAP` |
 | Source mutation + Git diff | Disposable `file.edit -> git.diff -> file.edit revert` succeeded without residual tracked change | `NO_GAP` |
 | Typed Git commit identity | First live `git.commit` correctly failed because sandboxed Git does not inherit host HOME/global identity; existing trusted shell configured the already-used repository identity with repo-local `git config`, without widening environment inheritance | `DOC/ERGONOMIC_GAP` |
+| Typed remote Git push | Live `git.push` to the repository HTTPS `origin` failed closed because terminal prompts are disabled and this Git mutation path does not consume the already-existing GitHub `gh` credential helper; CodexPro host Git published the exact branch without changing KodeGPT authority | `EXISTING_PRIMITIVE_GAP` |
 | Build / provenance path | `verify.run(package:build)` completed successfully from `/workspace`, including Rust runtime build | `NO_GAP` |
 | Repository context | `context.build(intent=review)` returned repository map, Git evidence, target source, and verification recipes | `NO_GAP` |
 | Failure diagnosis | Deliberate trusted-shell exit `7` returned deterministic failed state, stderr, and artifact | `NO_GAP` |
@@ -80,6 +81,8 @@ Do **not** add `git.worktreeCreate`, `git.worktreeList`, or `git.worktreeRemove`
 P0 removes the development-authority gap that blocked existing linked worktrees: typed Git, trusted shell, build/provenance, context, source edits, failure handling, and cancellation now work from the linked worktree. The remaining lifecycle friction is narrower: Git invoked inside the sandbox sees `/workspace`, so creating a new linked worktree there can persist sandbox-absolute paths that are not valid host paths.
 
 Solving that lifecycle issue would require a distinct authority/design decision about sibling worktree creation and path/provenance representation. Adding three public tools now would therefore be premature and would violate the dogfood-first rule. Keep the current trusted-shell workflow for ordinary nested Git use; create/repair worktrees host-side when needed until repeated dogfood justifies a separate focused design.
+
+Dogfood also exposed a separate existing-primitive gap: typed HTTPS `git.push` does not currently consume the already-admitted GitHub `gh` credential helper, while host Git can publish the same branch. This is not caused by linked-worktree metadata and does not justify a provider framework. If it recurs, prefer a narrow credential-bridge fix for the existing typed Git remote mutation path before adding new worktree lifecycle tools.
 
 ## Roadmap outcome
 
