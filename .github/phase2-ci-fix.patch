@@ -54,3 +54,32 @@ diff --git a/apps/cli/src/commands/service.test.ts b/apps/cli/src/commands/servi
 -      surfaceVersion: "0.11",
 +      surfaceVersion: "0.12",
        reservedName: fixture.release.reservedName,
+diff --git a/tests/integration/mcp-stdio.test.ts b/tests/integration/mcp-stdio.test.ts
+--- a/tests/integration/mcp-stdio.test.ts
++++ b/tests/integration/mcp-stdio.test.ts
+@@
+ const remoteCiReadOnlyAnnotations = {
+   readOnlyHint: true,
+   destructiveHint: false,
+   idempotentHint: true,
+   openWorldHint: true
+ };
++
++const browserSessionAnnotations = {
++  readOnlyHint: false,
++  destructiveHint: false,
++  idempotentHint: true,
++  openWorldHint: true
++};
+@@
+         } else if (tool.name === "process.cancel" || tool.name === "preview.stop") {
+           expect(tool.annotations).toEqual(processCancelAnnotations);
++        } else if (tool.name === "browser.openPreview") {
++          expect(tool.annotations).toEqual(browserSessionAnnotations);
++        } else if (tool.name === "browser.click" || tool.name === "browser.type") {
++          expect(tool.annotations).toEqual(remoteCiCancelAnnotations);
++        } else if (tool.name === "browser.screenshot") {
++          expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
++        } else if (tool.name.startsWith("browser.")) {
++          expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
+         } else if (tool.name === "github.pr.create") {
