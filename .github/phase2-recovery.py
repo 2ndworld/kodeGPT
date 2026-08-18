@@ -109,3 +109,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# Triggered after the recovery workflow existed in the branch parent.
