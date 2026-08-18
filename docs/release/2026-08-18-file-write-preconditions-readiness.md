@@ -17,7 +17,7 @@ The field is optional. Existing callers that send only `workspaceId`, `path`, an
 
 The guarded path reuses the already hardened conditional file primitive used by `file.patch`: retained-root/openat boundary, no-clobber `RENAME_NOREPLACE` create, digest verification, destination revalidation immediately before rename, mode preservation for updates, fsync, and the existing audit/policy boundary. No second filesystem mutation subsystem was added.
 
-Stale guarded writes return stable runtime/core error `FILE_PRECONDITION_FAILED`. Invalid or hidden precondition fields are rejected by the closed MCP/protocol schemas. Runtime/protocol/public MCP versions remain `0.1 / 2026-07-28 / 0.10` because this is an additive optional input on an existing tool.
+Stale guarded writes return stable runtime/core error `FILE_PRECONDITION_FAILED`. Invalid or hidden precondition fields are rejected by the closed MCP/protocol schemas. Runtime/protocol/semantic MCP surface versions remain `0.1 / 2026-07-28 / 0.10`: the repository's locked semantic snapshot is tool names plus required input fields, and neither changes here. The optional `file.write.precondition` does change the full tool input definition, so ChatGPT connector/tool actions must be refreshed/rescanned before collecting host-level evidence for the new field.
 
 ## Threat-model decision
 
