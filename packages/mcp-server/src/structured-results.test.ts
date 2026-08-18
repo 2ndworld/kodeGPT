@@ -73,6 +73,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import type { OpenWorkspace } from "../../core/src/index.js";
 import {
   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
@@ -403,6 +404,32 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("keeps file.write backward compatible while closing optional precondition input", () => {
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>) {
+        definitions.set(name, definition);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const definition = definitions.get("file.write");
+    const schema = z.object(definition?.inputSchema as z.ZodRawShape).strict();
+    const base = { workspaceId: "ws_1", path: "inside.txt", content: "value" };
+
+    expect(schema.safeParse(base).success).toBe(true);
+    expect(schema.safeParse({ ...base, precondition: { kind: "missing" } }).success).toBe(true);
+    expect(
+      schema.safeParse({ ...base, precondition: { kind: "sha256", value: "a".repeat(64) } }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({ ...base, precondition: { kind: "sha256", value: "A".repeat(64) } }).success
+    ).toBe(false);
+    expect(
+      schema.safeParse({ ...base, precondition: { kind: "missing", overwriteAnyway: true } }).success
+    ).toBe(false);
+  });
+
   it("registers exactly five bounded Remote-CI tools with strict open-world read-only schemas", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();

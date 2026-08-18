@@ -20,6 +20,7 @@ export type {
   OpenWorkspace,
   TrustedWorkspaceSummary,
   WorkspaceFileReadResult,
+  WorkspaceFileWritePrecondition,
   WorkspaceSearchMatch,
   WorkspaceSearchResult,
   WorkspaceTreeEntry,

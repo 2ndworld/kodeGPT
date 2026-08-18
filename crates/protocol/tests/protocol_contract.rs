@@ -3,8 +3,8 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use kodegpt_protocol::{
-    CiAuditParams, GitRepositoryIdentityParams, MAX_FRAME_BYTES, ProviderAuditParams,
-    RuntimeRequest, read_frame, write_frame,
+    CiAuditParams, FileWriteParams, FileWritePrecondition, GitRepositoryIdentityParams,
+    MAX_FRAME_BYTES, ProviderAuditParams, RuntimeRequest, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 
@@ -109,6 +109,50 @@ fn security_sensitive_params_reject_unknown_fields() {
 
     let error =
         serde_json::from_value::<RuntimeRequest>(value).expect_err("unknown field rejected");
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn file_write_preconditions_are_optional_closed_and_typed() {
+    let plain = serde_json::from_value::<FileWriteParams>(json!({
+        "capabilityId": "kc_write",
+        "path": "inside.txt",
+        "content": "plain"
+    }))
+    .expect("plain file.write remains valid");
+    assert!(plain.precondition.is_none());
+
+    let missing = serde_json::from_value::<FileWriteParams>(json!({
+        "capabilityId": "kc_write",
+        "path": "inside.txt",
+        "content": "guarded",
+        "precondition": { "kind": "missing" }
+    }))
+    .expect("missing precondition deserializes");
+    assert!(matches!(
+        missing.precondition,
+        Some(FileWritePrecondition::Missing {})
+    ));
+
+    let digest = serde_json::from_value::<FileWriteParams>(json!({
+        "capabilityId": "kc_write",
+        "path": "inside.txt",
+        "content": "guarded",
+        "precondition": { "kind": "sha256", "value": "a".repeat(64) }
+    }))
+    .expect("sha256 precondition deserializes");
+    assert!(matches!(
+        digest.precondition,
+        Some(FileWritePrecondition::Sha256 { value }) if value == "a".repeat(64)
+    ));
+
+    let error = serde_json::from_value::<FileWriteParams>(json!({
+        "capabilityId": "kc_write",
+        "path": "inside.txt",
+        "content": "guarded",
+        "precondition": { "kind": "missing", "overwriteAnyway": true }
+    }))
+    .expect_err("unknown precondition field rejected");
     assert!(error.to_string().contains("unknown field"));
 }
 

@@ -68,6 +68,7 @@ pub enum WorkspaceRegistryError {
     FileReadFailed,
     FileWriteConflict,
     FileWriteFailed,
+    FilePreconditionFailed,
     PatchPreconditionFailed,
     PatchTargetExists,
     CapabilityNotFound,
@@ -105,6 +106,9 @@ impl fmt::Display for WorkspaceRegistryError {
                 formatter.write_str("workspace file edit conflicted with expected replacements")
             }
             Self::FileWriteFailed => formatter.write_str("workspace file mutation failed"),
+            Self::FilePreconditionFailed => {
+                formatter.write_str("workspace file write precondition failed")
+            }
             Self::PatchPreconditionFailed => {
                 formatter.write_str("workspace patch precondition failed")
             }
@@ -353,6 +357,39 @@ impl<P> WorkspaceRegistry<P> {
             .map_err(map_workspace_write_error)
     }
 
+    pub fn write_file_preconditioned_with_policy<F>(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        action: PatchFileAction,
+        expected_sha256: Option<&str>,
+        contents: &[u8],
+        authorize: F,
+    ) -> Result<WriteFileResult, WorkspaceRegistryError>
+    where
+        F: FnOnce(&P) -> bool,
+    {
+        let context = self.ready_context(capability_id)?;
+        if !authorize(&context.effective_policy) {
+            return Err(WorkspaceRegistryError::FileAccessDenied);
+        }
+        if action == PatchFileAction::Delete {
+            return Err(WorkspaceRegistryError::FilePreconditionFailed);
+        }
+        let result = commit_patch_file_beneath(
+            &context.root_fd,
+            relative_path,
+            action,
+            expected_sha256,
+            Some(contents),
+        )
+        .map_err(map_file_write_precondition_error)?;
+        Ok(WriteFileResult {
+            bytes_written: result.bytes_written,
+            created: result.action == PatchFileAction::Create,
+        })
+    }
+
     pub fn edit_file_with_policy<F>(
         &self,
         capability_id: &str,
@@ -524,6 +561,15 @@ fn map_path_identity_error(error: PathIdentityError) -> WorkspaceRegistryError {
         PathIdentityError::ChangedDuringInspection | PathIdentityError::Io(_) => {
             WorkspaceRegistryError::FileReadFailed
         }
+    }
+}
+
+fn map_file_write_precondition_error(error: WorkspaceWriteError) -> WorkspaceRegistryError {
+    match error {
+        WorkspaceWriteError::PreconditionFailed
+        | WorkspaceWriteError::TargetExists
+        | WorkspaceWriteError::NotFound => WorkspaceRegistryError::FilePreconditionFailed,
+        other => map_workspace_write_error(other),
     }
 }
 

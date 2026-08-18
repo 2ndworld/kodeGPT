@@ -643,16 +643,22 @@ export function registerKodegptTools(
   server.registerTool(
     "file.write",
     {
-      description: "Atomically create or replace UTF-8 file content beneath a READY writable workspace.",
+      description: "Atomically create or replace UTF-8 file content beneath a READY writable workspace, with optional missing-or-SHA-256 preconditions.",
       inputSchema: {
         workspaceId: z.string().min(1),
         path: z.string().min(1),
-        content: z.string()
+        content: z.string(),
+        precondition: z
+          .discriminatedUnion("kind", [
+            z.object({ kind: z.literal("missing") }).strict(),
+            z.object({ kind: z.literal("sha256"), value: z.string().regex(/^[0-9a-f]{64}$/) }).strict()
+          ])
+          .optional()
       },
       annotations: MUTATING_FILE_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, path, content }) =>
-      structuredToolResult(await context.workspace.writeFile({ workspaceId, path, content }))
+    async ({ workspaceId, path, content, precondition }) =>
+      structuredToolResult(await context.workspace.writeFile({ workspaceId, path, content, precondition }))
   );
 
   server.registerTool(

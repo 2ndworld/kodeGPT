@@ -487,11 +487,19 @@ pub struct FileIdentityParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum FileWritePrecondition {
+    Missing {},
+    Sha256 { value: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileWriteParams {
     pub capability_id: String,
     pub path: String,
     pub content: String,
+    pub precondition: Option<FileWritePrecondition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
