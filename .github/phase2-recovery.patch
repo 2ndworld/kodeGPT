@@ -1,0 +1,1062 @@
+diff --git a/docs/superpowers/specs/2026-08-18-kodegpt-preview-scoped-browser-evidence-design.md b/docs/superpowers/specs/2026-08-18-kodegpt-preview-scoped-browser-evidence-design.md
+--- a/docs/superpowers/specs/2026-08-18-kodegpt-preview-scoped-browser-evidence-design.md
++++ b/docs/superpowers/specs/2026-08-18-kodegpt-preview-scoped-browser-evidence-design.md
+@@
+-The existing Rust `RawSpoolStore` remains the only artifact authority. Add private runtime method `artifact.write` taking media type plus bounded base64 bytes. It validates canonical base64, decodes at most 5 MiB, creates one raw spool artifact through existing retention/audit/0600 protections, writes bytes, and returns existing opaque artifact metadata. This method is internal kernel transport only; no new public MCP `artifact.write` tool is added.
++The existing Rust `RawSpoolStore` remains the only artifact authority. Add private kernel extension `artifact.write` taking media type plus bounded base64 bytes. It validates canonical base64, decodes at most 5 MiB, creates one raw spool artifact through existing retention/audit/0600 protections, writes bytes, and returns existing opaque artifact metadata. The dispatcher parses this extension through a local closed params type; it is intentionally excluded from canonical `RUNTIME_METHODS`, shared runtime JSON Schema, and the Rust protocol request enum. No public MCP `artifact.write` tool is added.
+@@
+-Bump MCP surface `0.11 -> 0.12`; public tool count `65 -> 72`. Runtime version remains `0.1`; protocol identifier remains `2026-07-28` because `artifact.write` is an internal kernel method within the same runtime protocol family and is not a public MCP protocol change.
++Bump MCP surface `0.11 -> 0.12`; public tool count `65 -> 72`. Runtime version remains `0.1`; protocol identifier remains `2026-07-28`. The screenshot-ingestion extension is deliberately private to the Node↔Rust implementation boundary and does not change the canonical runtime protocol method set.
+diff --git a/docs/superpowers/plans/2026-08-18-kodegpt-preview-scoped-browser-evidence.md b/docs/superpowers/plans/2026-08-18-kodegpt-preview-scoped-browser-evidence.md
+--- a/docs/superpowers/plans/2026-08-18-kodegpt-preview-scoped-browser-evidence.md
++++ b/docs/superpowers/plans/2026-08-18-kodegpt-preview-scoped-browser-evidence.md
+@@
+-Files: `packages/protocol/src/runtime-types.ts`, protocol tests, `crates/protocol/src/types.rs`, Rust protocol tests, `crates/runtime/src/spool.rs`, `crates/runtime/src/dispatcher.rs`, runtime tests, `packages/artifacts/src/artifact-store.ts`, artifact tests.
++Files: `crates/runtime/src/dispatcher.rs`, runtime integration tests, `packages/artifacts/src/artifact-store.ts`, artifact tests. Canonical runtime protocol/schema files remain unchanged.
+@@
+-1. RED: add strict TS/Rust protocol fixtures for `artifact.write`; add artifact-store test that writes bytes and expects opaque metadata; add spool/dispatcher tests proving canonical base64, 5 MiB hard cap, media type validation, readback and audit without content.
++1. RED: add artifact-store test that writes bytes and expects opaque metadata; add dispatcher integration tests proving canonical base64, 5 MiB hard cap, media type validation, readback and audit without content; assert canonical runtime protocol parity remains unchanged.
+@@
+-3. GREEN: add private runtime method/schema, spool ingestion helper, dispatcher branch, and `ArtifactStore.write`.
++3. GREEN: add a private dispatcher-only kernel extension and `ArtifactStore.write`; reuse the existing spool writer and artifact metadata without adding a canonical protocol method.
+diff --git a/packages/core/package.json b/packages/core/package.json
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@
+     "@kodegpt/profiles": "workspace:*",
+     "@kodegpt/protocol": "workspace:*",
+-    "@kodegpt/trust": "workspace:*"
++    "@kodegpt/trust": "workspace:*",
++    "playwright-core": "1.62.1"
+   }
+ }
+diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@
+   BrowserWorkspaceAuthority,
+   PreviewBrowserAdapter
+ } from "./browser-manager.js";
++
++export {
++  PlaywrightBrowserDriver,
++  isAllowedPreviewDocumentUrl,
++  isAllowedPreviewRequest
++} from "./playwright-browser-driver.js";
+ 
+ export {
+diff --git a/packages/core/src/browser-manager.ts b/packages/core/src/browser-manager.ts
+--- a/packages/core/src/browser-manager.ts
++++ b/packages/core/src/browser-manager.ts
+@@
+-    const body = truncateUtf8(evidence.bodyText, BROWSER_EVIDENCE_MAX_BYTES / 2);
+-    const aria = truncateUtf8(evidence.ariaSnapshot, BROWSER_EVIDENCE_MAX_BYTES / 2);
++    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES;
++    const body = truncateUtf8(evidence.bodyText, Math.floor(textEvidenceBudget / 2));
++    const aria = truncateUtf8(evidence.ariaSnapshot, Math.ceil(textEvidenceBudget / 2));
+@@
+-      url: record.url,
++      url: evidence.url,
+diff --git a/packages/core/src/browser-manager.test.ts b/packages/core/src/browser-manager.test.ts
+--- a/packages/core/src/browser-manager.test.ts
++++ b/packages/core/src/browser-manager.test.ts
+@@
+   it("enforces the global session cap without widening preview authority", async () => {
+@@
+   });
++
++  it("passes the effective workspace network mode to the browser driver", async () => {
++    const fixture = manager();
++    const bounded = new BrowserManager(fixture.preview, fixture.driver, fixture.artifacts, {
++      networkMode: () => "localhost"
++    });
++
++    await bounded.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
++
++    expect(fixture.driver.opens[0]?.networkMode).toBe("localhost");
++  });
+ 
+   it("dispatches only bounded CSS/role click and type targets", async () => {
+diff --git a/packages/core/src/playwright-browser-driver.ts b/packages/core/src/playwright-browser-driver.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/core/src/playwright-browser-driver.ts
+@@
++import {
++  chromium,
++  type Browser,
++  type BrowserContext,
++  type Locator,
++  type Page
++} from "playwright-core";
++
++import type {
++  BrowserDriver,
++  BrowserDriverInspectResult,
++  BrowserDriverOpenInput,
++  BrowserDriverSession,
++  BrowserNetworkMode,
++  BrowserTarget
++} from "./browser-manager.js";
++
++const BROWSER_ACTION_TIMEOUT_MS = 5_000;
++
++export function isAllowedPreviewDocumentUrl(origin: string, urlText: string): boolean {
++  try {
++    const url = new URL(urlText);
++    return url.origin === origin;
++  } catch {
++    return false;
++  }
++}
++
++export function isAllowedPreviewRequest(
++  origin: string,
++  urlText: string,
++  resourceType: string,
++  networkMode: BrowserNetworkMode
++): boolean {
++  let url: URL;
++  try {
++    url = new URL(urlText);
++  } catch {
++    return false;
++  }
++  if (url.origin === origin) return true;
++  if (resourceType === "document") return false;
++  if (networkMode === "unrestricted") return true;
++  if (networkMode !== "localhost") return false;
++  return (
++    (url.protocol === "http:" || url.protocol === "https:") &&
++    (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
++  );
++}
++
++function locatorFor(page: Page, target: BrowserTarget): Locator {
++  if (target.kind === "css") {
++    return page.locator(target.selector).first();
++  }
++  return page
++    .getByRole(target.role as Parameters<Page["getByRole"]>[0], {
++      ...(target.name === undefined ? {} : { name: target.name })
++    })
++    .first();
++}
++
++class PlaywrightBrowserSession implements BrowserDriverSession {
++  readonly #browser: Browser;
++  readonly #context: BrowserContext;
++  readonly #page: Page;
++  readonly #viewport: { width: number; height: number };
++  #closed = false;
++
++  constructor(
++    browser: Browser,
++    context: BrowserContext,
++    page: Page,
++    viewport: { width: number; height: number }
++  ) {
++    this.#browser = browser;
++    this.#context = context;
++    this.#page = page;
++    this.#viewport = viewport;
++  }
++
++  async inspect(): Promise<BrowserDriverInspectResult> {
++    const body = this.#page.locator("body");
++    const [title, bodyText, ariaSnapshot] = await Promise.all([
++      this.#page.title(),
++      body.innerText({ timeout: BROWSER_ACTION_TIMEOUT_MS }).catch(() => ""),
++      body.ariaSnapshot({ timeout: BROWSER_ACTION_TIMEOUT_MS }).catch(() => "")
++    ]);
++    return {
++      title,
++      url: this.#page.url(),
++      bodyText,
++      ariaSnapshot,
++      viewport: this.#page.viewportSize() ?? { ...this.#viewport }
++    };
++  }
++
++  async click(target: BrowserTarget): Promise<void> {
++    await locatorFor(this.#page, target).click({ timeout: BROWSER_ACTION_TIMEOUT_MS });
++  }
++
++  async type(target: BrowserTarget, text: string, submit: boolean): Promise<void> {
++    const locator = locatorFor(this.#page, target);
++    await locator.fill(text, { timeout: BROWSER_ACTION_TIMEOUT_MS });
++    if (submit) {
++      await locator.press("Enter", { timeout: BROWSER_ACTION_TIMEOUT_MS });
++    }
++  }
++
++  async screenshot(fullPage: boolean): Promise<Uint8Array> {
++    return this.#page.screenshot({
++      type: "png",
++      fullPage,
++      animations: "disabled",
++      timeout: BROWSER_ACTION_TIMEOUT_MS
++    });
++  }
++
++  async close(): Promise<void> {
++    if (this.#closed) return;
++    this.#closed = true;
++    await this.#context.close().catch(() => undefined);
++    await this.#browser.close().catch(() => undefined);
++  }
++}
++
++export class PlaywrightBrowserDriver implements BrowserDriver {
++  async open(input: BrowserDriverOpenInput): Promise<BrowserDriverSession> {
++    const browser = await chromium.launch({
++      channel: "chrome",
++      headless: true,
++      chromiumSandbox: true
++    });
++    try {
++      const context = await browser.newContext({
++        acceptDownloads: false,
++        viewport: { ...input.viewport },
++        locale: "en-US",
++        colorScheme: "light"
++      });
++      context.setDefaultTimeout(BROWSER_ACTION_TIMEOUT_MS);
++      const page = await context.newPage();
++
++      page.on("console", (message) => {
++        input.onConsole({ level: message.type(), text: message.text() });
++      });
++      page.on("requestfailed", (request) => {
++        input.onNetworkFailure({
++          method: request.method(),
++          url: request.url(),
++          resourceType: request.resourceType(),
++          failureText: request.failure()?.errorText ?? "request failed"
++        });
++      });
++      page.on("download", (download) => {
++        void download.cancel().catch(() => undefined);
++      });
++      browser.on("disconnected", input.onDisconnect);
++
++      context.on("page", (openedPage) => {
++        if (openedPage !== page) {
++          void openedPage.close().catch(() => undefined);
++        }
++      });
++
++      await page.route("**/*", async (route) => {
++        const request = route.request();
++        if (
++          !isAllowedPreviewRequest(
++            input.origin,
++            request.url(),
++            request.resourceType(),
++            input.networkMode
++          )
++        ) {
++          await route.abort("blockedbyclient");
++          return;
++        }
++        await route.continue();
++      });
++
++      await page.goto(input.url, {
++        waitUntil: "domcontentloaded",
++        timeout: BROWSER_ACTION_TIMEOUT_MS
++      });
++      if (!isAllowedPreviewDocumentUrl(input.origin, page.url())) {
++        throw new Error("preview document escaped its exact origin");
++      }
++      return new PlaywrightBrowserSession(browser, context, page, input.viewport);
++    } catch (error) {
++      await browser.close().catch(() => undefined);
++      throw error;
++    }
++  }
++}
+diff --git a/packages/core/src/playwright-browser-driver.test.ts b/packages/core/src/playwright-browser-driver.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/core/src/playwright-browser-driver.test.ts
+@@
++import { describe, expect, it } from "vitest";
++
++import {
++  isAllowedPreviewDocumentUrl,
++  isAllowedPreviewRequest
++} from "./playwright-browser-driver.js";
++
++describe("Playwright preview navigation guard", () => {
++  it("allows only documents on the exact stored preview origin", () => {
++    const origin = "http://127.0.0.1:4173";
++    expect(isAllowedPreviewDocumentUrl(origin, "http://127.0.0.1:4173/")).toBe(true);
++    expect(isAllowedPreviewDocumentUrl(origin, "http://127.0.0.1:4173/path?x=1#fragment")).toBe(true);
++    expect(isAllowedPreviewDocumentUrl(origin, "http://127.0.0.1:4174/")).toBe(false);
++    expect(isAllowedPreviewDocumentUrl(origin, "http://localhost:4173/")).toBe(false);
++    expect(isAllowedPreviewDocumentUrl(origin, "https://127.0.0.1:4173/")).toBe(false);
++    expect(isAllowedPreviewDocumentUrl(origin, "https://example.test/")).toBe(false);
++    expect(isAllowedPreviewDocumentUrl(origin, "not a url")).toBe(false);
++  });
++
++  it("re-applies workspace network policy to page-initiated subresources", () => {
++    const origin = "http://127.0.0.1:4173";
++    expect(isAllowedPreviewRequest(origin, "http://127.0.0.1:4173/app.js", "script", "deny")).toBe(true);
++    expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "deny")).toBe(false);
++    expect(isAllowedPreviewRequest(origin, "http://127.0.0.1:9999/api", "fetch", "localhost")).toBe(true);
++    expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "localhost")).toBe(false);
++    expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "unrestricted")).toBe(true);
++    expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/page", "document", "unrestricted")).toBe(false);
++    expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "allowlist")).toBe(false);
++  });
++});
+diff --git a/packages/core/src/playwright-browser-driver.spike.test.ts b/packages/core/src/playwright-browser-driver.spike.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/core/src/playwright-browser-driver.spike.test.ts
+@@
++import { createServer } from "node:http";
++
++import { expect, it } from "vitest";
++
++import { PlaywrightBrowserDriver } from "./playwright-browser-driver.js";
++
++const spike = process.env.KODEGPT_BROWSER_SPIKE === "1" ? it : it.skip;
++
++spike("launches sandboxed system Chrome and loads a loopback preview", async () => {
++  const server = createServer((_request, response) => {
++    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
++    response.end(`<!doctype html>
++      <html><head><title>KodeGPT Browser Spike</title></head>
++      <body><label>Email <input id="email" /></label><button>Save</button><h1>Ready</h1></body></html>`);
++  });
++  await new Promise<void>((resolve, reject) => {
++    server.once("error", reject);
++    server.listen(0, "127.0.0.1", resolve);
++  });
++  const address = server.address();
++  if (address === null || typeof address === "string") throw new Error("loopback server address missing");
++  const url = `http://127.0.0.1:${address.port}/`;
++  const driver = new PlaywrightBrowserDriver();
++  const consoleEntries: string[] = [];
++  const failures: string[] = [];
++  let disconnected = false;
++  let session;
++  try {
++    session = await driver.open({
++      url,
++      origin: new URL(url).origin,
++      viewport: { width: 800, height: 600 },
++      networkMode: "deny",
++      onConsole: (entry) => consoleEntries.push(entry.text),
++      onNetworkFailure: (entry) => failures.push(entry.url),
++      onDisconnect: () => {
++        disconnected = true;
++      }
++    });
++    const inspected = await session.inspect();
++    expect(inspected.title).toBe("KodeGPT Browser Spike");
++    expect(inspected.bodyText).toContain("Ready");
++    expect(inspected.ariaSnapshot).toContain("heading \"Ready\"");
++    await session.type({ kind: "css", selector: "#email" }, "user@example.test", false);
++    const screenshot = await session.screenshot(false);
++    expect(Array.from(screenshot.slice(0, 4))).toEqual([137, 80, 78, 71]);
++    expect(failures).toEqual([]);
++    expect(consoleEntries).toEqual([]);
++    expect(disconnected).toBe(false);
++  } finally {
++    await session?.close();
++    await new Promise<void>((resolve) => server.close(() => resolve()));
++  }
++}, 20_000);
+diff --git a/packages/mcp-server/src/annotations.ts b/packages/mcp-server/src/annotations.ts
+--- a/packages/mcp-server/src/annotations.ts
++++ b/packages/mcp-server/src/annotations.ts
+@@
+ export const PROCESS_CANCEL_TOOL_ANNOTATIONS = Object.freeze({
+   readOnlyHint: false,
+   destructiveHint: true,
+   idempotentHint: true,
+   openWorldHint: false
+ });
++
++export const BROWSER_SESSION_TOOL_ANNOTATIONS = Object.freeze({
++  readOnlyHint: false,
++  destructiveHint: false,
++  idempotentHint: true,
++  openWorldHint: true
++});
++
++export const BROWSER_CAPTURE_TOOL_ANNOTATIONS = Object.freeze({
++  readOnlyHint: false,
++  destructiveHint: false,
++  idempotentHint: false,
++  openWorldHint: true
++});
++
++export const BROWSER_INTERACTION_TOOL_ANNOTATIONS = Object.freeze({
++  readOnlyHint: false,
++  destructiveHint: true,
++  idempotentHint: false,
++  openWorldHint: true
++});
++
++export const BROWSER_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
++  readOnlyHint: true,
++  destructiveHint: false,
++  idempotentHint: true,
++  openWorldHint: true
++});
+diff --git a/packages/mcp-server/src/surface-version.ts b/packages/mcp-server/src/surface-version.ts
+--- a/packages/mcp-server/src/surface-version.ts
++++ b/packages/mcp-server/src/surface-version.ts
+@@
+-export const MCP_SURFACE_VERSION = "0.11" as const;
++export const MCP_SURFACE_VERSION = "0.12" as const;
+diff --git a/packages/mcp-server/src/tool-context.ts b/packages/mcp-server/src/tool-context.ts
+--- a/packages/mcp-server/src/tool-context.ts
++++ b/packages/mcp-server/src/tool-context.ts
+@@
+ import type {
++  BrowserManager,
+   ExecutionManager,
+@@
+ export interface PreviewToolContext {
+@@
+ }
++
++export type BrowserToolContext = Pick<
++  BrowserManager,
++  | "openPreview"
++  | "inspect"
++  | "click"
++  | "type"
++  | "screenshot"
++  | "console"
++  | "networkFailures"
++  | "releasePreview"
++  | "releaseWorkspace"
++>;
+@@
+   process: ProcessToolContext;
+   preview: PreviewToolContext;
++  browser: BrowserToolContext;
+   artifact: ArtifactToolContext;
+@@
+   workspaceManager: WorkspaceManagerToolAdapter;
+   executionManager: ExecutionManagerToolAdapter;
+-  preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): void };
++  preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): MaybePromise<void> };
++  browser?: BrowserToolContext;
+@@
+   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
+   const preview = options.preview ?? unavailablePreview();
++  const browser = options.browser ?? unavailableBrowser();
+   const skill = options.skillCatalog ?? unavailableSkillCatalog();
+@@
+       close: async ({ workspaceId }) => {
+         await options.workspaceManager.closeWorkspace(workspaceId);
+-        options.preview?.releaseWorkspace?.(workspaceId);
++        await browser.releaseWorkspace(workspaceId);
++        await options.preview?.releaseWorkspace?.(workspaceId);
+         return { ok: true };
+       },
+@@
+     preview: {
+       start: (input) => preview.start(input),
+       inspect: (input) => preview.inspect(input),
+-      stop: (input) => preview.stop(input)
++      stop: async (input) => {
++        await browser.releasePreview(input.workspaceId, input.previewId);
++        return preview.stop(input);
++      }
++    },
++    browser: {
++      openPreview: (input) => browser.openPreview(input),
++      inspect: (input) => browser.inspect(input),
++      click: (input) => browser.click(input),
++      type: (input) => browser.type(input),
++      screenshot: (input) => browser.screenshot(input),
++      console: (input) => browser.console(input),
++      networkFailures: (input) => browser.networkFailures(input),
++      releasePreview: (workspaceId, previewId) => browser.releasePreview(workspaceId, previewId),
++      releaseWorkspace: (workspaceId) => browser.releaseWorkspace(workspaceId)
+     },
+@@
+ function unavailablePreview(): PreviewToolContext {
+@@
+ }
++
++function unavailableBrowser(): BrowserToolContext {
++  return {
++    openPreview: () => unavailable("browser.openPreview"),
++    inspect: () => unavailable("browser.inspect"),
++    click: () => unavailable("browser.click"),
++    type: () => unavailable("browser.type"),
++    screenshot: () => unavailable("browser.screenshot"),
++    console: () => unavailable("browser.console"),
++    networkFailures: () => unavailable("browser.networkFailures"),
++    releasePreview: async () => undefined,
++    releaseWorkspace: async () => undefined
++  };
++}
+ 
+ function unavailableRemoteCi(): CiToolContext {
+diff --git a/packages/mcp-server/src/tool-context.browser.test.ts b/packages/mcp-server/src/tool-context.browser.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/mcp-server/src/tool-context.browser.test.ts
+@@
++import { describe, expect, it } from "vitest";
++
++import { createKodegptToolContext } from "./tool-context.js";
++
++function baseOptions(calls: string[]) {
++  return {
++    workspaceManager: {
++      listWorkspaces: () => [],
++      listTrustedWorkspaces: () => [],
++      closeWorkspace: async () => {
++        calls.push("workspace.close");
++      }
++    } as never,
++    executionManager: {} as never,
++    artifactStore: {} as never,
++    extensionRegistry: {} as never,
++    inspectProfile: () => ({}),
++    capabilities: () => ({}),
++    health: () => ({})
++  };
++}
++
++function preview(calls: string[]) {
++  return {
++    start: async () => ({}) as never,
++    inspect: async () => ({}) as never,
++    stop: async () => {
++      calls.push("preview.stop");
++      return {} as never;
++    },
++    releaseWorkspace: () => {
++      calls.push("preview.releaseWorkspace");
++    }
++  };
++}
++
++function browser(calls: string[]) {
++  return {
++    openPreview: async () => ({}) as never,
++    inspect: async () => ({}) as never,
++    click: async () => ({}) as never,
++    type: async () => ({}) as never,
++    screenshot: async () => ({}) as never,
++    console: async () => ({}) as never,
++    networkFailures: async () => ({}) as never,
++    releasePreview: async () => {
++      calls.push("browser.releasePreview");
++    },
++    releaseWorkspace: async () => {
++      calls.push("browser.releaseWorkspace");
++    }
++  };
++}
++
++describe("browser tool context lifecycle", () => {
++  it("releases the browser session before preview.stop", async () => {
++    const calls: string[] = [];
++    const context = createKodegptToolContext({
++      ...baseOptions(calls),
++      preview: preview(calls),
++      browser: browser(calls)
++    });
++
++    await context.preview.stop({ workspaceId: "ws_test", previewId: "pv_test" });
++    expect(calls).toEqual(["browser.releasePreview", "preview.stop"]);
++  });
++
++  it("releases browser and preview registries only after workspace close succeeds", async () => {
++    const calls: string[] = [];
++    const context = createKodegptToolContext({
++      ...baseOptions(calls),
++      preview: preview(calls),
++      browser: browser(calls)
++    });
++
++    await context.workspace.close({ workspaceId: "ws_test" });
++    expect(calls).toEqual([
++      "workspace.close",
++      "browser.releaseWorkspace",
++      "preview.releaseWorkspace"
++    ]);
++  });
++});
+diff --git a/packages/mcp-server/src/tools.ts b/packages/mcp-server/src/tools.ts
+--- a/packages/mcp-server/src/tools.ts
++++ b/packages/mcp-server/src/tools.ts
+@@
+ import {
++  BROWSER_CAPTURE_TOOL_ANNOTATIONS,
++  BROWSER_INTERACTION_TOOL_ANNOTATIONS,
++  BROWSER_READ_ONLY_TOOL_ANNOTATIONS,
++  BROWSER_SESSION_TOOL_ANNOTATIONS,
+   LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS,
+@@
+ const SURFACE_TOOLS = Object.freeze([
+   { name: "artifact.read", required: ["uri"] },
++  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
++  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
++  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
++  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
++  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
++  { name: "browser.console", required: ["workspaceId", "previewId"] },
++  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
+   { name: "ci.failure", required: ["runId"] },
+@@
+   server.registerTool(
+     "artifact.read",
+@@
+       structuredToolResult(await context.artifact.read({ uri, offset, maxBytes }))
+   );
++
++  const browserPreviewFields = {
++    workspaceId: z.string().min(1),
++    previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
++  };
++  const browserTargetSchema = z.discriminatedUnion("kind", [
++    z.object({ kind: z.literal("css"), selector: z.string().min(1).max(2048) }).strict(),
++    z
++      .object({
++        kind: z.literal("role"),
++        role: z.string().min(1).max(128),
++        name: z.string().max(2048).optional()
++      })
++      .strict()
++  ]);
++
++  server.registerTool(
++    "browser.openPreview",
++    {
++      description: "Open one ephemeral browser session bound only to an existing live KodeGPT preview origin.",
++      inputSchema: {
++        ...browserPreviewFields,
++        viewport: z
++          .object({
++            width: z.number().int().min(320).max(3840),
++            height: z.number().int().min(240).max(2160)
++          })
++          .strict()
++          .optional()
++      },
++      annotations: BROWSER_SESSION_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId, viewport }) =>
++      browserToolResult(() => context.browser.openPreview({ workspaceId, previewId, viewport }))
++  );
++
++  server.registerTool(
++    "browser.inspect",
++    {
++      description: "Inspect bounded title, body text, accessibility snapshot, URL, and viewport evidence for one preview browser session.",
++      inputSchema: browserPreviewFields,
++      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId }) =>
++      browserToolResult(() => context.browser.inspect({ workspaceId, previewId }))
++  );
++
++  server.registerTool(
++    "browser.click",
++    {
++      description: "Click one bounded CSS or role target inside an existing preview-scoped browser session.",
++      inputSchema: { ...browserPreviewFields, target: browserTargetSchema },
++      annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId, target }) =>
++      browserToolResult(() => context.browser.click({ workspaceId, previewId, target }))
++  );
++
++  server.registerTool(
++    "browser.type",
++    {
++      description: "Fill one bounded CSS or role target inside an existing preview-scoped browser session.",
++      inputSchema: {
++        ...browserPreviewFields,
++        target: browserTargetSchema,
++        text: z.string().max(16 * 1024),
++        submit: z.boolean().optional()
++      },
++      annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId, target, text, submit }) =>
++      browserToolResult(() => context.browser.type({ workspaceId, previewId, target, text, submit }))
++  );
++
++  server.registerTool(
++    "browser.screenshot",
++    {
++      description: "Capture one bounded PNG screenshot from an existing preview browser session into the normal artifact spool.",
++      inputSchema: { ...browserPreviewFields, fullPage: z.boolean().optional() },
++      annotations: BROWSER_CAPTURE_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId, fullPage }) =>
++      browserToolResult(() => context.browser.screenshot({ workspaceId, previewId, fullPage }))
++  );
++
++  server.registerTool(
++    "browser.console",
++    {
++      description: "Read bounded normalized console evidence from one existing preview browser session.",
++      inputSchema: browserPreviewFields,
++      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId }) =>
++      browserToolResult(() => context.browser.console({ workspaceId, previewId }))
++  );
++
++  server.registerTool(
++    "browser.networkFailures",
++    {
++      description: "Read bounded redacted failed-request evidence from one existing preview browser session.",
++      inputSchema: browserPreviewFields,
++      annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
++    },
++    async ({ workspaceId, previewId }) =>
++      browserToolResult(() => context.browser.networkFailures({ workspaceId, previewId }))
++  );
+ 
+   server.registerTool(
+     "ci.repository",
+@@
+ async function previewToolResult<T>(operation: () => Promise<T> | T) {
+@@
+ }
++
++async function browserToolResult<T>(operation: () => Promise<T> | T) {
++  try {
++    return structuredToolResult(await operation());
++  } catch (error) {
++    if (isRecord(error) && typeof error.code === "string" && error.code.startsWith("BROWSER_")) {
++      throw new Error(`${error.code}: Browser request failed`);
++    }
++    throw error;
++  }
++}
+ 
+ async function skillToolResult<T>(operation: () => Promise<T>) {
+diff --git a/packages/mcp-server/src/server.test.ts b/packages/mcp-server/src/server.test.ts
+--- a/packages/mcp-server/src/server.test.ts
++++ b/packages/mcp-server/src/server.test.ts
+@@
+ const LOCKED_SURFACE = [
+   { name: "artifact.read", required: ["uri"] },
++  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
++  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
++  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
++  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
++  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
++  { name: "browser.console", required: ["workspaceId", "previewId"] },
++  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
+   { name: "ci.failure", required: ["runId"] },
+@@
+-    expect(MCP_SURFACE_VERSION).toBe("0.11");
++    expect(MCP_SURFACE_VERSION).toBe("0.12");
+@@
+-    expect(surface).toHaveLength(65);
++    expect(surface).toHaveLength(72);
+@@
+       preview: {
+         start: async () => ({}),
+         inspect: async () => ({}),
+         stop: async () => ({})
+       },
++      browser: {
++        openPreview: async () => ({}),
++        inspect: async () => ({}),
++        click: async () => ({}),
++        type: async () => ({}),
++        screenshot: async () => ({}),
++        console: async () => ({}),
++        networkFailures: async () => ({}),
++        releasePreview: async () => undefined,
++        releaseWorkspace: async () => undefined
++      },
+       artifact: {
+diff --git a/apps/cli/src/commands/start.ts b/apps/cli/src/commands/start.ts
+--- a/apps/cli/src/commands/start.ts
++++ b/apps/cli/src/commands/start.ts
+@@
+ import {
++  BrowserManager,
+   ExecutionManager,
+   KernelClient,
+   NodeLoopbackPreviewProbe,
++  PlaywrightBrowserDriver,
+   PreviewManager,
+@@
+   let kernel: StartKernel | undefined;
+   let skillCatalog: (SkillCatalogToolAdapter & { close(): Promise<void> }) | undefined;
+   let providerRuntime: ProviderGatewayRuntime | undefined;
++  let browserManager: BrowserManager | undefined;
+@@
+     const previewManager = new PreviewManager(executionManager, {
+       probe: new NodeLoopbackPreviewProbe()
+     });
+     const artifactStore = new ArtifactStore(kernel);
++    browserManager = new BrowserManager(
++      previewManager,
++      new PlaywrightBrowserDriver(),
++      artifactStore,
++      {
++        networkMode: (workspaceId) =>
++          managers.workspaceManager.requireReady(workspaceId).effectivePolicy.network
++      }
++    );
+     const auditReader = new AuditReader(stateRoot);
+@@
+       executionManager,
+       preview: previewManager,
++      browser: browserManager,
+       artifactStore,
+@@
+-        await closeProductionStack(providerRuntime, skillCatalog, kernel);
++        await closeProductionStack(browserManager, providerRuntime, skillCatalog, kernel);
+@@
+-    await closeProductionStack(providerRuntime, skillCatalog, kernel).catch(() => undefined);
++    await closeProductionStack(browserManager, providerRuntime, skillCatalog, kernel).catch(() => undefined);
+@@
+ async function closeProductionStack(
++  browserManager: Pick<BrowserManager, "close"> | undefined,
+   providerRuntime: Pick<ProviderGatewayRuntime, "close"> | undefined,
+@@
+   let firstError: unknown;
+   for (const close of [
++    browserManager === undefined ? undefined : () => browserManager.close(),
+     providerRuntime === undefined ? undefined : () => providerRuntime.close(),
+diff --git a/crates/runtime/src/dispatcher.rs b/crates/runtime/src/dispatcher.rs
+--- a/crates/runtime/src/dispatcher.rs
++++ b/crates/runtime/src/dispatcher.rs
+@@
+ struct SystemInspectRootParams {
+     path: String,
+ }
++
++#[derive(Debug, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++struct ArtifactWriteParams {
++    media_type: String,
++    data_base64: String,
++}
+@@
+         "artifact.read" => {
+@@
+             dispatch_artifact_read(raw_spool, request.id, params).await
+         }
++        "artifact.write" => {
++            let params = match serde_json::from_value::<ArtifactWriteParams>(request.params) {
++                Ok(params)
++                    if valid_artifact_media_type(&params.media_type)
++                        && params.data_base64.len() <= 6_990_508 =>
++                {
++                    params
++                }
++                Ok(_) | Err(_) => {
++                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
++                }
++            };
++            dispatch_artifact_write(raw_spool, request.id, params).await
++        }
+         #[cfg(feature = "runtime-test-methods")]
+@@
+-async fn dispatch_artifact_read(
++fn valid_artifact_media_type(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 255
++        && value.is_ascii()
++        && !value.bytes().any(|byte| byte.is_ascii_control())
++}
++
++async fn dispatch_artifact_write(
++    spool: Option<Arc<RawSpoolStore>>,
++    request_id: String,
++    params: ArtifactWriteParams,
++) -> Value {
++    let Some(spool) = spool else {
++        return error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE");
++    };
++    let bytes = match BASE64_STANDARD.decode(params.data_base64.as_bytes()) {
++        Ok(bytes)
++            if bytes.len() <= 5 * 1024 * 1024
++                && BASE64_STANDARD.encode(&bytes) == params.data_base64 =>
++        {
++            bytes
++        }
++        Ok(_) | Err(_) => return error_response(Some(request_id), -32602, "INVALID_PARAMS"),
++    };
++    let operation_id = next_process_operation_id();
++    let execution_id = format!(
++        "ex_{}",
++        operation_id.strip_prefix("op_").unwrap_or("artifact")
++    );
++    let request_for_write = request_id.clone();
++    let result = tokio::task::spawn_blocking(move || {
++        let mut writer = spool.create(
++            &request_for_write,
++            &operation_id,
++            &execution_id,
++            &params.media_type,
++        )?;
++        let accepted = writer.write_source(&bytes)?;
++        if accepted != bytes.len() {
++            return Err(RawSpoolError::QuotaExceeded);
++        }
++        writer.finish()
++    })
++    .await;
++
++    match result {
++        Ok(Ok(metadata)) => success_response(request_id, json!(metadata)),
++        Ok(Err(error)) => {
++            let (code, message) = artifact_error_contract(&error);
++            error_response(Some(request_id), code, message)
++        }
++        Err(_) => error_response(Some(request_id), -32050, "ARTIFACT_STORE_UNAVAILABLE"),
++    }
++}
++
++async fn dispatch_artifact_read(
+     spool: Option<Arc<RawSpoolStore>>,
+diff --git a/crates/runtime/tests/artifact_write.rs b/crates/runtime/tests/artifact_write.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/runtime/tests/artifact_write.rs
+@@
++use std::fs;
++use std::io::{BufReader, Write};
++use std::path::{Path, PathBuf};
++use std::process::{Command, Stdio};
++use std::time::{SystemTime, UNIX_EPOCH};
++
++use kodegpt_protocol::{read_frame, write_frame};
++use serde_json::{Value, json};
++
++fn state_root() -> PathBuf {
++    let nonce = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .expect("clock after epoch")
++        .as_nanos();
++    std::env::temp_dir().join(format!(
++        "kodegpt-artifact-write-it-{}-{nonce}",
++        std::process::id()
++    ))
++}
++
++fn rpc(stdin: &mut impl Write, stdout: &mut impl std::io::Read, value: Value) -> Value {
++    write_frame(stdin, &value).expect("request frame written");
++    stdin.flush().expect("request flushed");
++    read_frame(stdout)
++        .expect("response frame readable")
++        .expect("response present")
++}
++
++fn audit_text(root: &Path) -> String {
++    let mut combined = String::new();
++    let security = root.join("logs/security");
++    if let Ok(entries) = fs::read_dir(security) {
++        for entry in entries.flatten() {
++            let path = entry.path();
++            if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
++                if let Ok(text) = fs::read_to_string(path) {
++                    combined.push_str(&text);
++                }
++            }
++        }
++    }
++    combined
++}
++
++#[test]
++fn private_artifact_write_round_trips_binary_bytes_without_widening_protocol() {
++    let root = state_root();
++    fs::create_dir_all(&root).expect("state root created");
++    let mut child = Command::new(env!("CARGO_BIN_EXE_kodegpt-runtime"))
++        .env_clear()
++        .env("KODEGPT_STATE_ROOT", &root)
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()
++        .expect("runtime starts");
++    let mut stdin = child.stdin.take().expect("runtime stdin");
++    let mut stdout = BufReader::new(child.stdout.take().expect("runtime stdout"));
++
++    let written = rpc(
++        &mut stdin,
++        &mut stdout,
++        json!({
++            "jsonrpc": "2.0",
++            "id": "req_artifact_write_it",
++            "method": "artifact.write",
++            "params": { "mediaType": "image/png", "dataBase64": "AAEC/w==" }
++        }),
++    );
++    assert_eq!(written["result"]["schemaVersion"], 1);
++    assert_eq!(written["result"]["mediaType"], "image/png");
++    assert_eq!(written["result"]["bytesWritten"], 4);
++    let artifact_id = written["result"]["artifactId"]
++        .as_str()
++        .expect("artifact id returned")
++        .to_owned();
++    assert!(artifact_id.starts_with("ka_"));
++    assert!(!written.to_string().contains("/home/"));
++
++    let read = rpc(
++        &mut stdin,
++        &mut stdout,
++        json!({
++            "jsonrpc": "2.0",
++            "id": "req_artifact_read_it",
++            "method": "artifact.read",
++            "params": { "artifactId": artifact_id, "offset": 0, "maxBytes": 16 }
++        }),
++    );
++    assert_eq!(read["result"]["dataBase64"], "AAEC/w==");
++    assert_eq!(read["result"]["bytesRead"], 4);
++    assert_eq!(read["result"]["eof"], true);
++
++    let rejected = rpc(
++        &mut stdin,
++        &mut stdout,
++        json!({
++            "jsonrpc": "2.0",
++            "id": "req_artifact_bad_it",
++            "method": "artifact.write",
++            "params": { "mediaType": "image/png", "dataBase64": "!!!!" }
++        }),
++    );
++    assert_eq!(rejected["error"]["message"], "INVALID_PARAMS");
++
++    drop(stdin);
++    let status = child.wait().expect("runtime exits");
++    assert!(status.success());
++    let audit = audit_text(&root);
++    assert!(audit.contains("artifact_spool_create"));
++    assert!(!audit.contains("AAEC/w=="));
++    fs::remove_dir_all(root).expect("state root removed");
++}
+diff --git a/tests/protocol/runtime-schema.test.ts b/tests/protocol/runtime-schema.test.ts
+--- a/tests/protocol/runtime-schema.test.ts
++++ b/tests/protocol/runtime-schema.test.ts
+@@
+   it("includes the complete workspace lifecycle skeleton method set", () => {
+@@
+   });
++
++  it("keeps private screenshot ingestion out of the canonical runtime protocol", async () => {
++    expect(RUNTIME_METHODS).not.toContain("artifact.write");
++    const request = await schema("request.schema.json");
++    const variants = request.oneOf as JsonSchema[];
++    expect(
++      variants.some((variant) => variant.properties.method.const === "artifact.write")
++    ).toBe(false);
++  });
