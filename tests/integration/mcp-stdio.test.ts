@@ -297,7 +297,11 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(browserSessionAnnotations);
         } else if (tool.name === "browser.click" || tool.name === "browser.type") {
           expect(tool.annotations).toEqual(remoteCiCancelAnnotations);
-        } else if (tool.name === "browser.screenshot") {
+        } else if (
+          tool.name === "browser.screenshot" ||
+          tool.name === "visual.captureMatrix" ||
+          tool.name === "visual.compare"
+        ) {
           expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
         } else if (tool.name.startsWith("browser.")) {
           expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);

@@ -12,7 +12,8 @@ import type {
   BrowserDriverOpenInput,
   BrowserDriverSession,
   BrowserNetworkMode,
-  BrowserTarget
+  BrowserTarget,
+  BrowserViewport
 } from "./browser-manager.js";
 
 const BROWSER_ACTION_TIMEOUT_MS = 5_000;
@@ -137,7 +138,7 @@ class PlaywrightBrowserSession implements BrowserDriverSession {
   readonly #browser: Browser;
   readonly #context: BrowserContext;
   readonly #page: Page;
-  readonly #viewport: { width: number; height: number };
+  #viewport: { width: number; height: number };
   #closed = false;
 
   constructor(
@@ -178,6 +179,11 @@ class PlaywrightBrowserSession implements BrowserDriverSession {
     if (submit) {
       await locator.press("Enter", { timeout: BROWSER_ACTION_TIMEOUT_MS });
     }
+  }
+
+  async setViewport(viewport: BrowserViewport): Promise<void> {
+    await this.#page.setViewportSize({ ...viewport });
+    this.#viewport = { ...viewport };
   }
 
   async screenshot(fullPage: boolean): Promise<Uint8Array> {

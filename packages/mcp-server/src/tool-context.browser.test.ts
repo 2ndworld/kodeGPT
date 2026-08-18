@@ -52,6 +52,19 @@ function browser(calls: string[]) {
   };
 }
 
+function visual(calls: string[]) {
+  return {
+    captureMatrix: async () => {
+      calls.push("visual.captureMatrix");
+      return { schemaVersion: 1, previewId: "pv_test", captures: [] } as never;
+    },
+    compare: async () => {
+      calls.push("visual.compare");
+      return { schemaVersion: 1, previewId: "pv_test" } as never;
+    }
+  };
+}
+
 describe("browser tool context lifecycle", () => {
   it("releases the browser session before preview.stop", async () => {
     const calls: string[] = [];
@@ -79,5 +92,36 @@ describe("browser tool context lifecycle", () => {
       "browser.releaseWorkspace",
       "preview.releaseWorkspace"
     ]);
+  });
+
+  it("delegates visual verification through the separately injected visual manager", async () => {
+    const calls: string[] = [];
+    const context = createKodegptToolContext({
+      ...baseOptions(calls),
+      preview: preview(calls),
+      browser: browser(calls),
+      visual: visual(calls)
+    });
+
+    await context.visual.captureMatrix({ workspaceId: "ws_test", previewId: "pv_test" });
+    await context.visual.compare({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      referenceArtifact: "artifact://ka_reference"
+    });
+    expect(calls).toEqual(["visual.captureMatrix", "visual.compare"]);
+  });
+
+  it("fails closed when visual verification is not configured", async () => {
+    const calls: string[] = [];
+    const context = createKodegptToolContext({
+      ...baseOptions(calls),
+      preview: preview(calls),
+      browser: browser(calls)
+    });
+
+    await expect(
+      context.visual.captureMatrix({ workspaceId: "ws_test", previewId: "pv_test" })
+    ).rejects.toMatchObject({ code: "CAPABILITY_NOT_IMPLEMENTED" });
   });
 });

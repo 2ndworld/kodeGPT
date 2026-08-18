@@ -61,6 +61,7 @@ export type {
   BrowserPreviewInput,
   BrowserScreenshotInput,
   BrowserScreenshotResult,
+  BrowserSetViewportInput,
   BrowserTarget,
   BrowserTypeInput,
   BrowserViewport,
@@ -73,6 +74,37 @@ export {
   isAllowedPreviewDocumentUrl,
   isAllowedPreviewRequest
 } from "./playwright-browser-driver.js";
+
+export {
+  VISUAL_ARTIFACT_MAX_BYTES,
+  VISUAL_MAX_PIXELS,
+  compareVisualPixels,
+  decodeVisualPng
+} from "./visual-png.js";
+export type {
+  DecodedVisualPng,
+  VisualDimensions,
+  VisualPixelComparison
+} from "./visual-png.js";
+
+export {
+  VISUAL_ARTIFACT_READ_CHUNK_BYTES,
+  VISUAL_VIEWPORT_MATRIX,
+  VisualVerificationError,
+  VisualVerificationManager
+} from "./visual-verification.js";
+export type {
+  VisualArtifactReadResult,
+  VisualArtifactReader,
+  VisualBrowserAdapter,
+  VisualCaptureEntry,
+  VisualCaptureMatrixResult,
+  VisualCompareInput,
+  VisualCompareResult,
+  VisualPreviewInput,
+  VisualVerificationErrorCode,
+  VisualViewportName
+} from "./visual-verification.js";
 
 export {
   ProjectProfileInvalidError,

@@ -453,6 +453,21 @@ describe("kodegpt start orchestration", () => {
     }
   });
 
+  it("production-wires visual verification through the existing preview browser manager", async () => {
+    const events: string[] = [];
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      dependencies(events)
+    );
+    try {
+      await expect(
+        stack.toolContext.visual.captureMatrix({ workspaceId: "ws_test", previewId: "pv_missing" })
+      ).rejects.toMatchObject({ code: "BROWSER_SESSION_NOT_FOUND" });
+    } finally {
+      await stack.close();
+    }
+  });
+
   it("production-wires Remote-CI without invoking provider work during startup", async () => {
     const events: string[] = [];
     const deps = dependencies(events);

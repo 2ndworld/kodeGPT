@@ -30,6 +30,7 @@ import {
   NodeLoopbackPreviewProbe,
   PlaywrightBrowserDriver,
   PreviewManager,
+  VisualVerificationManager,
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
@@ -298,6 +299,7 @@ export async function createProductionServiceStack(
           managers.workspaceManager.requireReady(workspaceId).effectivePolicy.network
       }
     );
+    const visualVerificationManager = new VisualVerificationManager(browserManager, artifactStore);
     const auditReader = new AuditReader(stateRoot);
     const nativeCapabilities = new NativeCapabilityService({
       workspace: {
@@ -431,6 +433,7 @@ export async function createProductionServiceStack(
       executionManager,
       preview: previewManager,
       browser: browserManager,
+      visual: visualVerificationManager,
       artifactStore,
       nativeCapabilities,
       remoteCi,

@@ -13,6 +13,8 @@ const LOCKED_SURFACE = [
   { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
   { name: "browser.console", required: ["workspaceId", "previewId"] },
   { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
+  { name: "visual.captureMatrix", required: ["workspaceId", "previewId"] },
+  { name: "visual.compare", required: ["workspaceId", "previewId", "referenceArtifact"] },
   { name: "ci.failure", required: ["runId"] },
   { name: "ci.rerun", required: ["runId"] },
   { name: "ci.cancel", required: ["runId"] },
@@ -86,10 +88,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.12");
+    expect(MCP_SURFACE_VERSION).toBe("0.13");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(72);
+    expect(surface).toHaveLength(74);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
