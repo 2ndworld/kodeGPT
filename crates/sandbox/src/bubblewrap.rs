@@ -66,6 +66,7 @@ pub struct SandboxLaunchSpec {
     pub network: SandboxNetworkMode,
     pub workspace_access: WorkspaceAccess,
     pub git_metadata_access: GitMetadataAccess,
+    pub require_git_metadata: bool,
     pub cargo_home: Option<PathBuf>,
 }
 
@@ -80,6 +81,7 @@ impl SandboxLaunchSpec {
             network: SandboxNetworkMode::Deny,
             workspace_access: WorkspaceAccess::ReadOnly,
             git_metadata_access: GitMetadataAccess::None,
+            require_git_metadata: true,
             cargo_home: None,
         }
     }
@@ -179,11 +181,15 @@ impl BubblewrapProvider {
         let linked_git_metadata = match spec.git_metadata_access {
             GitMetadataAccess::None => None,
             GitMetadataAccess::ReadOnly | GitMetadataAccess::ReadWrite => {
-                open_linked_worktree_git_metadata(workspace_root).map_err(|error| {
-                    SandboxError::SandboxUnavailable(format!(
-                        "linked worktree Git metadata rejected: {error}"
-                    ))
-                })?
+                match open_linked_worktree_git_metadata(workspace_root) {
+                    Ok(metadata) => metadata,
+                    Err(_) if !spec.require_git_metadata => None,
+                    Err(error) => {
+                        return Err(SandboxError::SandboxUnavailable(format!(
+                            "linked worktree Git metadata rejected: {error}"
+                        )));
+                    }
+                }
             }
         };
         if let Some(metadata) = &linked_git_metadata {
@@ -646,6 +652,7 @@ mod tests {
         );
         spec.args = vec!["status".into(), "--short".into()];
         spec.git_metadata_access = GitMetadataAccess::ReadOnly;
+        spec.require_git_metadata = false;
         let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
         let output = provider
             .run_capture(&workspace_fd, &spec)

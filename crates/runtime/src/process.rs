@@ -311,6 +311,7 @@ pub fn run_process(
         (ProfileName::Trusted, false) => GitMetadataAccess::ReadOnly,
         _ => GitMetadataAccess::None,
     };
+    spec.require_git_metadata = false;
 
     let mut child = provider.spawn(&workspace_root, &spec)?;
     let process_group = child.process_group();
@@ -846,6 +847,68 @@ mod tests {
             Arc::new(ProcessOperationRegistry::default()),
         )
         .expect("bash process starts")
+    }
+
+    fn write_stale_linked_worktree_pointer(workspace: &Path) {
+        let stale_git_dir = workspace
+            .with_extension("stale-repository")
+            .join(".git/worktrees/stale");
+        fs::write(
+            workspace.join(".git"),
+            format!("gitdir: {}\n", stale_git_dir.display()),
+        )
+        .expect("stale linked-worktree pointer fixture");
+    }
+
+    #[test]
+    fn trusted_non_git_process_survives_rejected_linked_worktree_metadata() {
+        let workspace = temporary_root("stale-git-non-git-workspace");
+        let state = temporary_root("stale-git-non-git-state");
+        write_stale_linked_worktree_pointer(&workspace);
+        let mut trusted = policy(true);
+        trusted.name = ProfileName::Trusted;
+
+        let (_, view) = run_python(
+            &workspace,
+            &state,
+            trusted,
+            vec!["-c".to_owned(), "print('process-ok')".to_owned()],
+            false,
+        );
+
+        assert_eq!(
+            view.state,
+            ProcessState::Completed,
+            "{}",
+            view.stderr_preview
+        );
+        assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
+        assert_eq!(view.stdout_preview, "process-ok\n");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn trusted_shell_starts_without_rejected_git_metadata_but_nested_git_still_fails() {
+        let workspace = temporary_root("stale-git-shell-workspace");
+        let state = temporary_root("stale-git-shell-state");
+        write_stale_linked_worktree_pointer(&workspace);
+
+        let view = run_bash_with_state(
+            &workspace,
+            &state,
+            trusted_cargo_state_policy(),
+            "git status --short",
+        );
+
+        assert_ne!(view.exit_code, Some(0));
+        assert!(
+            view.stderr_preview.contains("fatal:"),
+            "{}",
+            view.stderr_preview
+        );
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
     }
 
     #[test]
