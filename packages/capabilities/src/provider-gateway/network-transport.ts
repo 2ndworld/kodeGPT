@@ -411,10 +411,18 @@ function normalizeStatus(
   hadCredential: boolean
 ): ProviderRawResponse {
   if (response.statusCode === 429) {
-    throw new CapabilityError("PROVIDER_RATE_LIMITED", "Provider rate limited the request");
+    throw new CapabilityError("PROVIDER_RATE_LIMITED", "Provider rate limited the request", {
+      reason: "RATE_LIMITED",
+      retryable: true,
+      suggestedAction: "retry"
+    });
   }
   if ((response.statusCode === 401 || response.statusCode === 403) && hadCredential) {
-    throw new CapabilityError("PROVIDER_CREDENTIAL_REJECTED", "Provider rejected the operation credential");
+    throw new CapabilityError("PROVIDER_CREDENTIAL_REJECTED", "Provider rejected the operation credential", {
+      reason: "AUTHENTICATION_REQUIRED",
+      retryable: false,
+      suggestedAction: "authenticate"
+    });
   }
   if (response.statusCode === 408 || response.statusCode === 504) {
     throw new CapabilityError("PROVIDER_TIMEOUT", "Provider request timed out");

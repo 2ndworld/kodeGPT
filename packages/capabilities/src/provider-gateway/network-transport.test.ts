@@ -203,8 +203,22 @@ describe("DefaultProviderNetworkTransport", () => {
       });
       return transport.request({ manifest: manifest(), operationId: "record.read", operationInput: { recordId: "42" }, credential, signal: new AbortController().signal, budget: budget() });
     };
-    await expect(run({ statusCode: 429, headers: {}, body: Buffer.alloc(0) })).rejects.toMatchObject({ code: "PROVIDER_RATE_LIMITED" });
-    await expect(run({ statusCode: 401, headers: {}, body: Buffer.alloc(0) }, { kind: "bearer", value: "x" })).rejects.toMatchObject({ code: "PROVIDER_CREDENTIAL_REJECTED" });
+    await expect(run({ statusCode: 429, headers: {}, body: Buffer.alloc(0) })).rejects.toMatchObject({
+      code: "PROVIDER_RATE_LIMITED",
+      details: {
+        reason: "RATE_LIMITED",
+        retryable: true,
+        suggestedAction: "retry"
+      }
+    });
+    await expect(run({ statusCode: 401, headers: {}, body: Buffer.alloc(0) }, { kind: "bearer", value: "x" })).rejects.toMatchObject({
+      code: "PROVIDER_CREDENTIAL_REJECTED",
+      details: {
+        reason: "AUTHENTICATION_REQUIRED",
+        retryable: false,
+        suggestedAction: "authenticate"
+      }
+    });
     await expect(run({ statusCode: 200, headers: {}, body: Buffer.alloc(2 * 1024 * 1024 + 1) })).rejects.toMatchObject({ code: "PROVIDER_RESPONSE_INVALID" });
 
     const aborted = new AbortController();

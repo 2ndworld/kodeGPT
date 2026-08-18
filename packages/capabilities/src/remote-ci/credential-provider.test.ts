@@ -118,7 +118,14 @@ describe("GitHubGhCredentialProvider", () => {
         runner: value.runner,
         environment: { PATH: join(value.root, "missing"), HOME: value.root }
       });
-      await expectCode(absent.getCredential({ workspaceRoot: value.workspace }), "CI_AUTH_REQUIRED");
+      await expect(absent.getCredential({ workspaceRoot: value.workspace })).rejects.toMatchObject({
+        code: "CI_AUTH_REQUIRED",
+        details: {
+          reason: "AUTHENTICATION_REQUIRED",
+          retryable: false,
+          suggestedAction: "authenticate"
+        }
+      });
 
       value.runner.result = {
         ...value.runner.result,
@@ -126,7 +133,14 @@ describe("GitHubGhCredentialProvider", () => {
         stdout: "",
         stderr: "login required"
       };
-      await expectCode(value.provider.getCredential({ workspaceRoot: value.workspace }), "CI_AUTH_REQUIRED");
+      await expect(value.provider.getCredential({ workspaceRoot: value.workspace })).rejects.toMatchObject({
+        code: "CI_AUTH_REQUIRED",
+        details: {
+          reason: "AUTHENTICATION_REQUIRED",
+          retryable: false,
+          suggestedAction: "authenticate"
+        }
+      });
       await expect(value.provider.getCredential({ workspaceRoot: value.workspace })).rejects.not.toThrow(/login required/);
     } finally {
       await rm(value.root, { recursive: true, force: true });

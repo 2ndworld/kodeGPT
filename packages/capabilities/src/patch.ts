@@ -310,7 +310,7 @@ function applyHunks(current: string, hunks: ParsedHunk[]): string {
     const oldTarget = hunk.oldCount === 0 ? hunk.oldStart : hunk.oldStart - 1;
     const newTarget = hunk.newCount === 0 ? hunk.newStart : hunk.newStart - 1;
     if (newTarget !== oldTarget + cumulativeDelta || oldTarget < sourceCursor || oldTarget > source.length) {
-      throw new CapabilityError("PATCH_PRECONDITION_FAILED", "Patch hunk position does not match current content");
+      throw preconditionError("Patch hunk position does not match current content");
     }
     output.push(...source.slice(sourceCursor, oldTarget));
     sourceCursor = oldTarget;
@@ -321,7 +321,7 @@ function applyHunks(current: string, hunks: ParsedHunk[]): string {
         continue;
       }
       if (source[sourceCursor] !== line.text) {
-        throw new CapabilityError("PATCH_PRECONDITION_FAILED", "Patch hunk text does not match current content");
+        throw preconditionError("Patch hunk text does not match current content");
       }
       if (line.kind === "context") output.push(line.text);
       sourceCursor += 1;
@@ -397,5 +397,13 @@ function compareBytes(left: string, right: string): number {
 }
 
 function precondition(path: string): CapabilityError {
-  return new CapabilityError("PATCH_PRECONDITION_FAILED", `Patch precondition failed for ${path}`);
+  return preconditionError(`Patch precondition failed for ${path}`);
+}
+
+function preconditionError(message: string): CapabilityError {
+  return new CapabilityError("PATCH_PRECONDITION_FAILED", message, {
+    reason: "STALE_EXPECTED_STATE",
+    retryable: false,
+    suggestedAction: "refresh-state"
+  });
 }

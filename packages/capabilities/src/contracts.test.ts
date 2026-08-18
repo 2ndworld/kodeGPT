@@ -59,6 +59,38 @@ describe("capability contracts", () => {
     ).toEqual({ code: "PATCH_COMMIT_INCOMPLETE", message: "partial" });
   });
 
+  it("preserves only allowlisted actionable recovery details", () => {
+    expect(
+      toPublicCapabilityError(
+        new CapabilityError("CI_RATE_LIMITED", "Rate limited", {
+          retryAfter: 30,
+          reason: "RATE_LIMITED",
+          retryable: true,
+          suggestedAction: "retry"
+        })
+      )
+    ).toEqual({
+      code: "CI_RATE_LIMITED",
+      message: "Rate limited",
+      details: {
+        retryAfter: 30,
+        reason: "RATE_LIMITED",
+        retryable: true,
+        suggestedAction: "retry"
+      }
+    });
+
+    expect(
+      toPublicCapabilityError(
+        new CapabilityError("CI_RATE_LIMITED", "Rate limited", {
+          reason: "/home/alice/private",
+          retryable: true,
+          suggestedAction: "run curl with token"
+        } as never)
+      )
+    ).toEqual({ code: "CI_RATE_LIMITED", message: "Rate limited" });
+  });
+
   it("pins public schema and bounded defaults", () => {
     expect(CAPABILITY_SCHEMA_VERSION).toBe(1);
     expect(DEFAULT_CONTEXT_MAX_BYTES).toBe(256 * 1024);

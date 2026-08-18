@@ -360,6 +360,11 @@ function isAmbiguousMutationFailure(error: CapabilityError): boolean {
 function mutationOutcomeUnknown(): CapabilityError {
   return new CapabilityError(
     "PROVIDER_MUTATION_OUTCOME_UNKNOWN",
-    "Provider mutation outcome is unknown; inspect remote state before retrying"
+    "Provider mutation outcome is unknown; inspect remote state before retrying",
+    {
+      reason: "MUTATION_OUTCOME_UNKNOWN",
+      retryable: false,
+      suggestedAction: "refresh-state"
+    }
   );
 }

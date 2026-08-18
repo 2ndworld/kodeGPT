@@ -65,7 +65,12 @@ export class GitHubHttp {
     } catch {
       throw new CapabilityError(
         "CI_MUTATION_OUTCOME_UNKNOWN",
-        "GitHub mutation outcome is unknown; inspect current CI state before retrying"
+        "GitHub mutation outcome is unknown; inspect current CI state before retrying",
+        {
+          reason: "MUTATION_OUTCOME_UNKNOWN",
+          retryable: false,
+          suggestedAction: "refresh-state"
+        }
       );
     }
 
@@ -120,7 +125,11 @@ export class GitHubHttp {
   #throwForProviderStatus(response: Response): void {
     if (response.status >= 200 && response.status < 300) return;
     if (response.status === 401) {
-      throw new CapabilityError("CI_AUTH_FAILED", "GitHub authentication failed");
+      throw new CapabilityError("CI_AUTH_FAILED", "GitHub authentication failed", {
+        reason: "AUTHENTICATION_REQUIRED",
+        retryable: false,
+        suggestedAction: "authenticate"
+      });
     }
     if (response.status === 429 || isRateLimited403(response)) {
       throw new CapabilityError(
@@ -193,16 +202,18 @@ function isRateLimited403(response: Response): boolean {
   return response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0";
 }
 
-function rateLimitDetails(headers: Headers): CapabilityErrorDetails | undefined {
+function rateLimitDetails(headers: Headers): CapabilityErrorDetails {
   const retryHeader = headers.get("retry-after");
   const resetHeader = headers.get("x-ratelimit-reset");
   const retryAfter = retryHeader === null ? undefined : parseSafeNonNegativeInteger(retryHeader);
   const resetEpoch = resetHeader === null ? undefined : parseSafeNonNegativeInteger(resetHeader);
   const resetAt = resetEpoch === undefined ? undefined : safeEpochToIso(resetEpoch);
-  if (retryAfter === undefined && resetAt === undefined) return undefined;
   return {
     ...(retryAfter === undefined ? {} : { retryAfter }),
-    ...(resetAt === undefined ? {} : { resetAt })
+    ...(resetAt === undefined ? {} : { resetAt }),
+    reason: "RATE_LIMITED",
+    retryable: true,
+    suggestedAction: "retry"
   };
 }
 

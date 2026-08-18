@@ -218,7 +218,14 @@ describe("file.patch", () => {
         patch: `--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-expected\n+new\n`,
         mode: "apply"
       })
-    ).rejects.toMatchObject({ code: "PATCH_PRECONDITION_FAILED" });
+    ).rejects.toMatchObject({
+      code: "PATCH_PRECONDITION_FAILED",
+      details: {
+        reason: "STALE_EXPECTED_STATE",
+        retryable: false,
+        suggestedAction: "refresh-state"
+      }
+    });
     expect(adapters.commits).toEqual([]);
   });
 

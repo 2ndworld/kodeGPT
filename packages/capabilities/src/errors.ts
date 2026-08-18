@@ -67,11 +67,35 @@ export type CapabilityErrorCode =
   | "CAPABILITY_NOT_IMPLEMENTED"
   | "CAPABILITY_INTERNAL";
 
+export type CapabilityErrorReason =
+  | "AUTHENTICATION_REQUIRED"
+  | "RATE_LIMITED"
+  | "STALE_EXPECTED_STATE"
+  | "MUTATION_OUTCOME_UNKNOWN";
+
+export type CapabilityRecoveryAction = "authenticate" | "retry" | "refresh-state";
+
+const CAPABILITY_ERROR_REASONS = new Set<CapabilityErrorReason>([
+  "AUTHENTICATION_REQUIRED",
+  "RATE_LIMITED",
+  "STALE_EXPECTED_STATE",
+  "MUTATION_OUTCOME_UNKNOWN"
+]);
+
+const CAPABILITY_RECOVERY_ACTIONS = new Set<CapabilityRecoveryAction>([
+  "authenticate",
+  "retry",
+  "refresh-state"
+]);
+
 export interface CapabilityErrorDetails {
   committedPaths?: string[];
   failedPath?: string;
   retryAfter?: number;
   resetAt?: string;
+  reason?: CapabilityErrorReason;
+  retryable?: boolean;
+  suggestedAction?: CapabilityRecoveryAction;
 }
 
 export class CapabilityError extends Error {
@@ -107,12 +131,18 @@ function sanitizeDetails(details: CapabilityErrorDetails | undefined): Capabilit
   const failedPath = details.failedPath;
   const retryAfter = details.retryAfter;
   const resetAt = details.resetAt;
+  const reason = details.reason;
+  const retryable = details.retryable;
+  const suggestedAction = details.suggestedAction;
   if (
     (committedPaths !== undefined &&
       (!Array.isArray(committedPaths) || !committedPaths.every(isSafeRelativePath))) ||
     (failedPath !== undefined && !isSafeRelativePath(failedPath)) ||
     (retryAfter !== undefined && (!Number.isSafeInteger(retryAfter) || retryAfter < 0)) ||
-    (resetAt !== undefined && !isSafeIsoTimestamp(resetAt))
+    (resetAt !== undefined && !isSafeIsoTimestamp(resetAt)) ||
+    (reason !== undefined && !CAPABILITY_ERROR_REASONS.has(reason)) ||
+    (retryable !== undefined && typeof retryable !== "boolean") ||
+    (suggestedAction !== undefined && !CAPABILITY_RECOVERY_ACTIONS.has(suggestedAction))
   ) {
     return undefined;
   }
@@ -120,7 +150,10 @@ function sanitizeDetails(details: CapabilityErrorDetails | undefined): Capabilit
     ...(committedPaths === undefined ? {} : { committedPaths: [...committedPaths] }),
     ...(failedPath === undefined ? {} : { failedPath }),
     ...(retryAfter === undefined ? {} : { retryAfter }),
-    ...(resetAt === undefined ? {} : { resetAt })
+    ...(resetAt === undefined ? {} : { resetAt }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(retryable === undefined ? {} : { retryable }),
+    ...(suggestedAction === undefined ? {} : { suggestedAction })
   };
 }
 
