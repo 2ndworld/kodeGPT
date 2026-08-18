@@ -360,6 +360,10 @@ function makeContext(): KodegptToolContext {
       releasePreview: async () => undefined,
       releaseWorkspace: async () => undefined
     },
+    visual: {
+      captureMatrix: async () => ({} as never),
+      compare: async () => ({} as never)
+    },
     artifact: {
       read: async () => ({} as never)
     },

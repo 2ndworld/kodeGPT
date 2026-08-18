@@ -55,6 +55,7 @@ import type {
   PreviewStartInput,
   PreviewStatusResult,
   TrustedWorkspaceSummary,
+  VisualVerificationManager,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
@@ -192,6 +193,8 @@ export type BrowserToolContext = Pick<
   | "releaseWorkspace"
 >;
 
+export type VisualToolContext = Pick<VisualVerificationManager, "captureMatrix" | "compare">;
+
 export interface ArtifactToolContext {
   read(input: { uri: string; offset?: number; maxBytes?: number }): MaybePromise<ArtifactReadResult>;
 }
@@ -264,6 +267,7 @@ export interface KodegptToolContext {
   process: ProcessToolContext;
   preview: PreviewToolContext;
   browser: BrowserToolContext;
+  visual: VisualToolContext;
   artifact: ArtifactToolContext;
   extension: ExtensionToolContext;
   profile: ProfileToolContext;
@@ -344,6 +348,7 @@ export function createKodegptToolContext(options: {
   executionManager: ExecutionManagerToolAdapter;
   preview?: PreviewToolContext & { releaseWorkspace?(workspaceId: string): MaybePromise<void> };
   browser?: BrowserToolContext;
+  visual?: VisualToolContext;
   artifactStore: ArtifactStoreToolAdapter;
   extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
@@ -361,6 +366,7 @@ export function createKodegptToolContext(options: {
   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
   const preview = options.preview ?? unavailablePreview();
   const browser = options.browser ?? unavailableBrowser();
+  const visual = options.visual ?? unavailableVisual();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
   return {
     workspace: {
@@ -440,6 +446,10 @@ export function createKodegptToolContext(options: {
       networkFailures: (input) => browser.networkFailures(input),
       releasePreview: (workspaceId, previewId) => browser.releasePreview(workspaceId, previewId),
       releaseWorkspace: (workspaceId) => browser.releaseWorkspace(workspaceId)
+    },
+    visual: {
+      captureMatrix: (input) => visual.captureMatrix(input),
+      compare: (input) => visual.compare(input)
     },
     artifact: {
       read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
@@ -537,6 +547,13 @@ function unavailableBrowser(): BrowserToolContext {
     networkFailures: () => unavailable("browser.networkFailures"),
     releasePreview: async () => undefined,
     releaseWorkspace: async () => undefined
+  };
+}
+
+function unavailableVisual(): VisualToolContext {
+  return {
+    captureMatrix: () => unavailable("visual.captureMatrix"),
+    compare: () => unavailable("visual.compare")
   };
 }
 
