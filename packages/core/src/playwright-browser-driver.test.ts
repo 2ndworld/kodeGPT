@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BROWSER_FULL_PAGE_MAX_PIXELS,
   isAllowedPreviewDocumentUrl,
-  isAllowedPreviewRequest
+  isAllowedPreviewRequest,
+  isAllowedPreviewWebSocket,
+  isScreenshotGeometryAllowed
 } from "./playwright-browser-driver.js";
 
 describe("Playwright preview navigation guard", () => {
@@ -26,5 +29,22 @@ describe("Playwright preview navigation guard", () => {
     expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "unrestricted")).toBe(true);
     expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/page", "document", "unrestricted")).toBe(false);
     expect(isAllowedPreviewRequest(origin, "https://cdn.example.test/app.js", "script", "allowlist")).toBe(false);
+  });
+
+  it("applies the same bounded authority to WebSocket connections", () => {
+    const origin = "http://127.0.0.1:4173";
+    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:4173/socket", "deny")).toBe(true);
+    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:4174/socket", "deny")).toBe(false);
+    expect(isAllowedPreviewWebSocket(origin, "ws://127.0.0.1:9999/socket", "localhost")).toBe(true);
+    expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "localhost")).toBe(false);
+    expect(isAllowedPreviewWebSocket(origin, "wss://example.test/socket", "unrestricted")).toBe(true);
+    expect(isAllowedPreviewWebSocket(origin, "https://example.test/not-websocket", "unrestricted")).toBe(false);
+  });
+
+  it("rejects oversized full-page screenshot geometry before capture", () => {
+    expect(isScreenshotGeometryAllowed(3840, 2160)).toBe(true);
+    expect(isScreenshotGeometryAllowed(3840, 2161)).toBe(false);
+    expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS, 1)).toBe(true);
+    expect(isScreenshotGeometryAllowed(BROWSER_FULL_PAGE_MAX_PIXELS + 1, 1)).toBe(false);
   });
 });

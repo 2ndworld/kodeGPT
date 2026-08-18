@@ -160,15 +160,26 @@ describe("BrowserManager", () => {
     ).rejects.toMatchObject({ code: "BROWSER_LIMIT_REACHED" });
   });
 
-  it("passes the effective workspace network mode to the browser driver", async () => {
+  it("resolves the effective workspace network mode dynamically and fails closed", async () => {
     const fixture = manager();
+    let mode: "localhost" | "deny" = "localhost";
+    let fail = false;
     const bounded = new BrowserManager(fixture.preview, fixture.driver, fixture.artifacts, {
-      networkMode: () => "localhost"
+      networkMode: () => {
+        if (fail) throw new Error("policy unavailable");
+        return mode;
+      }
     });
 
     await bounded.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
 
-    expect(fixture.driver.opens[0]?.networkMode).toBe("localhost");
+    const resolver = fixture.driver.opens[0]?.networkMode;
+    if (!resolver) throw new Error("network resolver missing");
+    expect(await resolver()).toBe("localhost");
+    mode = "deny";
+    expect(await resolver()).toBe("deny");
+    fail = true;
+    expect(await resolver()).toBe("deny");
   });
 
   it("dispatches only bounded CSS/role click and type targets", async () => {
@@ -214,6 +225,7 @@ describe("BrowserManager", () => {
     if (!open) throw new Error("driver open missing");
     fixture.driver.sessions[0]!.inspectValue = {
       ...fixture.driver.sessions[0]!.inspectValue,
+      url: `http://127.0.0.1:4173/${"u".repeat(4000)}`,
       bodyText: "x".repeat(40_000),
       ariaSnapshot: "y".repeat(40_000)
     };
@@ -232,7 +244,14 @@ describe("BrowserManager", () => {
       previewId: "pv_test"
     });
     expect(inspected.truncated).toBe(true);
-    expect(Buffer.byteLength(inspected.bodyText) + Buffer.byteLength(inspected.ariaSnapshot)).toBeLessThanOrEqual(32 * 1024);
+    expect(inspected.truncationReasons).toContain("url");
+    expect(Buffer.byteLength(inspected.url)).toBeLessThanOrEqual(2048);
+    expect(
+      Buffer.byteLength(inspected.title) +
+        Buffer.byteLength(inspected.url) +
+        Buffer.byteLength(inspected.bodyText) +
+        Buffer.byteLength(inspected.ariaSnapshot)
+    ).toBeLessThanOrEqual(32 * 1024);
 
     const consoleEvidence = await fixture.manager.console({
       workspaceId: "ws_test",

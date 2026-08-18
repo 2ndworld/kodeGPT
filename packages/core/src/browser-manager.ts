@@ -93,7 +93,7 @@ export interface BrowserDriverOpenInput {
   url: string;
   origin: string;
   viewport: BrowserViewport;
-  networkMode: BrowserNetworkMode;
+  networkMode(): BrowserNetworkMode | Promise<BrowserNetworkMode>;
   onConsole(event: BrowserConsoleEvent): void;
   onNetworkFailure(event: BrowserNetworkFailureEvent): void;
   onDisconnect(): void;
@@ -308,14 +308,14 @@ export class BrowserManager {
       throw new BrowserManagerError("BROWSER_LIMIT_REACHED", "browser session limit reached");
     }
     const viewport = validateViewport(input.viewport);
-    let networkMode: BrowserNetworkMode = "deny";
-    if (this.#authority) {
+    const networkMode = async (): Promise<BrowserNetworkMode> => {
+      if (!this.#authority) return "deny";
       try {
-        networkMode = await this.#authority.networkMode(input.workspaceId);
+        return await this.#authority.networkMode(input.workspaceId);
       } catch {
-        throw new BrowserManagerError("BROWSER_PREVIEW_NOT_READY", "workspace browser authority is unavailable");
+        return "deny";
       }
-    }
+    };
     const consoleEntries: BrowserConsoleEntry[] = [];
     const networkFailures: BrowserNetworkFailureEntry[] = [];
     let consoleTruncated = false;
@@ -404,19 +404,21 @@ export class BrowserManager {
       await this.releasePreview(input.workspaceId, input.previewId);
       throw new BrowserManagerError("BROWSER_ORIGIN_INVALID", "browser left preview origin");
     }
-    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES;
+    const textEvidenceBudget = BROWSER_EVIDENCE_MAX_BYTES - BROWSER_ENTRY_MAX_BYTES * 2;
     const body = truncateUtf8(evidence.bodyText, Math.floor(textEvidenceBudget / 2));
     const aria = truncateUtf8(evidence.ariaSnapshot, Math.ceil(textEvidenceBudget / 2));
     const title = truncateUtf8(evidence.title, BROWSER_ENTRY_MAX_BYTES);
+    const url = truncateUtf8(evidence.url, BROWSER_ENTRY_MAX_BYTES);
     const reasons = [
       ...(body.truncated ? ["bodyText"] : []),
       ...(aria.truncated ? ["ariaSnapshot"] : []),
-      ...(title.truncated ? ["title"] : [])
+      ...(title.truncated ? ["title"] : []),
+      ...(url.truncated ? ["url"] : [])
     ];
     return {
       schemaVersion: 1,
       previewId: record.previewId,
-      url: evidence.url,
+      url: url.value,
       viewport: { ...evidence.viewport },
       title: title.value,
       bodyText: body.value,

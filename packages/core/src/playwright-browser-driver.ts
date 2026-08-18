@@ -16,6 +16,7 @@ import type {
 } from "./browser-manager.js";
 
 const BROWSER_ACTION_TIMEOUT_MS = 5_000;
+export const BROWSER_FULL_PAGE_MAX_PIXELS = 3840 * 2160;
 
 export function isAllowedPreviewDocumentUrl(origin: string, urlText: string): boolean {
   try {
@@ -46,6 +47,53 @@ export function isAllowedPreviewRequest(
     (url.protocol === "http:" || url.protocol === "https:") &&
     (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
   );
+}
+
+export function isAllowedPreviewWebSocket(
+  origin: string,
+  urlText: string,
+  networkMode: BrowserNetworkMode
+): boolean {
+  let preview: URL;
+  let url: URL;
+  try {
+    preview = new URL(origin);
+    url = new URL(urlText);
+  } catch {
+    return false;
+  }
+  const expectedProtocol = preview.protocol === "https:" ? "wss:" : "ws:";
+  if (
+    url.protocol === expectedProtocol &&
+    url.hostname === preview.hostname &&
+    url.port === preview.port
+  ) {
+    return true;
+  }
+  if (networkMode === "unrestricted") return url.protocol === "ws:" || url.protocol === "wss:";
+  if (networkMode !== "localhost") return false;
+  return (
+    (url.protocol === "ws:" || url.protocol === "wss:") &&
+    (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+  );
+}
+
+export function isScreenshotGeometryAllowed(width: number, height: number): boolean {
+  return (
+    Number.isFinite(width) &&
+    Number.isFinite(height) &&
+    width > 0 &&
+    height > 0 &&
+    width * height <= BROWSER_FULL_PAGE_MAX_PIXELS
+  );
+}
+
+async function currentNetworkMode(input: BrowserDriverOpenInput): Promise<BrowserNetworkMode | null> {
+  try {
+    return await input.networkMode();
+  } catch {
+    return null;
+  }
 }
 
 function locatorFor(page: Page, target: BrowserTarget): Locator {
@@ -107,6 +155,23 @@ class PlaywrightBrowserSession implements BrowserDriverSession {
   }
 
   async screenshot(fullPage: boolean): Promise<Uint8Array> {
+    if (fullPage) {
+      const [htmlBox, bodyBox] = await Promise.all([
+        this.#page.locator("html").boundingBox(),
+        this.#page.locator("body").boundingBox()
+      ]);
+      const boxes = [htmlBox, bodyBox].filter(
+        (box): box is NonNullable<typeof box> => box !== null
+      );
+      if (boxes.length === 0) {
+        throw new Error("browser full-page screenshot geometry is unavailable");
+      }
+      const width = Math.max(...boxes.map((box) => box.width));
+      const height = Math.max(...boxes.map((box) => box.height));
+      if (!isScreenshotGeometryAllowed(width, height)) {
+        throw new Error("browser full-page screenshot geometry exceeds bounded limit");
+      }
+    }
     return this.#page.screenshot({
       type: "png",
       fullPage,
@@ -135,9 +200,41 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         acceptDownloads: false,
         viewport: { ...input.viewport },
         locale: "en-US",
-        colorScheme: "light"
+        colorScheme: "light",
+        serviceWorkers: "block"
       });
       context.setDefaultTimeout(BROWSER_ACTION_TIMEOUT_MS);
+
+      await context.route("**/*", async (route) => {
+        const request = route.request();
+        const networkMode = await currentNetworkMode(input);
+        if (
+          networkMode === null ||
+          !isAllowedPreviewRequest(
+            input.origin,
+            request.url(),
+            request.resourceType(),
+            networkMode
+          )
+        ) {
+          await route.abort("blockedbyclient");
+          return;
+        }
+        await route.continue();
+      });
+
+      await context.routeWebSocket("**/*", async (webSocket) => {
+        const networkMode = await currentNetworkMode(input);
+        if (
+          networkMode === null ||
+          !isAllowedPreviewWebSocket(input.origin, webSocket.url(), networkMode)
+        ) {
+          await webSocket.close({ code: 1008, reason: "KodeGPT network policy denied" });
+          return;
+        }
+        webSocket.connectToServer();
+      });
+
       const page = await context.newPage();
 
       page.on("console", (message) => {
@@ -160,22 +257,6 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         if (openedPage !== page) {
           void openedPage.close().catch(() => undefined);
         }
-      });
-
-      await page.route("**/*", async (route) => {
-        const request = route.request();
-        if (
-          !isAllowedPreviewRequest(
-            input.origin,
-            request.url(),
-            request.resourceType(),
-            input.networkMode
-          )
-        ) {
-          await route.abort("blockedbyclient");
-          return;
-        }
-        await route.continue();
       });
 
       await page.goto(input.url, {

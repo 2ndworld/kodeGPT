@@ -30,7 +30,7 @@ spike("launches sandboxed system Chrome and loads a loopback preview", async () 
       url,
       origin: new URL(url).origin,
       viewport: { width: 800, height: 600 },
-      networkMode: "deny",
+      networkMode: () => "deny",
       onConsole: (entry) => consoleEntries.push(entry.text),
       onNetworkFailure: (entry) => failures.push(entry.url),
       onDisconnect: () => {
