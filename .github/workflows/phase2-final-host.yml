@@ -1,0 +1,66 @@
+name: Phase 2 Final Host Verification
+
+on:
+  push:
+    branches: ["feat/preview-scoped-browser-evidence"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  host-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v6
+        with:
+          ref: feat/preview-scoped-browser-evidence
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Setup pnpm 10.15.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+          test "$(pnpm --version)" = "10.15.0"
+
+      - name: Frozen dependency install
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and focused core tests
+        run: |
+          set -euo pipefail
+          pnpm run typecheck
+          pnpm --filter @kodegpt/core test
+
+      - name: Host Chrome WebSocket policy spike
+        env:
+          KODEGPT_BROWSER_SPIKE: "1"
+        run: |
+          set -euo pipefail
+          google-chrome --version
+          pnpm exec vitest run packages/core/src/playwright-browser-driver.spike.test.ts
+
+      - name: Remove verification workflow after success
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/phase2-final-host.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: remove final Phase 2 host verification"
+          git push origin "HEAD:feat/preview-scoped-browser-evidence"
