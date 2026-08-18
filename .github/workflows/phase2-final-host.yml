@@ -64,3 +64,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: remove final Phase 2 host verification"
           git push origin "HEAD:feat/preview-scoped-browser-evidence"
+
+# Triggered after the verification workflow existed in the branch parent.
