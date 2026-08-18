@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use kodegpt_protocol::{NetworkMode, ProfileName, RuntimePolicy};
 use kodegpt_sandbox::{
-    BubblewrapProvider, SandboxError, SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
-    resolve_trusted_executable,
+    BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
+    WorkspaceAccess, resolve_trusted_executable,
 };
 use kodegpt_workspace_io::open_directory_beneath;
 use serde::Serialize;
@@ -305,6 +305,11 @@ pub fn run_process(
         WorkspaceAccess::ReadWrite
     } else {
         WorkspaceAccess::ReadOnly
+    };
+    spec.git_metadata_access = match (policy.name, policy.allow_write) {
+        (ProfileName::Trusted, true) => GitMetadataAccess::ReadWrite,
+        (ProfileName::Trusted, false) => GitMetadataAccess::ReadOnly,
+        _ => GitMetadataAccess::None,
     };
 
     let mut child = provider.spawn(&workspace_root, &spec)?;

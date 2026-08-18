@@ -9,10 +9,11 @@ pub(crate) static PROCESS_SPAWN_LOCK: Mutex<()> = Mutex::new(());
 mod bubblewrap;
 mod capabilities;
 mod executable;
+mod git_metadata;
 
 pub use bubblewrap::{
-    BubblewrapProvider, SandboxChild, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
-    WorkspaceAccess,
+    BubblewrapProvider, GitMetadataAccess, SandboxChild, SandboxError, SandboxLaunchSpec,
+    SandboxNetworkMode, WorkspaceAccess,
 };
 pub use capabilities::{SandboxCapabilities, SandboxEnforcement, probe_sandbox_capabilities};
 pub use executable::{
