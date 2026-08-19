@@ -9,6 +9,7 @@ import {
   DefaultProviderCredentialBroker,
   type ProviderCredential
 } from "./credential-broker.js";
+import { resolveProviderImplementationIdentity } from "./identity.js";
 import { DefaultProviderNetworkTransport } from "./network-transport.js";
 import {
   ProviderOperatorService,
@@ -94,9 +95,37 @@ export function createProviderGatewayRuntime(input: {
           "Multiple enabled provider instances match the requested adapter"
         );
       }
+      const provider = matching[0]!;
+      const manifest = adapters.require(adapterId);
+      if (
+        provider.adapterContractVersion !== manifest.adapterContractVersion ||
+        provider.inventoryMode !== manifest.inventoryMode
+      ) {
+        throw new CapabilityError(
+          "PROVIDER_IDENTITY_CHANGED",
+          "Provider adapter identity changed and requires reapproval"
+        );
+      }
+      const identity = await resolveProviderImplementationIdentity({
+        manifest,
+        credentialBroker: provider.credentialBroker,
+        workspaceRoots: input.workspaceRoots()
+      });
+      if (identity.implementationFingerprint !== provider.implementationFingerprint) {
+        throw new CapabilityError(
+          "PROVIDER_IDENTITY_CHANGED",
+          "Provider implementation identity changed and requires reapproval"
+        );
+      }
+      if (manifest.inventoryMode === "DYNAMIC" && provider.approvedInventoryFingerprint === null) {
+        throw new CapabilityError(
+          "PROVIDER_INVENTORY_CHANGED",
+          "Provider dynamic inventory is not approved"
+        );
+      }
       return credentials.acquire({
-        provider: matching[0]!,
-        manifest: adapters.require(adapterId),
+        provider,
+        manifest,
         signal: lifetime.signal
       });
     },
