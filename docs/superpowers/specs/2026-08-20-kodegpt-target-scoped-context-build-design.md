@@ -1,7 +1,7 @@
 # KodeGPT Target-Scoped Context Build Design
 
 Date: 2026-08-20
-Status: approved direction
+Status: verified
 
 ## Goal
 
