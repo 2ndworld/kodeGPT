@@ -23,6 +23,53 @@ const RUNNING: WorkspaceProcessOperationResult = {
 };
 
 describe("ExecutionManager", () => {
+  it("waits for a running operation and returns as soon as it becomes terminal", async () => {
+    let statusCalls = 0;
+    const workspace = {
+      async runProcess(_input: WorkspaceProcessRunInput) {
+        return RUNNING;
+      },
+      async processStatus(_workspaceId: string, _operationId: string) {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? RUNNING
+          : { ...RUNNING, state: "completed" as const, exitCode: 0 };
+      },
+      async processCancel(_workspaceId: string, _operationId: string) {
+        return { ...RUNNING, state: "cancelled" as const };
+      }
+    };
+    const manager = new ExecutionManager(workspace);
+
+    const status = await manager.status("ws_public", RUNNING.operationId, 1000);
+
+    expect(status.state).toBe("completed");
+    expect(status.exitCode).toBe(0);
+    expect(statusCalls).toBe(2);
+  });
+
+  it("returns the latest running state when the wait deadline expires", async () => {
+    let statusCalls = 0;
+    const workspace = {
+      async runProcess(_input: WorkspaceProcessRunInput) {
+        return RUNNING;
+      },
+      async processStatus(_workspaceId: string, _operationId: string) {
+        statusCalls += 1;
+        return RUNNING;
+      },
+      async processCancel(_workspaceId: string, _operationId: string) {
+        return { ...RUNNING, state: "cancelled" as const };
+      }
+    };
+    const manager = new ExecutionManager(workspace);
+
+    const status = await manager.status("ws_public", RUNNING.operationId, 20);
+
+    expect(status.state).toBe("running");
+    expect(statusCalls).toBeGreaterThan(1);
+  });
+
   it("delegates public process operations without introducing process authority", async () => {
     const calls: unknown[] = [];
     const workspace = {
