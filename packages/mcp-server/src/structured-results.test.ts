@@ -1176,6 +1176,48 @@ describe("structured MCP tool results", () => {
     ).toContainEqual(typedVerifyRunResult.operation);
   });
 
+  it("keeps process.status wait bounded and forwards the optional wait", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    let statusInput: unknown;
+    context.process.status = async (input) => {
+      statusInput = input;
+      return typedVerifyRunResult.operation;
+    };
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const definition = definitions.get("process.status");
+    const handler = handlers.get("process.status");
+    expect(definition).toBeDefined();
+    expect(handler).toBeDefined();
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    const schema = z.object(definition?.inputSchema as z.ZodRawShape).strict();
+    const valid = {
+      workspaceId: "ws_1",
+      operationId: "op_verify",
+      waitMs: 30_000
+    };
+    expect(schema.safeParse(valid).success).toBe(true);
+    for (const waitMs of [-1, 1.5, 30_001]) {
+      expect(schema.safeParse({ ...valid, waitMs }).success).toBe(false);
+    }
+
+    const result = (await handler!(valid as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(statusInput).toEqual(valid);
+    expect(result.structuredContent).toEqual(typedVerifyRunResult.operation);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
   it("keeps preview schemas closed to caller-selected network targets", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();

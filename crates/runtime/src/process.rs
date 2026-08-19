@@ -1539,7 +1539,10 @@ mod tests {
         }
         assert_eq!(status.state, ProcessState::Running, "{status:?}");
         assert!(status.stdout_truncated, "{status:?}");
-        assert_eq!(status.stdout_preview.as_bytes().len(), super::PREVIEW_MAX_BYTES);
+        assert_eq!(
+            status.stdout_preview.as_bytes().len(),
+            super::PREVIEW_MAX_BYTES
+        );
         let cancelled = operations
             .cancel("kc_process_fixture", &view.operation_id)
             .expect("background operation cancels");

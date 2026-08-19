@@ -1198,15 +1198,16 @@ export function registerKodegptTools(
   server.registerTool(
     "process.status",
     {
-      description: "Inspect a process operation by its opaque operation ID.",
+      description: "Inspect a process operation by its opaque operation ID, optionally waiting for a bounded state update.",
       inputSchema: {
         workspaceId: z.string().min(1),
-        operationId: z.string().startsWith("op_")
+        operationId: z.string().startsWith("op_"),
+        waitMs: z.number().int().min(0).max(30_000).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, operationId }) => {
-      const value = await context.process.status({ workspaceId, operationId });
+    async ({ workspaceId, operationId, waitMs }) => {
+      const value = await context.process.status({ workspaceId, operationId, waitMs });
       consoleState.recordProcessOperation(value);
       return structuredToolResult(value);
     }
