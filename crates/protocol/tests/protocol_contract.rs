@@ -183,7 +183,10 @@ fn git_remote_credentials_are_optional_closed_and_typed() {
             "credential": { "kind": "github_token", "token": "[REDACTED_SECRET]" }
         }
     }));
-    assert!(credentialed.is_ok(), "closed GitHub credential variant must deserialize");
+    assert!(
+        credentialed.is_ok(),
+        "closed GitHub credential variant must deserialize"
+    );
 
     let malformed = serde_json::from_value::<RuntimeRequest>(json!({
         "jsonrpc": "2.0",
