@@ -9,6 +9,8 @@ import type {
   GitRangeResult,
   GitDiffHistoryResult,
   GitLocalMutationResult,
+  GitWorktreeCreateResult,
+  GitWorktreeRemoveResult,
   GitRemoteMutationResult
 } from "./contracts.js";
 import type { CapabilityErrorCode } from "./errors.js";
@@ -297,6 +299,11 @@ export interface GitLocalMutationAdapter {
   branchCreate(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
   branchSwitch(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
   branchDelete(workspaceId: string, name: string): Promise<GitLocalMutationResult>;
+}
+
+export interface GitWorktreeMutationAdapter {
+  worktreeCreate(workspaceId: string, name: string, branch: string): Promise<GitWorktreeCreateResult>;
+  worktreeRemove(workspaceId: string, name: string): Promise<GitWorktreeRemoveResult>;
 }
 
 export interface GitRemoteAuthorityAdapter {

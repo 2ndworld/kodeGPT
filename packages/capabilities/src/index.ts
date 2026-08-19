@@ -22,6 +22,7 @@ export {
   MAX_GIT_STAGE_PATHS,
   MAX_GIT_MUTATION_TEXT,
   MAX_GIT_BRANCH_NAME,
+  MAX_GIT_WORKTREE_NAME,
   MAX_GIT_REMOTE_NAME,
   NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
@@ -57,6 +58,10 @@ export type {
   GitBranchInput,
   GitLocalMutationOperation,
   GitLocalMutationResult,
+  GitWorktreeCreateInput,
+  GitWorktreeCreateResult,
+  GitWorktreeRemoveInput,
+  GitWorktreeRemoveResult,
   GitRemoteInput,
   GitRemoteMutationOperation,
   GitRemoteMutationResult,
@@ -107,6 +112,7 @@ export type {
   GitInspectionAdapterResult,
   GitLocalAuthorityAdapter,
   GitLocalMutationAdapter,
+  GitWorktreeMutationAdapter,
   GitRemoteAuthorityAdapter,
   GitRemoteMutationAdapter,
   RemoteCiToolAdapter,
@@ -124,7 +130,15 @@ export * from "./github-repository-identity.js";
 export * from "./remote-ci/index.js";
 export * from "./provider-gateway/index.js";
 export { gitLog, gitShow, gitRange, gitDiffHistory } from "./git-history.js";
-export { gitStage, gitCommit, gitBranchCreate, gitBranchSwitch, gitBranchDelete } from "./git-local.js";
+export {
+  gitStage,
+  gitCommit,
+  gitBranchCreate,
+  gitBranchSwitch,
+  gitBranchDelete,
+  gitWorktreeCreate,
+  gitWorktreeRemove
+} from "./git-local.js";
 export { gitFetch, gitPull, gitPush } from "./git-remote.js";
 export type { CapabilityErrorCode } from "./errors.js";
 export {
@@ -149,6 +163,10 @@ export {
   GitCommitInputSchema,
   GitBranchInputSchema,
   GitLocalMutationResultSchema,
+  GitWorktreeCreateInputSchema,
+  GitWorktreeCreateResultSchema,
+  GitWorktreeRemoveInputSchema,
+  GitWorktreeRemoveResultSchema,
   GitRemoteInputSchema,
   GitRemoteMutationResultSchema,
   GitRevisionSchema,

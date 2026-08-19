@@ -293,6 +293,27 @@ export interface WorkspaceGitMutationResult extends WorkspaceGitInspectionResult
   operation: WorkspaceGitMutationOperation;
 }
 
+export interface WorkspaceGitWorktreeCreateResult {
+  schemaVersion: 1;
+  operation: "create";
+  name: string;
+  relativePath: `.worktrees/${string}`;
+  branch: string;
+  headOid: string;
+}
+
+export interface WorkspaceGitWorktreeRemoveResult {
+  schemaVersion: 1;
+  operation: "remove";
+  name: string;
+  relativePath: `.worktrees/${string}`;
+  removed: true;
+}
+
+export type WorkspaceGitWorktreeMutationResult =
+  | WorkspaceGitWorktreeCreateResult
+  | WorkspaceGitWorktreeRemoveResult;
+
 export type WorkspaceGitRemoteMutationOperation = "fetch" | "pull" | "push";
 
 export interface WorkspaceGitRemoteCredential {
@@ -1044,6 +1065,18 @@ export class WorkspaceManager {
     return this.#gitLocalMutation(workspaceId, "branch_delete", { name });
   }
 
+  async gitWorktreeCreate(
+    workspaceId: string,
+    name: string,
+    branch: string
+  ): Promise<WorkspaceGitWorktreeCreateResult> {
+    return this.#gitWorktreeMutation(workspaceId, "create", { name, branch }) as Promise<WorkspaceGitWorktreeCreateResult>;
+  }
+
+  async gitWorktreeRemove(workspaceId: string, name: string): Promise<WorkspaceGitWorktreeRemoveResult> {
+    return this.#gitWorktreeMutation(workspaceId, "remove", { name }) as Promise<WorkspaceGitWorktreeRemoveResult>;
+  }
+
   async gitFetch(
     workspaceId: string,
     remote: string,
@@ -1355,6 +1388,82 @@ export class WorkspaceManager {
       sourceTruncated: result.sourceTruncated,
       bytesSpooled: result.bytesSpooled as number,
       artifact: validateArtifactMetadata(result.artifact, "git.local_mutation")
+    };
+  }
+
+  async #gitWorktreeMutation(
+    workspaceId: string,
+    operation: "create" | "remove",
+    params: Record<string, unknown>
+  ): Promise<WorkspaceGitWorktreeMutationResult> {
+    const state = this.#requireReadyState(workspaceId);
+    let result: unknown;
+    try {
+      result = await this.#kernel.request<unknown>("git.worktree_mutation", {
+        capabilityId: state.capabilityId,
+        operation,
+        ...params
+      });
+    } catch (error) {
+      if (error instanceof KernelRpcError && GIT_WORKTREE_ERROR_CODES.has(error.message)) {
+        throw new WorkspaceManagerError(error.message, "git.worktree_mutation failed");
+      }
+      throw error;
+    }
+    if (
+      !isRecord(result) ||
+      result.schemaVersion !== 1 ||
+      result.operation !== operation ||
+      typeof result.name !== "string" ||
+      typeof result.relativePath !== "string" ||
+      result.relativePath !== `.worktrees/${result.name}`
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.worktree_mutation returned an invalid payload"
+      );
+    }
+    const allowedKeys = operation === "create"
+      ? new Set(["schemaVersion", "operation", "name", "relativePath", "branch", "headOid"])
+      : new Set(["schemaVersion", "operation", "name", "relativePath", "removed"]);
+    if (Object.keys(result).some((key) => !allowedKeys.has(key))) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.worktree_mutation returned an invalid payload"
+      );
+    }
+    if (operation === "create") {
+      if (
+        typeof result.branch !== "string" ||
+        typeof result.headOid !== "string" ||
+        !/^[0-9a-f]{40}$/.test(result.headOid)
+      ) {
+        throw new WorkspaceManagerError(
+          "RUNTIME_PROTOCOL_INVALID",
+          "git.worktree_mutation returned an invalid payload"
+        );
+      }
+      return {
+        schemaVersion: 1,
+        operation: "create",
+        name: result.name,
+        relativePath: result.relativePath as `.worktrees/${string}`,
+        branch: result.branch,
+        headOid: result.headOid
+      };
+    }
+    if (result.removed !== true) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "git.worktree_mutation returned an invalid payload"
+      );
+    }
+    return {
+      schemaVersion: 1,
+      operation: "remove",
+      name: result.name,
+      relativePath: result.relativePath as `.worktrees/${string}`,
+      removed: true
     };
   }
 
@@ -1868,6 +1977,21 @@ const GIT_MUTATION_ERROR_CODES = new Set([
   "GIT_MUTATION_INPUT_INVALID",
   "GIT_MUTATION_UNAVAILABLE",
   "GIT_MUTATION_FAILED"
+]);
+
+const GIT_WORKTREE_ERROR_CODES = new Set([
+  "WORKSPACE_NOT_READY",
+  "GIT_POLICY_DENIED",
+  "GIT_WORKTREE_INPUT_INVALID",
+  "GIT_WORKTREE_TARGET_EXISTS",
+  "GIT_WORKTREE_BRANCH_MISSING",
+  "GIT_WORKTREE_BRANCH_IN_USE",
+  "GIT_WORKTREE_METADATA_INVALID",
+  "GIT_WORKTREE_DIRTY",
+  "GIT_WORKTREE_LOCKED",
+  "GIT_WORKTREE_UNAVAILABLE",
+  "GIT_WORKTREE_FAILED",
+  "GIT_WORKTREE_INCONSISTENT"
 ]);
 
 const GIT_REMOTE_MUTATION_ERROR_CODES = new Set([

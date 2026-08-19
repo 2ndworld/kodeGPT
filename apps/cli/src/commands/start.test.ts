@@ -137,6 +137,8 @@ function dependencies(
     gitBranchCreate: async () => { throw new Error("unexpected gitBranchCreate"); },
     gitBranchSwitch: async () => { throw new Error("unexpected gitBranchSwitch"); },
     gitBranchDelete: async () => { throw new Error("unexpected gitBranchDelete"); },
+    gitWorktreeCreate: async () => { throw new Error("unexpected gitWorktreeCreate"); },
+    gitWorktreeRemove: async () => { throw new Error("unexpected gitWorktreeRemove"); },
     gitFetch: async () => { throw new Error("unexpected gitFetch"); },
     gitPull: async () => { throw new Error("unexpected gitPull"); },
     gitPush: async () => { throw new Error("unexpected gitPush"); },

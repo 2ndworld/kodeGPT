@@ -21,6 +21,7 @@ export const MAX_GIT_HISTORY_PATHS = 500;
 export const MAX_GIT_STAGE_PATHS = 128;
 export const MAX_GIT_MUTATION_TEXT = 4096;
 export const MAX_GIT_BRANCH_NAME = 255;
+export const MAX_GIT_WORKTREE_NAME = 64;
 export const MAX_GIT_REMOTE_NAME = 128;
 export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "workspace.inspect",
@@ -38,6 +39,8 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
   "git.branchCreate",
   "git.branchSwitch",
   "git.branchDelete",
+  "git.worktreeCreate",
+  "git.worktreeRemove",
   "git.fetch",
   "git.pull",
   "git.push",
@@ -418,6 +421,34 @@ export interface GitLocalMutationResult {
   sourceTruncated: boolean;
   bytesSpooled: number;
   artifact: CapabilityArtifactMetadata;
+}
+
+export interface GitWorktreeCreateInput {
+  workspaceId: string;
+  name: string;
+  branch: string;
+}
+
+export interface GitWorktreeRemoveInput {
+  workspaceId: string;
+  name: string;
+}
+
+export interface GitWorktreeCreateResult {
+  schemaVersion: 1;
+  operation: "create";
+  name: string;
+  relativePath: `.worktrees/${string}`;
+  branch: string;
+  headOid: string;
+}
+
+export interface GitWorktreeRemoveResult {
+  schemaVersion: 1;
+  operation: "remove";
+  name: string;
+  relativePath: `.worktrees/${string}`;
+  removed: true;
 }
 
 export type GitRemoteMutationOperation = "fetch" | "pull" | "push";

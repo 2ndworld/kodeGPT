@@ -103,6 +103,16 @@ export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
     "remove branch",
     "safe branch delete"
   ]),
+  "git.worktreeCreate": entry("git.worktreeCreate", "Create a bounded linked worktree at .worktrees/<name> for an existing local branch.", [
+    "create git worktree",
+    "linked worktree",
+    "worktree create"
+  ]),
+  "git.worktreeRemove": entry("git.worktreeRemove", "Remove a clean bounded linked worktree from .worktrees/<name> without deleting its branch.", [
+    "remove git worktree",
+    "delete linked worktree",
+    "worktree remove"
+  ]),
   "git.fetch": entry("git.fetch", "Fetch a validated branch from a named remote in a trusted workspace.", [
     "git fetch",
     "fetch remote branch",
