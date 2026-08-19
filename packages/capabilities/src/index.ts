@@ -46,6 +46,8 @@ export type {
   ContextEvidenceStatus,
   ContextIntent,
   ContextSelectedFile,
+  ContextWorkspaceScope,
+  ContextWorkspaceSummary,
   FilePatchFileResult,
   FilePatchInput,
   FilePatchMode,

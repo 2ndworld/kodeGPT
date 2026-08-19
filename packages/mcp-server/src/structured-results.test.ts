@@ -286,7 +286,22 @@ const typedContextBuildResult: ContextBuildResult = {
     search: "available",
     verification: "available"
   },
-  workspace: typedWorkspaceInspectResult,
+  workspace: {
+    schemaVersion: 1,
+    workspaceId: "ws_1",
+    root: ".",
+    scope: { kind: "target", area: "src" },
+    projectTypes: ["node-pnpm", "rust-cargo"],
+    languages: [
+      { name: "Rust", fileCount: 1 },
+      { name: "TypeScript", fileCount: 2 }
+    ],
+    entrypoints: [{ path: "package.json", kind: "node-manifest" }],
+    areas: [],
+    manifests: [{ path: "package.json", kind: "node-package" }],
+    warnings: [],
+    truncated: false
+  },
   git: typedGitChangesResult,
   selectedFiles: [
     {

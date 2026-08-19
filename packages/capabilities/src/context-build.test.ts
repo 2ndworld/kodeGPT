@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_CONTEXT_MAX_BYTES,
+  type CodeSearchInput,
   type CodeSearchResult,
   type GitChangesResult,
   type VerifyListResult,
+  type WorkspaceInspectInput,
   type WorkspaceInspectResult
 } from "./contracts.js";
 import { buildContext, INTENT_WEIGHTS } from "./context-build.js";
@@ -90,7 +92,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
   const readCalls: string[] = [];
   return {
     adapter: {
-      inspect: async () => {
+      inspect: async (_input: WorkspaceInspectInput) => {
         if (options.inspectFailure !== undefined) throw options.inspectFailure;
         return workspace;
       },
@@ -98,7 +100,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         if (options.gitFailure !== undefined) throw options.gitFailure;
         return git;
       },
-      search: async () => {
+      search: async (_input: CodeSearchInput) => {
         if (options.searchFailure !== undefined) throw options.searchFailure;
         return search;
       },
@@ -170,6 +172,132 @@ describe("context.build", () => {
     expect(result.totalBytes).toBe(
       result.selectedFiles.reduce((sum, file) => sum + Buffer.byteLength(file.content ?? ""), 0)
     );
+  });
+
+  it("returns a target-scoped workspace summary and filters search and verification noise", async () => {
+    const fixture = sources({
+      [TARGET]: "target\n",
+      "packages/core/src/helper.ts": "helper\n",
+      "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+      "packages/core/src/workspace-manager.test.ts": "test-hit\n",
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n"
+    });
+    const originalInspect = fixture.adapter.inspect;
+    fixture.adapter.inspect = async (input) => ({
+      ...(await originalInspect(input)),
+      entrypoints: [
+        { path: "package.json", kind: "node-manifest" },
+        { path: "packages/core/src/index.ts", kind: "source-index" },
+        { path: "packages/other/src/index.ts", kind: "source-index" }
+      ],
+      symbols: [
+        { name: "targetFn", kind: "function" as const, path: TARGET, line: 1, exported: true },
+        {
+          name: "otherFn",
+          kind: "function" as const,
+          path: "packages/other/src/unrelated.ts",
+          line: 1,
+          exported: true
+        }
+      ],
+      relationships: [
+        { from: TARGET, to: "packages/core/src/helper.ts", kind: "imports" as const },
+        {
+          from: "packages/other/src/unrelated.ts",
+          to: "packages/other/src/helper.ts",
+          kind: "imports" as const
+        }
+      ]
+    });
+    const searchCalls: CodeSearchInput[] = [];
+    const originalSearch = fixture.adapter.search;
+    fixture.adapter.search = async (input) => {
+      searchCalls.push(input);
+      const result = await originalSearch(input);
+      return {
+        ...result,
+        matches: [
+          ...result.matches,
+          { path: "packages/other/src/workspace-manager-shadow.ts", kind: "path" as const }
+        ]
+      };
+    };
+    fixture.adapter.verify = async () => ({
+      schemaVersion: 1,
+      workspaceId: "ws_1",
+      recipes: [
+        {
+          id: "package:test",
+          label: "Root test",
+          category: "test",
+          logicalExecutable: "pnpm",
+          argv: ["run", "test"],
+          cwd: ".",
+          source: "package-script",
+          allowed: true
+        },
+        {
+          id: "package:packages/core:test",
+          label: "Core test",
+          category: "test",
+          logicalExecutable: "pnpm",
+          argv: ["run", "test"],
+          cwd: "packages/core",
+          source: "package-script",
+          allowed: true
+        },
+        {
+          id: "package:packages/other:test",
+          label: "Other test",
+          category: "test",
+          logicalExecutable: "pnpm",
+          argv: ["run", "test"],
+          cwd: "packages/other",
+          source: "package-script",
+          allowed: true
+        }
+      ]
+    });
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "implement",
+      target: TARGET,
+      maxBytes: 4096
+    });
+
+    expect(searchCalls).toEqual([
+      {
+        workspaceId: "ws_1",
+        query: "workspace-manager",
+        mode: "path",
+        path: "packages/core",
+        maxResults: 100
+      }
+    ]);
+    expect(result.workspace).toMatchObject({
+      scope: { kind: "target", area: "packages/core" },
+      entrypoints: [
+        { path: "package.json", kind: "node-manifest" },
+        { path: "packages/core/src/index.ts", kind: "source-index" }
+      ],
+      areas: [{ path: "packages/core", kind: "package" }],
+      manifests: [
+        { path: "package.json", kind: "node-package" },
+        { path: "packages/core/package.json", kind: "node-package" }
+      ]
+    });
+    expect(result.workspace).not.toHaveProperty("symbols");
+    expect(result.workspace).not.toHaveProperty("relationships");
+    expect(result.relevantMatches.some(({ path }) => path.startsWith("packages/other/"))).toBe(false);
+    expect(result.selectedFiles).toContainEqual(
+      expect.objectContaining({ path: "packages/core/src/helper.ts", reason: "direct-dependency" })
+    );
+    expect(result.verifications.map(({ id }) => id)).toEqual([
+      "package:packages/core:test",
+      "package:test"
+    ]);
   });
 
   it("ranks direct related tests dependencies and dependents ahead of weaker lexical hits", async () => {
