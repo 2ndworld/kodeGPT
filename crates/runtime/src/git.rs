@@ -8,9 +8,12 @@ use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use kodegpt_protocol::GitRemoteCredential;
 use kodegpt_sandbox::{
-    BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
-    TrustedExecutable, WorkspaceAccess, resolve_trusted_executable,
+    BubblewrapProvider, GitMetadataAccess, PRIVATE_GIT_CONFIG_PATH, SandboxError,
+    SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable, WorkspaceAccess,
+    resolve_trusted_executable,
 };
 use kodegpt_workspace_io::{PathIdentityKind, PathIdentityResult, path_identity_beneath};
 use serde::Serialize;
@@ -28,6 +31,7 @@ const GIT_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
 const GIT_REPOSITORY_IDENTITY_TIMEOUT: Duration = Duration::from_secs(5);
 const GIT_REPOSITORY_IDENTITY_MAX_REMOTES: usize = 32;
 const GIT_REPOSITORY_IDENTITY_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+const GIT_REMOTE_CREDENTIAL_MAX_BYTES: usize = 4096;
 const STAGED_PATCH_HEADER: &[u8] = b"=== KODEGPT STAGED DIFF ===\n";
 const WORKTREE_PATCH_HEADER: &[u8] = b"\n=== KODEGPT WORKTREE DIFF ===\n";
 
@@ -510,9 +514,11 @@ pub fn run_git_remote_mutation(
     request_id: &str,
     operation_id: &str,
     mutation: GitRemoteMutation,
+    credential: Option<GitRemoteCredential>,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
 ) -> Result<GitLocalMutationResult, GitInspectionError> {
+    validate_remote_credential(credential.as_ref())?;
     let provider = BubblewrapProvider::discover()?;
     let program = resolve_trusted_executable("git").map_err(SandboxError::from)?;
     let filter_overrides = discover_filter_overrides(
@@ -529,13 +535,33 @@ pub fn run_git_remote_mutation(
     match mutation {
         GitRemoteMutation::Fetch { remote, r#ref } => {
             validate_remote_mutation_input(&remote, &r#ref)?;
+            let auth = resolve_remote_auth_plan(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                &remote,
+                false,
+                credential.as_ref(),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
             run_remote_mutation_command(
                 workspace_root,
                 workspace_capability,
                 request_id,
                 operation_id,
                 "fetch",
-                remote_fetch_args(&remote, &r#ref, &filter_overrides),
+                remote_fetch_args(
+                    &remote,
+                    &auth.target,
+                    &r#ref,
+                    &filter_overrides,
+                    auth.private_git_config.is_some(),
+                ),
+                auth.private_git_config.as_deref(),
                 &provider,
                 &program,
                 spool,
@@ -544,6 +570,19 @@ pub fn run_git_remote_mutation(
         }
         GitRemoteMutation::Pull { remote, r#ref } => {
             validate_remote_mutation_input(&remote, &r#ref)?;
+            let auth = resolve_remote_auth_plan(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                &remote,
+                false,
+                credential.as_ref(),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
             let fetch_operation_id = format!("{operation_id}-fetch");
             let fetch = run_remote_mutation_command(
                 workspace_root,
@@ -551,7 +590,14 @@ pub fn run_git_remote_mutation(
                 request_id,
                 &fetch_operation_id,
                 "pull",
-                remote_fetch_args(&remote, &r#ref, &filter_overrides),
+                remote_fetch_args(
+                    &remote,
+                    &auth.target,
+                    &r#ref,
+                    &filter_overrides,
+                    auth.private_git_config.is_some(),
+                ),
+                auth.private_git_config.as_deref(),
                 &provider,
                 &program,
                 spool,
@@ -567,6 +613,7 @@ pub fn run_git_remote_mutation(
                 operation_id,
                 "pull",
                 remote_pull_merge_args(&remote, &r#ref, &filter_overrides),
+                None,
                 &provider,
                 &program,
                 spool,
@@ -575,13 +622,32 @@ pub fn run_git_remote_mutation(
         }
         GitRemoteMutation::Push { remote, r#ref } => {
             validate_remote_mutation_input(&remote, &r#ref)?;
+            let auth = resolve_remote_auth_plan(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                &remote,
+                true,
+                credential.as_ref(),
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
             run_remote_mutation_command(
                 workspace_root,
                 workspace_capability,
                 request_id,
                 operation_id,
                 "push",
-                remote_push_args(&remote, &r#ref, &filter_overrides),
+                remote_push_args(
+                    &auth.target,
+                    &r#ref,
+                    &filter_overrides,
+                    auth.private_git_config.is_some(),
+                ),
+                auth.private_git_config.as_deref(),
                 &provider,
                 &program,
                 spool,
@@ -589,6 +655,140 @@ pub fn run_git_remote_mutation(
             )
         }
     }
+}
+
+#[derive(Debug)]
+struct GitRemoteAuthPlan {
+    target: String,
+    private_git_config: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_remote_auth_plan(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    remote: &str,
+    push: bool,
+    credential: Option<&GitRemoteCredential>,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitRemoteAuthPlan, GitInspectionError> {
+    let Some(GitRemoteCredential::GithubToken { token }) = credential else {
+        return Ok(GitRemoteAuthPlan {
+            target: remote.to_owned(),
+            private_git_config: None,
+        });
+    };
+
+    let mut args = base_git_args();
+    args.extend(["remote", "get-url"].into_iter().map(OsString::from));
+    if push {
+        args.push(OsString::from("--push"));
+    }
+    args.push(OsString::from(remote));
+    let target_operation_id = format!("{operation_id}-remote-target");
+    let output = run_hardened_git_command(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        &target_operation_id,
+        args,
+        GitCommandBudget {
+            wall_timeout: Some(GIT_REPOSITORY_IDENTITY_TIMEOUT),
+            stdout_source_bytes: 2048,
+            stderr_source_bytes: PREVIEW_MAX_BYTES,
+            preview_bytes: 2048,
+            overflow_policy: GitOverflowPolicy::Fail,
+        },
+        spool,
+        executions,
+        false,
+    )?;
+    if output.exit_code != 0 {
+        return Err(GitInspectionError::CommandFailed);
+    }
+    let target = parse_remote_target(&output.stdout)?;
+    if !canonical_github_https_remote(&target) {
+        return Ok(GitRemoteAuthPlan {
+            target: remote.to_owned(),
+            private_git_config: None,
+        });
+    }
+    ensure_authenticated_remote_transport_config_safe(
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        provider,
+        program,
+        spool,
+        executions,
+    )?;
+    Ok(GitRemoteAuthPlan {
+        private_git_config: Some(github_auth_config(&target, token)?),
+        target,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_authenticated_remote_transport_config_safe(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<(), GitInspectionError> {
+    let config_operation_id = format!("{operation_id}-transport-config");
+    let output = run_hardened_git_command(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        &config_operation_id,
+        authenticated_remote_transport_probe_args(),
+        GitCommandBudget {
+            wall_timeout: Some(GIT_REPOSITORY_IDENTITY_TIMEOUT),
+            stdout_source_bytes: 16 * 1024,
+            stderr_source_bytes: PREVIEW_MAX_BYTES,
+            preview_bytes: 16 * 1024,
+            overflow_policy: GitOverflowPolicy::Fail,
+        },
+        spool,
+        executions,
+        false,
+    )?;
+    if output.exit_code == 1 && output.stdout.is_empty() {
+        return Ok(());
+    }
+    if output.exit_code != 0 {
+        return Err(GitInspectionError::UnsafeRepositoryConfig);
+    }
+    reject_authenticated_remote_transport_config(&output.stdout)
+}
+
+fn parse_remote_target(bytes: &[u8]) -> Result<String, GitInspectionError> {
+    let target = std::str::from_utf8(bytes)
+        .map_err(|_| GitInspectionError::InvalidMutationInput)?
+        .trim_end_matches(['\r', '\n']);
+    if target.is_empty()
+        || target.len() > 1024
+        || target
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
+        return Err(GitInspectionError::InvalidMutationInput);
+    }
+    Ok(target.to_owned())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -599,12 +799,13 @@ fn run_remote_mutation_command(
     operation_id: &str,
     operation: &'static str,
     args: Vec<OsString>,
+    private_git_config: Option<&str>,
     provider: &BubblewrapProvider,
     program: &TrustedExecutable,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
 ) -> Result<GitLocalMutationResult, GitInspectionError> {
-    let budgeted = run_git_command_with_budget(
+    let budgeted = run_git_command_with_budget_and_private_git_config(
         provider,
         program,
         workspace_root,
@@ -624,6 +825,7 @@ fn run_remote_mutation_command(
         false,
         WorkspaceAccess::ReadWrite,
         SandboxNetworkMode::Unrestricted,
+        private_git_config,
     )?;
 
     Ok(GitLocalMutationResult {
@@ -638,6 +840,96 @@ fn run_remote_mutation_command(
         bytes_spooled: budgeted.artifact.bytes_written,
         artifact: budgeted.artifact,
     })
+}
+
+fn validate_remote_credential(
+    credential: Option<&GitRemoteCredential>,
+) -> Result<(), GitInspectionError> {
+    let Some(GitRemoteCredential::GithubToken { token }) = credential else {
+        return Ok(());
+    };
+    if token.is_empty()
+        || token.len() > GIT_REMOTE_CREDENTIAL_MAX_BYTES
+        || token.bytes().any(|byte| matches!(byte, 0 | b'\r' | b'\n'))
+    {
+        return Err(GitInspectionError::InvalidMutationInput);
+    }
+    Ok(())
+}
+
+fn canonical_github_https_remote(url: &str) -> bool {
+    const PREFIX: &str = "https://github.com/";
+    if url.len() > 1024
+        || !url.starts_with(PREFIX)
+        || url.bytes().any(|byte| byte.is_ascii_control())
+        || url.contains(['?', '#', '@', '\\', '%'])
+    {
+        return false;
+    }
+    let rest = &url[PREFIX.len()..];
+    let mut parts = rest.split('/');
+    let Some(owner) = parts.next() else {
+        return false;
+    };
+    let Some(repository) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    let repository = repository.strip_suffix(".git").unwrap_or(repository);
+    [owner, repository].into_iter().all(|component| {
+        !component.is_empty()
+            && component.len() <= 256
+            && !matches!(component, "." | "..")
+            && component
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    })
+}
+
+fn github_auth_config(url: &str, token: &str) -> Result<String, GitInspectionError> {
+    validate_remote_credential(Some(&GitRemoteCredential::GithubToken {
+        token: token.to_owned(),
+    }))?;
+    if !canonical_github_https_remote(url) {
+        return Err(GitInspectionError::InvalidMutationInput);
+    }
+    let encoded = STANDARD.encode(format!("x-access-token:{token}"));
+    Ok(format!(
+        "[http \"{url}\"]\n\
+         \textraHeader = Authorization: Basic {encoded}\n\
+         \tfollowRedirects = false\n\
+         \tproxy =\n\
+         \tsslVerify = true\n"
+    ))
+}
+
+fn authenticated_remote_transport_probe_args() -> Vec<OsString> {
+    let mut args = base_git_args();
+    args.extend(
+        [
+            "config",
+            "--includes",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            "^(http\\.|url\\.|remote\\..*\\.proxy)",
+        ]
+        .into_iter()
+        .map(OsString::from),
+    );
+    args
+}
+
+fn reject_authenticated_remote_transport_config(
+    config_keys: &[u8],
+) -> Result<(), GitInspectionError> {
+    if config_keys.is_empty() {
+        Ok(())
+    } else {
+        Err(GitInspectionError::UnsafeRepositoryConfig)
+    }
 }
 
 pub(crate) fn validate_remote_mutation_input(
@@ -664,7 +956,7 @@ fn valid_remote_name(remote: &str) -> bool {
     bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn remote_git_args(filter_overrides: &[OsString]) -> Vec<OsString> {
+fn remote_git_args(filter_overrides: &[OsString], authenticated: bool) -> Vec<OsString> {
     let mut args = base_git_args();
     args.extend(filter_overrides.iter().cloned());
     args.extend(
@@ -672,13 +964,25 @@ fn remote_git_args(filter_overrides: &[OsString]) -> Vec<OsString> {
             .into_iter()
             .map(OsString::from),
     );
+    if authenticated {
+        args.extend([
+            OsString::from("-c"),
+            OsString::from(format!("include.path={PRIVATE_GIT_CONFIG_PATH}")),
+        ]);
+    }
     args
 }
 
-fn remote_fetch_args(remote: &str, r#ref: &str, filter_overrides: &[OsString]) -> Vec<OsString> {
-    let mut args = remote_git_args(filter_overrides);
+fn remote_fetch_args(
+    remote: &str,
+    target: &str,
+    r#ref: &str,
+    filter_overrides: &[OsString],
+    authenticated: bool,
+) -> Vec<OsString> {
+    let mut args = remote_git_args(filter_overrides, authenticated);
     args.extend(["fetch", "--no-tags"].into_iter().map(OsString::from));
-    args.push(OsString::from(remote));
+    args.push(OsString::from(target));
     args.push(OsString::from(format!(
         "{ref_name}:refs/remotes/{remote}/{ref_name}",
         ref_name = r#ref
@@ -691,7 +995,7 @@ fn remote_pull_merge_args(
     r#ref: &str,
     filter_overrides: &[OsString],
 ) -> Vec<OsString> {
-    let mut args = remote_git_args(filter_overrides);
+    let mut args = remote_git_args(filter_overrides, false);
     args.extend(["merge", "--ff-only"].into_iter().map(OsString::from));
     args.push(OsString::from(format!(
         "refs/remotes/{remote}/{ref_name}",
@@ -700,10 +1004,15 @@ fn remote_pull_merge_args(
     args
 }
 
-fn remote_push_args(remote: &str, r#ref: &str, filter_overrides: &[OsString]) -> Vec<OsString> {
-    let mut args = remote_git_args(filter_overrides);
+fn remote_push_args(
+    target: &str,
+    r#ref: &str,
+    filter_overrides: &[OsString],
+    authenticated: bool,
+) -> Vec<OsString> {
+    let mut args = remote_git_args(filter_overrides, authenticated);
     args.push(OsString::from("push"));
-    args.push(OsString::from(remote));
+    args.push(OsString::from(target));
     args.push(OsString::from(format!(
         "refs/heads/{ref_name}:refs/heads/{ref_name}",
         ref_name = r#ref
@@ -1408,12 +1717,50 @@ fn run_git_command_with_budget(
     workspace_access: WorkspaceAccess,
     network: SandboxNetworkMode,
 ) -> Result<BudgetedGitCommandResult, GitInspectionError> {
+    run_git_command_with_budget_and_private_git_config(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        args,
+        budget,
+        spool,
+        executions,
+        history_no_lazy_fetch,
+        workspace_access,
+        network,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_git_command_with_budget_and_private_git_config(
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    args: Vec<OsString>,
+    budget: GitCommandBudget,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+    history_no_lazy_fetch: bool,
+    workspace_access: WorkspaceAccess,
+    network: SandboxNetworkMode,
+    private_git_config: Option<&str>,
+) -> Result<BudgetedGitCommandResult, GitInspectionError> {
     let mut spec = hardened_git_spec_with_access(
         program.clone(),
         args,
         history_no_lazy_fetch,
         workspace_access,
     );
+    if let Some(private_git_config) = private_git_config {
+        spec.set_private_git_config(private_git_config.to_owned())?;
+    }
     spec.network = network;
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
@@ -1940,6 +2287,7 @@ fn terminate_process_group_and_reap(child: &mut kodegpt_sandbox::SandboxChild) {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::ffi::OsString;
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::PermissionsExt;
@@ -1949,6 +2297,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+    use kodegpt_protocol::GitRemoteCredential;
     use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 
     use crate::audit::AuditSink;
@@ -2739,6 +3088,139 @@ mod tests {
     }
 
     #[test]
+    fn github_remote_auth_accepts_only_canonical_https_targets() {
+        for accepted in [
+            "https://github.com/example/repository",
+            "https://github.com/example/repository.git",
+            "https://github.com/example-org/repo_name.git",
+        ] {
+            assert!(
+                super::canonical_github_https_remote(accepted),
+                "accepted: {accepted}"
+            );
+        }
+        for rejected in [
+            "http://github.com/example/repository.git",
+            "ssh://git@github.com/example/repository.git",
+            "https://user@github.com/example/repository.git",
+            "https://github.com:443/example/repository.git",
+            "https://api.github.com/example/repository.git",
+            "https://github.com/example",
+            "https://github.com/example/repository/extra",
+            "https://github.com/example/repository.git?x=1",
+            "https://github.com/example/repository.git#fragment",
+            "https://github.com/./repository.git",
+            "https://github.com/example/../repository.git",
+            "https://github.com/example/repository.git\n",
+        ] {
+            assert!(
+                !super::canonical_github_https_remote(rejected),
+                "rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn authenticated_remote_transport_config_rejects_local_network_overrides() {
+        for rejected in [
+            b"http.proxy\0".as_slice(),
+            b"http.https://github.com/example/repository.git.sslverify\0".as_slice(),
+            b"url.http://127.0.0.1:9/.insteadof\0".as_slice(),
+            b"remote.origin.proxy\0".as_slice(),
+            b"remote.origin.proxyauthmethod\0".as_slice(),
+        ] {
+            assert!(matches!(
+                super::reject_authenticated_remote_transport_config(rejected),
+                Err(GitInspectionError::UnsafeRepositoryConfig)
+            ));
+        }
+        assert!(super::reject_authenticated_remote_transport_config(b"").is_ok());
+    }
+
+    #[test]
+    fn github_remote_auth_uses_ephemeral_scoped_git_config_not_argv() {
+        let url = "https://github.com/example/repository.git";
+        let config = super::github_auth_config(url, "[REDACTED_SECRET]")
+            .expect("bounded credential produces private config");
+        assert!(config.contains("[http \"https://github.com/example/repository.git\"]"));
+        assert!(config.contains("followRedirects = false"));
+        assert!(config.contains("proxy ="));
+        assert!(config.contains("sslVerify = true"));
+        assert!(!config.contains("sslCAInfo"));
+        assert!(!config.contains("sslCAPath"));
+        assert!(config.contains("extraHeader = Authorization: Basic "));
+
+        let push_args = super::remote_push_args(url, "main", &[], true);
+        assert!(!format!("{push_args:?}").contains("[REDACTED_SECRET]"));
+        assert!(push_args.iter().any(|arg| arg == url));
+        assert!(push_args.iter().any(|arg| {
+            arg == &OsString::from(format!(
+                "include.path={}",
+                kodegpt_sandbox::PRIVATE_GIT_CONFIG_PATH
+            ))
+        }));
+
+        let fetch_args = super::remote_fetch_args("origin", url, "main", &[], true);
+        assert!(fetch_args.iter().any(|arg| arg == url));
+        assert!(
+            fetch_args
+                .iter()
+                .any(|arg| arg == "main:refs/remotes/origin/main")
+        );
+    }
+
+    #[test]
+    fn credentialed_github_remote_rejects_local_transport_overrides_before_network() {
+        let workspace = temporary_root("credentialed-unsafe-transport");
+        let state = temporary_root("credentialed-unsafe-transport-state");
+        git(&workspace, &["init", "-b", "main"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/repository.git",
+            ],
+        );
+        git(
+            &workspace,
+            &[
+                "config",
+                "http.https://github.com/example/repository.git.proxy",
+                "http://127.0.0.1:9",
+            ],
+        );
+
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+        let result = run_git_remote_mutation(
+            &root_fd,
+            "kc_git_remote",
+            "req_git_remote_unsafe_transport",
+            "op_git_remote_unsafe_transport",
+            GitRemoteMutation::Push {
+                remote: "origin".to_owned(),
+                r#ref: "main".to_owned(),
+            },
+            Some(GitRemoteCredential::GithubToken {
+                token: "[REDACTED_SECRET]".to_owned(),
+            }),
+            &spool,
+            &executions,
+        );
+        assert!(matches!(
+            result,
+            Err(GitInspectionError::UnsafeRepositoryConfig)
+        ));
+
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
     fn remote_git_mutation_fetches_pulls_and_pushes_against_workspace_local_bare_remote() {
         let workspace = temporary_root("remote-mutation");
         let state = temporary_root("remote-mutation-state");
@@ -2790,6 +3272,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "feature".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2807,6 +3290,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "main".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2830,6 +3314,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "main".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2841,6 +3326,53 @@ mod tests {
                 &["--git-dir", "remote.git", "rev-parse", "refs/heads/main"]
             ),
             local_head
+        );
+
+        assert!(matches!(
+            run_git_remote_mutation(
+                &root_fd,
+                "kc_git_remote",
+                "req_git_remote_invalid_credential",
+                "op_git_remote_invalid_credential",
+                GitRemoteMutation::Push {
+                    remote: "origin".to_owned(),
+                    r#ref: "main".to_owned(),
+                },
+                Some(GitRemoteCredential::GithubToken {
+                    token: "bad\nvalue".to_owned(),
+                }),
+                &spool,
+                &executions,
+            ),
+            Err(GitInspectionError::InvalidMutationInput)
+        ));
+
+        let credentialed_local = run_git_remote_mutation(
+            &root_fd,
+            "kc_git_remote",
+            "req_git_remote_local_credential",
+            "op_git_remote_local_credential",
+            GitRemoteMutation::Push {
+                remote: "origin".to_owned(),
+                r#ref: "main".to_owned(),
+            },
+            Some(GitRemoteCredential::GithubToken {
+                token: "[REDACTED_SECRET]".to_owned(),
+            }),
+            &spool,
+            &executions,
+        )
+        .expect("non-GitHub remote keeps anonymous behavior");
+        assert_eq!(credentialed_local.exit_code, 0);
+        assert!(
+            !credentialed_local
+                .stdout_preview
+                .contains("[REDACTED_SECRET]")
+        );
+        assert!(
+            !credentialed_local
+                .stderr_preview
+                .contains("[REDACTED_SECRET]")
         );
 
         for mutation in [
@@ -2860,6 +3392,7 @@ mod tests {
                     "req_git_remote_invalid",
                     "op_git_remote_invalid",
                     mutation,
+                    None,
                     &spool,
                     &executions,
                 ),

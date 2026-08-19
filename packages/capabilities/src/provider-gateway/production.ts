@@ -5,7 +5,11 @@ import type {
   ProviderAuditMetadata,
   ProviderGatewayService
 } from "./contracts.js";
-import { DefaultProviderCredentialBroker } from "./credential-broker.js";
+import {
+  DefaultProviderCredentialBroker,
+  type ProviderCredential
+} from "./credential-broker.js";
+import { resolveProviderImplementationIdentity } from "./identity.js";
 import { DefaultProviderNetworkTransport } from "./network-transport.js";
 import {
   ProviderOperatorService,
@@ -24,6 +28,7 @@ export interface ProviderAuditSink {
 export interface ProviderGatewayRuntime {
   operator: ProviderOperatorService;
   gateway: ProviderGatewayService;
+  acquireCredentialForEnabledAdapter(adapterId: string): Promise<ProviderCredential | null>;
   close(): Promise<void>;
 }
 
@@ -79,6 +84,51 @@ export function createProviderGatewayRuntime(input: {
   return {
     operator,
     gateway,
+    async acquireCredentialForEnabledAdapter(adapterId: string): Promise<ProviderCredential | null> {
+      const matching = (await operator.list()).filter(
+        (record) => record.adapterId === adapterId && record.enabled
+      );
+      if (matching.length === 0) return null;
+      if (matching.length !== 1) {
+        throw new CapabilityError(
+          "PROVIDER_STATE_INVALID",
+          "Multiple enabled provider instances match the requested adapter"
+        );
+      }
+      const provider = matching[0]!;
+      const manifest = adapters.require(adapterId);
+      if (
+        provider.adapterContractVersion !== manifest.adapterContractVersion ||
+        provider.inventoryMode !== manifest.inventoryMode
+      ) {
+        throw new CapabilityError(
+          "PROVIDER_IDENTITY_CHANGED",
+          "Provider adapter identity changed and requires reapproval"
+        );
+      }
+      const identity = await resolveProviderImplementationIdentity({
+        manifest,
+        credentialBroker: provider.credentialBroker,
+        workspaceRoots: input.workspaceRoots()
+      });
+      if (identity.implementationFingerprint !== provider.implementationFingerprint) {
+        throw new CapabilityError(
+          "PROVIDER_IDENTITY_CHANGED",
+          "Provider implementation identity changed and requires reapproval"
+        );
+      }
+      if (manifest.inventoryMode === "DYNAMIC" && provider.approvedInventoryFingerprint === null) {
+        throw new CapabilityError(
+          "PROVIDER_INVENTORY_CHANGED",
+          "Provider dynamic inventory is not approved"
+        );
+      }
+      return credentials.acquire({
+        provider,
+        manifest,
+        signal: lifetime.signal
+      });
+    },
     async close(): Promise<void> {
       if (closed) return;
       closed = true;

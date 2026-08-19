@@ -1,4 +1,8 @@
-import type { GitRemoteAuthorityAdapter, GitRemoteMutationAdapter } from "./adapters.js";
+import type {
+  GitRemoteAuthorityAdapter,
+  GitRemoteCredentialSource,
+  GitRemoteMutationAdapter
+} from "./adapters.js";
 import type { GitRemoteInput, GitRemoteMutationResult } from "./contracts.js";
 import { CapabilityError, type CapabilityErrorCode } from "./errors.js";
 import { GitRemoteInputSchema, GitRemoteMutationResultSchema } from "./schemas.js";
@@ -14,32 +18,36 @@ const RUNTIME_REMOTE_ERRORS = new Set<CapabilityErrorCode>([
 export async function gitFetch(
   authority: GitRemoteAuthorityAdapter,
   mutation: GitRemoteMutationAdapter,
-  input: GitRemoteInput
+  input: GitRemoteInput,
+  credentials?: GitRemoteCredentialSource
 ): Promise<GitRemoteMutationResult> {
-  return executeRemote("fetch", authority, mutation, input);
+  return executeRemote("fetch", authority, mutation, input, credentials);
 }
 
 export async function gitPull(
   authority: GitRemoteAuthorityAdapter,
   mutation: GitRemoteMutationAdapter,
-  input: GitRemoteInput
+  input: GitRemoteInput,
+  credentials?: GitRemoteCredentialSource
 ): Promise<GitRemoteMutationResult> {
-  return executeRemote("pull", authority, mutation, input);
+  return executeRemote("pull", authority, mutation, input, credentials);
 }
 
 export async function gitPush(
   authority: GitRemoteAuthorityAdapter,
   mutation: GitRemoteMutationAdapter,
-  input: GitRemoteInput
+  input: GitRemoteInput,
+  credentials?: GitRemoteCredentialSource
 ): Promise<GitRemoteMutationResult> {
-  return executeRemote("push", authority, mutation, input);
+  return executeRemote("push", authority, mutation, input, credentials);
 }
 
 async function executeRemote(
   operation: GitRemoteMutationResult["operation"],
   authority: GitRemoteAuthorityAdapter,
   mutation: GitRemoteMutationAdapter,
-  input: GitRemoteInput
+  input: GitRemoteInput,
+  credentials?: GitRemoteCredentialSource
 ): Promise<GitRemoteMutationResult> {
   const parsed = GitRemoteInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -48,9 +56,20 @@ async function executeRemote(
   requireTrustedRemote(authority, parsed.data.workspaceId);
   const remote = parsed.data.remote ?? "origin";
 
+  let credential = null;
+  if (credentials !== undefined) {
+    try {
+      credential = await credentials.acquire(operation);
+    } catch {
+      throw new CapabilityError("GIT_REMOTE_UNAVAILABLE", "Remote Git credential is unavailable");
+    }
+  }
+
   let result: GitRemoteMutationResult;
   try {
-    result = await mutation[operation](parsed.data.workspaceId, remote, parsed.data.ref);
+    result = credentials === undefined
+      ? await mutation[operation](parsed.data.workspaceId, remote, parsed.data.ref)
+      : await mutation[operation](parsed.data.workspaceId, remote, parsed.data.ref, credential);
   } catch (error) {
     throw normalizeAdapterError(error);
   }

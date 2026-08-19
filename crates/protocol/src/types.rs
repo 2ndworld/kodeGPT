@@ -591,6 +591,12 @@ pub enum GitLocalMutationParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GitRemoteCredential {
+    GithubToken { token: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "operation",
     rename_all = "snake_case",
@@ -602,16 +608,19 @@ pub enum GitRemoteMutationParams {
         capability_id: String,
         remote: String,
         r#ref: String,
+        credential: Option<GitRemoteCredential>,
     },
     Pull {
         capability_id: String,
         remote: String,
         r#ref: String,
+        credential: Option<GitRemoteCredential>,
     },
     Push {
         capability_id: String,
         remote: String,
         r#ref: String,
+        credential: Option<GitRemoteCredential>,
     },
 }
 

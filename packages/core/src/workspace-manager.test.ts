@@ -1190,7 +1190,12 @@ describe("WorkspaceManager", () => {
 
     const fetch = await manager.gitFetch("ws_git_remote", "origin", "main");
     const pull = await manager.gitPull("ws_git_remote", "upstream", "feature/a");
-    const push = await manager.gitPush("ws_git_remote", "origin", "main");
+    const push = await (manager.gitPush as unknown as (...args: unknown[]) => Promise<unknown>)(
+      "ws_git_remote",
+      "origin",
+      "main",
+      { kind: "github_token", token: "[REDACTED_SECRET]" }
+    ) as { operation: string };
 
     expect([fetch.operation, pull.operation, push.operation]).toEqual(["fetch", "pull", "push"]);
     expect(kernel.calls.slice(-3)).toEqual([
@@ -1204,7 +1209,13 @@ describe("WorkspaceManager", () => {
       },
       {
         method: "git.remote_mutation",
-        params: { capabilityId: "kc_fixture", operation: "push", remote: "origin", ref: "main" }
+        params: {
+          capabilityId: "kc_fixture",
+          operation: "push",
+          remote: "origin",
+          ref: "main",
+          credential: { kind: "github_token", token: "[REDACTED_SECRET]" }
+        }
       }
     ]);
     expect(JSON.stringify(fetch)).toContain("artifact://ka_git_remote_fixture");

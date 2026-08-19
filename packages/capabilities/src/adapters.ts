@@ -303,10 +303,19 @@ export interface GitRemoteAuthorityAdapter {
   effectivePolicy(workspaceId: string): { name: string; allowWrite: boolean; network: string };
 }
 
+export interface GitRemoteCredential {
+  readonly kind: "github_token";
+  readonly token: string;
+}
+
+export interface GitRemoteCredentialSource {
+  acquire(operation: "fetch" | "pull" | "push"): Promise<GitRemoteCredential | null>;
+}
+
 export interface GitRemoteMutationAdapter {
-  fetch(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
-  pull(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
-  push(workspaceId: string, remote: string, ref: string): Promise<GitRemoteMutationResult>;
+  fetch(workspaceId: string, remote: string, ref: string, credential?: GitRemoteCredential | null): Promise<GitRemoteMutationResult>;
+  pull(workspaceId: string, remote: string, ref: string, credential?: GitRemoteCredential | null): Promise<GitRemoteMutationResult>;
+  push(workspaceId: string, remote: string, ref: string, credential?: GitRemoteCredential | null): Promise<GitRemoteMutationResult>;
 }
 
 export interface GitHistoryLogAdapterInput {

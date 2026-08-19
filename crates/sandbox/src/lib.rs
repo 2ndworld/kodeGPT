@@ -12,8 +12,8 @@ mod executable;
 mod git_metadata;
 
 pub use bubblewrap::{
-    BubblewrapProvider, GitMetadataAccess, SandboxChild, SandboxError, SandboxLaunchSpec,
-    SandboxNetworkMode, WorkspaceAccess,
+    BubblewrapProvider, GitMetadataAccess, PRIVATE_GIT_CONFIG_PATH, SandboxChild, SandboxError,
+    SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess,
 };
 pub use capabilities::{SandboxCapabilities, SandboxEnforcement, probe_sandbox_capabilities};
 pub use executable::{

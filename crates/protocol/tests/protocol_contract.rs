@@ -157,6 +157,58 @@ fn file_write_preconditions_are_optional_closed_and_typed() {
 }
 
 #[test]
+fn git_remote_credentials_are_optional_closed_and_typed() {
+    let plain = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_git_plain",
+        "method": "git.remote_mutation",
+        "params": {
+            "operation": "push",
+            "capabilityId": "kc_git_remote",
+            "remote": "origin",
+            "ref": "main"
+        }
+    }));
+    assert!(plain.is_ok(), "plain git.remote_mutation remains valid");
+
+    let credentialed = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_git_credentialed",
+        "method": "git.remote_mutation",
+        "params": {
+            "operation": "push",
+            "capabilityId": "kc_git_remote",
+            "remote": "origin",
+            "ref": "main",
+            "credential": { "kind": "github_token", "token": "[REDACTED_SECRET]" }
+        }
+    }));
+    assert!(
+        credentialed.is_ok(),
+        "closed GitHub credential variant must deserialize"
+    );
+
+    let malformed = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_git_bad_credential",
+        "method": "git.remote_mutation",
+        "params": {
+            "operation": "push",
+            "capabilityId": "kc_git_remote",
+            "remote": "origin",
+            "ref": "main",
+            "credential": {
+                "kind": "github_token",
+                "token": "[REDACTED_SECRET]",
+                "unexpected": true
+            }
+        }
+    }));
+    let error = malformed.expect_err("unknown credential field rejected");
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
 fn skill_source_params_reject_unknown_fields() {
     let mut value = fixture("skill_source.register.json");
     value["params"]["allowWrite"] = json!(true);

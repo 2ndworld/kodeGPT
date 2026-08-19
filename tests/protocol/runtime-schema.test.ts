@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { RUNTIME_METHODS } from "../../packages/protocol/src/index.js";
+import { RUNTIME_METHODS, parseRuntimeRequest } from "../../packages/protocol/src/index.js";
 
 type JsonSchema = Record<string, any>;
 
@@ -115,7 +115,7 @@ describe("canonical runtime JSON Schemas", () => {
     }
   });
 
-  it("defines closed bounded remote Git variants without URLs, force, or raw argv", async () => {
+  it("defines closed bounded remote Git variants with only the private typed credential extension", async () => {
     expect(RUNTIME_METHODS).toContain("git.remote_mutation");
     const request = await schema("request.schema.json");
     const variants = request.oneOf as JsonSchema[];
@@ -134,10 +134,29 @@ describe("canonical runtime JSON Schemas", () => {
       expect(variant.additionalProperties).toBe(false);
       expect(variant.properties.remote.maxLength).toBe(128);
       expect(variant.properties.ref.maxLength).toBe(255);
-      for (const forbidden of ["argv", "url", "force", "rebase", "headers", "credential"] ) {
+      expect(variant.properties.credential).toMatchObject({
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "token"]
+      });
+      expect(variant.properties.credential.properties.kind.const).toBe("github_token");
+      for (const forbidden of ["argv", "url", "force", "rebase", "headers"]) {
         expect(variant.properties).not.toHaveProperty(forbidden);
       }
     }
+
+    expect(() => parseRuntimeRequest({
+      jsonrpc: "2.0",
+      id: "req_git_credential",
+      method: "git.remote_mutation",
+      params: {
+        operation: "push",
+        capabilityId: "kc_git_remote",
+        remote: "origin",
+        ref: "main",
+        credential: { kind: "github_token", token: "fixture" }
+      }
+    })).not.toThrow();
   });
 
   it("closes success and error response envelopes", async () => {
