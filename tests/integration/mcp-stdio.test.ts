@@ -305,7 +305,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
         } else if (tool.name.startsWith("browser.")) {
           expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
-        } else if (tool.name === "github.pr.create") {
+        } else if (tool.name === "github.pr.create" || tool.name === "deploy.preview.create") {
           expect(tool.annotations).toEqual(remoteGitHubCreateAnnotations);
         } else if (tool.name === "github.pr.merge") {
           expect(tool.annotations).toEqual(remoteGitHubMergeAnnotations);
@@ -313,7 +313,11 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           expect(tool.annotations).toEqual(remoteCiMutationAnnotations);
         } else if (tool.name === "ci.cancel") {
           expect(tool.annotations).toEqual(remoteCiCancelAnnotations);
-        } else if (tool.name.startsWith("ci.") || tool.name.startsWith("github.")) {
+        } else if (
+          tool.name.startsWith("ci.") ||
+          tool.name.startsWith("github.") ||
+          tool.name === "deploy.preview.inspect"
+        ) {
           expect(tool.annotations).toEqual(remoteCiReadOnlyAnnotations);
         } else {
           expect(tool.annotations).toEqual(readOnlyAnnotations);

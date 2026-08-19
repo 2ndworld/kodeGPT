@@ -68,6 +68,20 @@ export const REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS = Object.freeze({
   openWorldHint: true
 });
 
+export const REMOTE_DEPLOY_CREATE_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true
+});
+
+export const REMOTE_DEPLOY_READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true
+});
+
 export const REMOTE_GIT_FETCH_TOOL_ANNOTATIONS = Object.freeze({
   readOnlyHint: false,
   destructiveHint: false,

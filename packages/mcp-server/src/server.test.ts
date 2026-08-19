@@ -27,6 +27,8 @@ const LOCKED_SURFACE = [
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
+  { name: "deploy.preview.create", required: ["workspaceId"] },
+  { name: "deploy.preview.inspect", required: ["workspaceId", "deploymentId"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",
@@ -88,10 +90,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.13");
+    expect(MCP_SURFACE_VERSION).toBe("0.14");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(74);
+    expect(surface).toHaveLength(76);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
@@ -111,6 +113,11 @@ describe("KodeGPT MCP semantic surface", () => {
       "github.pr.merge",
       "github.repository.inspect"
     ]);
+    expect(surface.filter(({ name }) => name.startsWith("deploy.")).map(({ name }) => name)).toEqual([
+      "deploy.preview.create",
+      "deploy.preview.inspect"
+    ]);
+    expect(surface.some(({ name }) => name === "deploy.preview.logs")).toBe(false);
     expect(surface.some(({ name }) => name.startsWith("provider."))).toBe(false);
   });
 
