@@ -16,6 +16,11 @@ import type {
   CiStatusResult,
   CodeImpactInput,
   CodeImpactResult,
+  DeployPreviewCreateInput,
+  DeployPreviewCreateResult,
+  DeployPreviewInspectInput,
+  DeployPreviewInspectResult,
+  DeployPreviewToolAdapter,
   CodeSearchInput,
   CodeSearchResult,
   ContextBuildInput,
@@ -244,6 +249,11 @@ export interface CiToolContext {
 
 export interface GitHubToolContext extends GitHubReadToolAdapter, GitHubWriteToolAdapter {}
 
+export interface DeployToolContext {
+  previewCreate(input: DeployPreviewCreateInput): Promise<DeployPreviewCreateResult>;
+  previewInspect(input: DeployPreviewInspectInput): Promise<DeployPreviewInspectResult>;
+}
+
 export interface SkillToolContext {
   list(input: {
     limit?: number;
@@ -278,6 +288,7 @@ export interface KodegptToolContext {
   context: ContextToolContext;
   ci: CiToolContext;
   github: GitHubToolContext;
+  deploy: DeployToolContext;
   skill: SkillToolContext;
 }
 
@@ -355,6 +366,7 @@ export function createKodegptToolContext(options: {
   remoteCi?: CiToolContext;
   githubRead?: GitHubReadToolAdapter;
   githubWrite?: GitHubWriteToolAdapter;
+  deployPreview?: DeployPreviewToolAdapter;
   skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
@@ -364,6 +376,7 @@ export function createKodegptToolContext(options: {
   const remoteCi = options.remoteCi ?? unavailableRemoteCi();
   const githubRead = options.githubRead ?? unavailableGitHubRead();
   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
+  const deployPreview = options.deployPreview ?? unavailableDeployPreview();
   const preview = options.preview ?? unavailablePreview();
   const browser = options.browser ?? unavailableBrowser();
   const visual = options.visual ?? unavailableVisual();
@@ -496,6 +509,10 @@ export function createKodegptToolContext(options: {
       ...githubRead,
       ...githubWrite
     },
+    deploy: {
+      previewCreate: (input) => deployPreview.create(input),
+      previewInspect: (input) => deployPreview.inspect(input)
+    },
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
@@ -554,6 +571,13 @@ function unavailableVisual(): VisualToolContext {
   return {
     captureMatrix: () => unavailable("visual.captureMatrix"),
     compare: () => unavailable("visual.compare")
+  };
+}
+
+function unavailableDeployPreview(): DeployPreviewToolAdapter {
+  return {
+    create: () => unavailable("deploy.preview.create"),
+    inspect: () => unavailable("deploy.preview.inspect")
   };
 }
 

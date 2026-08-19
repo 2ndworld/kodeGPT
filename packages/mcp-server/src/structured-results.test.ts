@@ -416,6 +416,10 @@ function makeContext(): KodegptToolContext {
       issueInspect: async () => ({} as never),
       issueList: async () => ({} as never)
     },
+    deploy: {
+      previewCreate: async () => ({} as never),
+      previewInspect: async () => ({} as never)
+    },
     skill: {
       list: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
       inspect: async () => ({} as never),
