@@ -65,6 +65,8 @@ describe("hardened Git source regressions", () => {
       "git.branchCreate",
       "git.branchSwitch",
       "git.branchDelete",
+      "git.worktreeCreate",
+      "git.worktreeRemove",
       "git.fetch",
       "git.pull",
       "git.push"
@@ -97,6 +99,8 @@ describe("hardened Git source regressions", () => {
     expect(audit).toContain("GitBranchCreate");
     expect(audit).toContain("GitBranchSwitch");
     expect(audit).toContain("GitBranchDelete");
+    expect(audit).toContain("GitWorktreeCreate");
+    expect(audit).toContain("GitWorktreeRemove");
     expect(audit).toContain("GitFetch");
     expect(audit).toContain("GitPull");
     expect(audit).toContain("GitPush");
@@ -111,6 +115,8 @@ describe("hardened Git source regressions", () => {
     expect(dispatcher).toContain("AuditAction::GitBranchCreate");
     expect(dispatcher).toContain("AuditAction::GitBranchSwitch");
     expect(dispatcher).toContain("AuditAction::GitBranchDelete");
+    expect(dispatcher).toContain("AuditAction::GitWorktreeCreate");
+    expect(dispatcher).toContain("AuditAction::GitWorktreeRemove");
     expect(dispatcher).toContain("AuditAction::GitFetch");
     expect(dispatcher).toContain("AuditAction::GitPull");
     expect(dispatcher).toContain("AuditAction::GitPush");

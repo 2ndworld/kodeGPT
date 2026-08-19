@@ -4,7 +4,7 @@ use std::fs::File;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Component, Path};
 
-use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+use rustix::fs::{Mode, OFlags, ResolveFlags, mkdirat, openat2};
 use rustix::io::Errno;
 
 const REQUIRED_RESOLVE_FLAGS: ResolveFlags = ResolveFlags::BENEATH
@@ -118,7 +118,7 @@ pub(crate) fn open_existing_beneath_no_symlinks(
     .map_err(map_openat_error)
 }
 
-pub(crate) fn open_directory_beneath_no_symlinks(
+pub fn open_directory_beneath_no_symlinks(
     root_fd: &OwnedFd,
     relative_path: &Path,
 ) -> Result<OwnedFd, OpenatBoundaryError> {
@@ -134,6 +134,23 @@ pub(crate) fn open_directory_beneath_no_symlinks(
     }
 
     open_existing_beneath_no_symlinks(root_fd, relative_path, OFlags::RDONLY | OFlags::DIRECTORY)
+}
+
+pub fn ensure_root_child_directory_no_symlinks(
+    root_fd: &OwnedFd,
+    name: &str,
+) -> Result<OwnedFd, OpenatBoundaryError> {
+    let path = Path::new(name);
+    let mut components = path.components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(OpenatBoundaryError::InvalidRelativePath);
+    }
+
+    match mkdirat(root_fd, path, Mode::from_bits_truncate(0o700)) {
+        Ok(()) | Err(Errno::EXIST) => {}
+        Err(error) => return Err(map_openat_error(error)),
+    }
+    open_directory_beneath_no_symlinks(root_fd, path)
 }
 
 pub fn open_parent_beneath(

@@ -9,13 +9,14 @@ use rustix::fs::{Mode, OFlags, open};
 const METADATA_POINTER_MAX_BYTES: u64 = 16 * 1024;
 
 #[derive(Debug)]
-pub(crate) struct LinkedWorktreeGitMetadata {
-    pub(crate) common_dir_fd: OwnedFd,
-    pub(crate) common_dir_path: PathBuf,
+pub struct LinkedWorktreeGitMetadata {
+    pub common_dir_fd: OwnedFd,
+    pub common_dir_path: PathBuf,
+    pub git_dir_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GitMetadataError {
+pub enum GitMetadataError {
     WorkspacePathUnavailable,
     InvalidDotGit,
     InvalidGitDir,
@@ -41,7 +42,7 @@ impl fmt::Display for GitMetadataError {
 
 impl std::error::Error for GitMetadataError {}
 
-pub(crate) fn open_linked_worktree_git_metadata(
+pub fn open_linked_worktree_git_metadata(
     workspace_root: &OwnedFd,
 ) -> Result<Option<LinkedWorktreeGitMetadata>, GitMetadataError> {
     let workspace_path = retained_fd_path(workspace_root)?;
@@ -92,6 +93,7 @@ pub(crate) fn open_linked_worktree_git_metadata(
     Ok(Some(LinkedWorktreeGitMetadata {
         common_dir_fd,
         common_dir_path: common_dir.to_path_buf(),
+        git_dir_path: git_dir,
     }))
 }
 

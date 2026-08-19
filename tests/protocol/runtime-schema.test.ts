@@ -115,6 +115,33 @@ describe("canonical runtime JSON Schemas", () => {
     }
   });
 
+  it("defines closed bounded linked-worktree lifecycle variants without arbitrary paths or force", async () => {
+    expect(RUNTIME_METHODS).toContain("git.worktree_mutation");
+    const request = await schema("request.schema.json");
+    const variants = request.oneOf as JsonSchema[];
+    const mutation = variants.find(
+      (variant) => variant.properties.method.const === "git.worktree_mutation"
+    );
+    expect(mutation).toBeDefined();
+    const params = mutation?.properties.params as JsonSchema;
+    expect(params.oneOf).toHaveLength(2);
+    expect((params.oneOf as JsonSchema[]).map((variant) => variant.properties.operation.const)).toEqual([
+      "create",
+      "remove"
+    ]);
+    const [create, remove] = params.oneOf as JsonSchema[];
+    expect(create.required).toEqual(["capabilityId", "operation", "name", "branch"]);
+    expect(create.properties.name.maxLength).toBe(64);
+    expect(create.properties.branch.maxLength).toBe(255);
+    expect(remove.required).toEqual(["capabilityId", "operation", "name"]);
+    for (const variant of [create, remove]) {
+      expect(variant.additionalProperties).toBe(false);
+      for (const forbidden of ["path", "rootPath", "hostPath", "argv", "force", "repair"]) {
+        expect(variant.properties).not.toHaveProperty(forbidden);
+      }
+    }
+  });
+
   it("defines closed bounded remote Git variants with only the private typed credential extension", async () => {
     expect(RUNTIME_METHODS).toContain("git.remote_mutation");
     const request = await schema("request.schema.json");

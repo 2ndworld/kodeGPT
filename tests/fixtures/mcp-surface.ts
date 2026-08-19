@@ -36,6 +36,8 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "git.branchCreate", required: ["workspaceId", "name"] },
   { name: "git.branchDelete", required: ["workspaceId", "name"] },
   { name: "git.branchSwitch", required: ["workspaceId", "name"] },
+  { name: "git.worktreeCreate", required: ["workspaceId", "name", "branch"] },
+  { name: "git.worktreeRemove", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
   { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },

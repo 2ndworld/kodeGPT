@@ -94,6 +94,8 @@ export interface ManagerBundle {
       | "gitFetch"
       | "gitPull"
       | "gitPush"
+      | "gitWorktreeCreate"
+      | "gitWorktreeRemove"
       | "inspectGitRepositoryIdentity"
       | "auditRemoteCi"
       | "pathIdentity"
@@ -354,6 +356,19 @@ export async function createProductionServiceStack(
           branchCreate: (workspaceId, name) => managers.workspaceManager.gitBranchCreate(workspaceId, name),
           branchSwitch: (workspaceId, name) => managers.workspaceManager.gitBranchSwitch(workspaceId, name),
           branchDelete: (workspaceId, name) => managers.workspaceManager.gitBranchDelete(workspaceId, name)
+        }
+      },
+      gitWorktree: {
+        authority: {
+          effectivePolicy: (workspaceId) => {
+            const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
+            return { name: policy.name, allowWrite: policy.allowWrite };
+          }
+        },
+        mutation: {
+          worktreeCreate: (workspaceId, name, branch) =>
+            managers.workspaceManager.gitWorktreeCreate(workspaceId, name, branch),
+          worktreeRemove: (workspaceId, name) => managers.workspaceManager.gitWorktreeRemove(workspaceId, name)
         }
       },
       gitRemote: {

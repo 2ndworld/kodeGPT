@@ -278,7 +278,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
           tool.name === "git.commit" ||
           tool.name === "git.branchCreate" ||
           tool.name === "git.branchSwitch" ||
-          tool.name === "git.branchDelete"
+          tool.name === "git.branchDelete" ||
+          tool.name === "git.worktreeCreate" ||
+          tool.name === "git.worktreeRemove"
         ) {
           expect(tool.annotations).toEqual(localGitMutationAnnotations);
         } else if (tool.name === "git.fetch") {

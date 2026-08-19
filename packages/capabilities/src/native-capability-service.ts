@@ -4,6 +4,7 @@ import type {
   GitHistoryAdapter,
   GitLocalAuthorityAdapter,
   GitLocalMutationAdapter,
+  GitWorktreeMutationAdapter,
   GitRemoteAuthorityAdapter,
   GitRemoteCredentialSource,
   GitRemoteMutationAdapter,
@@ -39,6 +40,10 @@ import type {
   GitCommitInput,
   GitBranchInput,
   GitLocalMutationResult,
+  GitWorktreeCreateInput,
+  GitWorktreeCreateResult,
+  GitWorktreeRemoveInput,
+  GitWorktreeRemoveResult,
   GitRemoteInput,
   GitRemoteMutationResult,
   VerifyListInput,
@@ -52,7 +57,15 @@ import { CapabilityError } from "./errors.js";
 import { buildContext as composeContext } from "./context-build.js";
 import { gitChanges } from "./git-changes.js";
 import { gitDiffHistory, gitLog, gitRange, gitShow } from "./git-history.js";
-import { gitBranchCreate, gitBranchDelete, gitBranchSwitch, gitCommit, gitStage } from "./git-local.js";
+import {
+  gitBranchCreate,
+  gitBranchDelete,
+  gitBranchSwitch,
+  gitCommit,
+  gitStage,
+  gitWorktreeCreate,
+  gitWorktreeRemove
+} from "./git-local.js";
 import { gitFetch, gitPull, gitPush } from "./git-remote.js";
 import { patchFile } from "./patch.js";
 import { listVerifications, runVerification } from "./verification.js";
@@ -68,6 +81,8 @@ export type NativeCapabilityName =
   | "git.branchCreate"
   | "git.branchSwitch"
   | "git.branchDelete"
+  | "git.worktreeCreate"
+  | "git.worktreeRemove"
   | "git.fetch"
   | "git.pull"
   | "git.push"
@@ -89,6 +104,10 @@ export interface NativeCapabilityDependencies {
   gitLocal: {
     authority: GitLocalAuthorityAdapter;
     mutation: GitLocalMutationAdapter;
+  };
+  gitWorktree: {
+    authority: GitLocalAuthorityAdapter;
+    mutation: GitWorktreeMutationAdapter;
   };
   gitRemote: {
     authority: GitRemoteAuthorityAdapter;
@@ -166,6 +185,22 @@ export class NativeCapabilityService {
 
   async gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult> {
     return gitBranchDelete(this.#dependencies.gitLocal.authority, this.#dependencies.gitLocal.mutation, input);
+  }
+
+  async gitWorktreeCreate(input: GitWorktreeCreateInput): Promise<GitWorktreeCreateResult> {
+    return gitWorktreeCreate(
+      this.#dependencies.gitWorktree.authority,
+      this.#dependencies.gitWorktree.mutation,
+      input
+    );
+  }
+
+  async gitWorktreeRemove(input: GitWorktreeRemoveInput): Promise<GitWorktreeRemoveResult> {
+    return gitWorktreeRemove(
+      this.#dependencies.gitWorktree.authority,
+      this.#dependencies.gitWorktree.mutation,
+      input
+    );
   }
 
   async gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult> {

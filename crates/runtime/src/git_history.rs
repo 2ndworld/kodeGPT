@@ -728,6 +728,16 @@ fn map_git_inspection_error(error: GitInspectionError) -> GitHistoryError {
         | GitInspectionError::UnsafeRepositoryConfig
         | GitInspectionError::InvalidCheckpointStatus
         | GitInspectionError::InvalidMutationInput
+        | GitInspectionError::WorktreeInputInvalid
+        | GitInspectionError::WorktreeTargetExists
+        | GitInspectionError::WorktreeBranchMissing
+        | GitInspectionError::WorktreeBranchInUse
+        | GitInspectionError::WorktreeMetadataInvalid
+        | GitInspectionError::WorktreeDirty
+        | GitInspectionError::WorktreeLocked
+        | GitInspectionError::WorktreeUnavailable
+        | GitInspectionError::WorktreeFailed
+        | GitInspectionError::WorktreeInconsistent
         | GitInspectionError::CommandFailed
         | GitInspectionError::CheckpointIdentityUnavailable
         | GitInspectionError::RepositoryIdentityInvalid

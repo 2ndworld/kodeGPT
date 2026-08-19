@@ -258,6 +258,24 @@ class FakeKernel implements KernelTransport {
             sourceTruncated: false
           }
         } as T;
+      case "git.worktree_mutation":
+        if (params.operation === "create") {
+          return {
+            schemaVersion: 1,
+            operation: "create",
+            name: params.name,
+            relativePath: `.worktrees/${String(params.name)}`,
+            branch: params.branch,
+            headOid: "a".repeat(40)
+          } as T;
+        }
+        return {
+          schemaVersion: 1,
+          operation: "remove",
+          name: params.name,
+          relativePath: `.worktrees/${String(params.name)}`,
+          removed: true
+        } as T;
       case "git.remote_mutation":
         return {
           schemaVersion: 1,
@@ -1177,6 +1195,54 @@ describe("WorkspaceManager", () => {
     ]);
     expect(JSON.stringify(stage)).toContain("artifact://ka_git_mutation_fixture");
     expect(JSON.stringify(stage)).not.toContain("artifactId");
+  });
+
+  it("routes bounded linked-worktree lifecycle through the private runtime capability", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_git_worktree"
+    });
+    await manager.openWorkspace("/workspace");
+
+    const created = await manager.gitWorktreeCreate("ws_git_worktree", "phase7", "feat/phase7");
+    const removed = await manager.gitWorktreeRemove("ws_git_worktree", "phase7");
+
+    expect(created).toEqual({
+      schemaVersion: 1,
+      operation: "create",
+      name: "phase7",
+      relativePath: ".worktrees/phase7",
+      branch: "feat/phase7",
+      headOid: "a".repeat(40)
+    });
+    expect(removed).toEqual({
+      schemaVersion: 1,
+      operation: "remove",
+      name: "phase7",
+      relativePath: ".worktrees/phase7",
+      removed: true
+    });
+    expect(kernel.calls.slice(-2)).toEqual([
+      {
+        method: "git.worktree_mutation",
+        params: {
+          capabilityId: "kc_fixture",
+          operation: "create",
+          name: "phase7",
+          branch: "feat/phase7"
+        }
+      },
+      {
+        method: "git.worktree_mutation",
+        params: {
+          capabilityId: "kc_fixture",
+          operation: "remove",
+          name: "phase7"
+        }
+      }
+    ]);
   });
 
   it("routes typed remote Git mutations through the private runtime capability", async () => {

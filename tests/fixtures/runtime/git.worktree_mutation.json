@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": "req_git_worktree_mutation_fixture",
+  "method": "git.worktree_mutation",
+  "params": {
+    "capabilityId": "kc_fixture",
+    "operation": "create",
+    "name": "phase7",
+    "branch": "feat/phase7"
+  }
+}

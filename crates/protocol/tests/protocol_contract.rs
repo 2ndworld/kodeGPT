@@ -157,6 +157,66 @@ fn file_write_preconditions_are_optional_closed_and_typed() {
 }
 
 #[test]
+fn git_worktree_mutation_params_are_closed_and_operation_typed() {
+    let create = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_git_worktree_create",
+        "method": "git.worktree_mutation",
+        "params": {
+            "operation": "create",
+            "capabilityId": "kc_git_worktree",
+            "name": "phase7",
+            "branch": "feat/phase7"
+        }
+    }));
+    assert!(create.is_ok(), "closed create variant must deserialize");
+
+    let remove = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_git_worktree_remove",
+        "method": "git.worktree_mutation",
+        "params": {
+            "operation": "remove",
+            "capabilityId": "kc_git_worktree",
+            "name": "phase7"
+        }
+    }));
+    assert!(remove.is_ok(), "closed remove variant must deserialize");
+
+    for params in [
+        json!({
+            "operation": "create",
+            "capabilityId": "kc_git_worktree",
+            "name": "phase7",
+            "branch": "feat/phase7",
+            "force": true
+        }),
+        json!({
+            "operation": "remove",
+            "capabilityId": "kc_git_worktree",
+            "name": "phase7",
+            "branch": "feat/phase7"
+        }),
+        json!({
+            "operation": "create",
+            "capabilityId": "kc_git_worktree",
+            "name": "phase7"
+        }),
+    ] {
+        let malformed = serde_json::from_value::<RuntimeRequest>(json!({
+            "jsonrpc": "2.0",
+            "id": "req_git_worktree_bad",
+            "method": "git.worktree_mutation",
+            "params": params
+        }));
+        assert!(
+            malformed.is_err(),
+            "malformed worktree mutation must fail closed"
+        );
+    }
+}
+
+#[test]
 fn git_remote_credentials_are_optional_closed_and_typed() {
     let plain = serde_json::from_value::<RuntimeRequest>(json!({
         "jsonrpc": "2.0",

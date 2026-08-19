@@ -42,6 +42,8 @@ const LOCKED_SURFACE = [
   { name: "git.branchCreate", required: ["workspaceId", "name"] },
   { name: "git.branchDelete", required: ["workspaceId", "name"] },
   { name: "git.branchSwitch", required: ["workspaceId", "name"] },
+  { name: "git.worktreeCreate", required: ["workspaceId", "name", "branch"] },
+  { name: "git.worktreeRemove", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
   { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
@@ -90,10 +92,10 @@ const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.14");
+    expect(MCP_SURFACE_VERSION).toBe("0.15");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(76);
+    expect(surface).toHaveLength(78);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",

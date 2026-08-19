@@ -13,6 +13,7 @@ import {
   MAX_GIT_STAGE_PATHS,
   MAX_GIT_MUTATION_TEXT,
   MAX_GIT_BRANCH_NAME,
+  MAX_GIT_WORKTREE_NAME,
   MAX_GIT_REMOTE_NAME,
   type CodeSearchInput,
   type CodeSearchResult,
@@ -28,6 +29,10 @@ import {
   type GitCommitInput,
   type GitBranchInput,
   type GitLocalMutationResult,
+  type GitWorktreeCreateInput,
+  type GitWorktreeCreateResult,
+  type GitWorktreeRemoveInput,
+  type GitWorktreeRemoveResult,
   type GitRemoteInput,
   type GitRemoteMutationResult,
   type GitLogInput,
@@ -470,6 +475,51 @@ export const GitLocalMutationResultSchema: z.ZodType<GitLocalMutationResult> = z
       .strict()
   })
   .strict();
+
+const gitWorktreeNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_GIT_WORKTREE_NAME)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "Git worktree name is invalid")
+  .refine((value) => value !== "." && value !== "..", "Git worktree name is invalid");
+
+export const GitWorktreeCreateInputSchema: z.ZodType<GitWorktreeCreateInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    name: gitWorktreeNameSchema,
+    branch: gitBranchNameSchema
+  })
+  .strict();
+
+export const GitWorktreeRemoveInputSchema: z.ZodType<GitWorktreeRemoveInput> = z
+  .object({
+    workspaceId: z.string().min(1),
+    name: gitWorktreeNameSchema
+  })
+  .strict();
+
+export const GitWorktreeCreateResultSchema: z.ZodType<GitWorktreeCreateResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    operation: z.literal("create"),
+    name: gitWorktreeNameSchema,
+    relativePath: z.string(),
+    branch: gitBranchNameSchema,
+    headOid: z.string().regex(/^[0-9a-f]{40}$/)
+  })
+  .strict()
+  .refine((value) => value.relativePath === `.worktrees/${value.name}`, "Git worktree relative path is invalid") as z.ZodType<GitWorktreeCreateResult>;
+
+export const GitWorktreeRemoveResultSchema: z.ZodType<GitWorktreeRemoveResult> = z
+  .object({
+    schemaVersion: z.literal(1),
+    operation: z.literal("remove"),
+    name: gitWorktreeNameSchema,
+    relativePath: z.string(),
+    removed: z.literal(true)
+  })
+  .strict()
+  .refine((value) => value.relativePath === `.worktrees/${value.name}`, "Git worktree relative path is invalid") as z.ZodType<GitWorktreeRemoveResult>;
 
 const gitRemoteNameSchema = z
   .string()

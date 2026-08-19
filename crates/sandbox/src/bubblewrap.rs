@@ -60,6 +60,12 @@ pub enum GitMetadataAccess {
     ReadWrite,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceAlias {
+    None,
+    Canonical(PathBuf),
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct PrivateGitConfig(String);
 
@@ -81,6 +87,7 @@ pub struct SandboxLaunchSpec {
     pub cwd: PathBuf,
     pub network: SandboxNetworkMode,
     pub workspace_access: WorkspaceAccess,
+    pub workspace_alias: WorkspaceAlias,
     pub git_metadata_access: GitMetadataAccess,
     pub require_git_metadata: bool,
     pub cargo_home: Option<PathBuf>,
@@ -97,6 +104,7 @@ impl SandboxLaunchSpec {
             cwd: PathBuf::from(CHILD_WORKSPACE),
             network: SandboxNetworkMode::Deny,
             workspace_access: WorkspaceAccess::ReadOnly,
+            workspace_alias: WorkspaceAlias::None,
             git_metadata_access: GitMetadataAccess::None,
             require_git_metadata: true,
             cargo_home: None,
@@ -122,6 +130,7 @@ pub enum SandboxError {
     Io(std::io::Error),
     InvalidCwd,
     InvalidPrivateGitConfig,
+    InvalidWorkspaceAlias,
     ReservedEnvironment,
     NetworkPolicyUnavailable,
     SandboxUnavailable(String),
@@ -135,6 +144,9 @@ impl fmt::Display for SandboxError {
             Self::InvalidCwd => formatter.write_str("sandbox cwd must remain beneath /workspace"),
             Self::InvalidPrivateGitConfig => {
                 formatter.write_str("sandbox private Git config is invalid")
+            }
+            Self::InvalidWorkspaceAlias => {
+                formatter.write_str("sandbox canonical workspace alias is invalid")
             }
             Self::ReservedEnvironment => {
                 formatter.write_str("sandbox environment attempts to override a reserved value")
@@ -212,6 +224,15 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let inherited_workspace_alias_fd = match &spec.workspace_alias {
+            WorkspaceAlias::None => None,
+            WorkspaceAlias::Canonical(_) => {
+                let alias_fd = workspace_root.try_clone()?;
+                fcntl_setfd(&alias_fd, FdFlags::empty())
+                    .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+                Some(alias_fd)
+            }
+        };
         let linked_git_metadata = match spec.git_metadata_access {
             GitMetadataAccess::None => None,
             GitMetadataAccess::ReadOnly | GitMetadataAccess::ReadWrite => {
@@ -290,6 +311,9 @@ impl BubblewrapProvider {
 
         let mut command = self.build_command(
             inherited_workspace_fd.as_raw_fd(),
+            inherited_workspace_alias_fd
+                .as_ref()
+                .map(AsRawFd::as_raw_fd),
             Some(status_writer.as_raw_fd()),
             linked_git_metadata.as_ref(),
             &explicit_mounts,
@@ -344,6 +368,7 @@ impl BubblewrapProvider {
         }
         drop(status_writer);
         drop(inherited_workspace_fd);
+        drop(inherited_workspace_alias_fd);
         let process_group = match read_child_pid(&status_reader) {
             Ok(process_group) => process_group,
             Err(error) => {
@@ -373,6 +398,7 @@ impl BubblewrapProvider {
     fn build_command(
         &self,
         workspace_fd: i32,
+        workspace_alias_fd: Option<i32>,
         status_fd: Option<i32>,
         linked_git_metadata: Option<&LinkedWorktreeGitMetadata>,
         explicit_mounts: &[ExplicitExecutableMount],
@@ -518,6 +544,19 @@ impl BubblewrapProvider {
                 command.args(["--bind-fd", &workspace_fd.to_string(), CHILD_WORKSPACE]);
             }
         }
+        if let WorkspaceAlias::Canonical(target) = &spec.workspace_alias {
+            let alias_fd = workspace_alias_fd.ok_or_else(|| {
+                SandboxError::SandboxUnavailable(
+                    "canonical workspace alias descriptor was not provided".to_owned(),
+                )
+            })?;
+            append_parent_directories(&mut command, target);
+            let bind_flag = match spec.workspace_access {
+                WorkspaceAccess::ReadOnly => "--ro-bind-fd",
+                WorkspaceAccess::ReadWrite => "--bind-fd",
+            };
+            command.arg(bind_flag).arg(alias_fd.to_string()).arg(target);
+        }
 
         let child_path = if explicit_mounts.is_empty() {
             FIXED_PATH.to_owned()
@@ -600,6 +639,32 @@ fn git_metadata_target_is_allowed(path: &Path) -> bool {
     path.is_absolute() && !reserved.iter().any(|root| path.starts_with(root))
 }
 
+fn workspace_alias_target_is_allowed(path: &Path) -> bool {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        return false;
+    }
+    let reserved = [
+        Path::new(CHILD_WORKSPACE),
+        Path::new(CHILD_HOME),
+        Path::new("/proc"),
+        Path::new("/dev"),
+        Path::new("/sys"),
+        Path::new("/usr"),
+        Path::new("/bin"),
+        Path::new("/lib"),
+        Path::new("/lib64"),
+        Path::new("/etc"),
+        Path::new("/run"),
+        Path::new("/opt"),
+        Path::new("/tmp"),
+    ];
+    !reserved.iter().any(|root| path.starts_with(root))
+}
+
 fn append_parent_directories(command: &mut Command, target: &Path) {
     let mut parents = target
         .parent()
@@ -648,6 +713,11 @@ fn validate_spec(spec: &SandboxLaunchSpec) -> Result<(), SandboxError> {
     if !cwd_is_beneath_workspace(&spec.cwd) {
         return Err(SandboxError::InvalidCwd);
     }
+    if let WorkspaceAlias::Canonical(target) = &spec.workspace_alias
+        && !workspace_alias_target_is_allowed(target)
+    {
+        return Err(SandboxError::InvalidWorkspaceAlias);
+    }
     if spec.env.keys().any(|name| {
         RESERVED_ENV.contains(&name.as_str()) || name.contains('=') || name.contains('\0')
     }) {
@@ -679,7 +749,7 @@ mod tests {
 
     use super::{
         BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
-        WorkspaceAccess, cwd_is_beneath_workspace,
+        WorkspaceAccess, WorkspaceAlias, cwd_is_beneath_workspace,
     };
     use crate::executable::SANDBOX_MARKER_ENV;
     use crate::resolve_trusted_executable;
@@ -816,7 +886,7 @@ mod tests {
         spec.set_private_git_config("fixture-private-config\n".to_owned())
             .expect("bounded private Git config");
         let command = provider
-            .build_command(3, None, None, &[], None, None, None, &spec)
+            .build_command(3, None, None, None, &[], None, None, None, &spec)
             .expect("private-config command construction");
         let args = command
             .get_args()
@@ -834,6 +904,65 @@ mod tests {
                 window == ["--ro-bind-data", "0", super::PRIVATE_GIT_CONFIG_PATH]
             })
         );
+    }
+
+    #[test]
+    fn canonical_workspace_alias_reuses_retained_fd_without_mounting_host_parents() {
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("true").expect("trusted true executable"),
+        );
+        spec.workspace_access = WorkspaceAccess::ReadWrite;
+        spec.workspace_alias = WorkspaceAlias::Canonical(PathBuf::from("/home/example/repo"));
+        let command = provider
+            .build_command(17, Some(18), None, None, &[], None, None, None, &spec)
+            .expect("canonical workspace alias command construction");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            args.windows(3)
+                .any(|window| { window == ["--bind-fd", "17", "/workspace"] })
+        );
+        assert!(
+            args.windows(2)
+                .any(|window| window == ["--dir", "/home/example"])
+        );
+        assert!(
+            args.windows(3)
+                .any(|window| { window == ["--bind-fd", "18", "/home/example/repo"] })
+        );
+        assert!(!args.windows(3).any(|window| {
+            matches!(
+                window[0].as_str(),
+                "--bind" | "--ro-bind" | "--bind-fd" | "--ro-bind-fd"
+            ) && window[2] == "/home/example"
+        }));
+    }
+
+    #[test]
+    fn canonical_workspace_alias_rejects_reserved_or_unclean_targets() {
+        for target in [
+            "relative/path",
+            "/workspace",
+            "/proc/x",
+            "/dev/x",
+            "/tmp/x",
+            "/run/kodegpt/x",
+            "/home/kodegpt/x",
+            "/home/example/../repo",
+        ] {
+            let mut spec = SandboxLaunchSpec::new(
+                resolve_trusted_executable("true").expect("trusted true executable"),
+            );
+            spec.workspace_alias = WorkspaceAlias::Canonical(PathBuf::from(target));
+            assert!(
+                super::validate_spec(&spec).is_err(),
+                "alias target should fail closed before sandbox spawn: {target}"
+            );
+        }
     }
 
     #[test]
@@ -864,7 +993,7 @@ mod tests {
         );
         spec.network = SandboxNetworkMode::Unrestricted;
         let command = provider
-            .build_command(3, None, None, &[], None, Some(9), None, &spec)
+            .build_command(3, None, None, None, &[], None, Some(9), None, &spec)
             .expect("unrestricted command construction");
         let args = command
             .get_args()
@@ -1106,7 +1235,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, None, &[], None, None, None, &spec),
+                provider.build_command(3, None, None, None, &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

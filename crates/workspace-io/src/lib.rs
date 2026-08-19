@@ -13,7 +13,8 @@ mod write;
 
 pub use identity::{FilesystemIdentity, InspectRootError, InspectedRoot, inspect_root};
 pub use openat::{
-    OpenatBoundaryError, OpenedParent, open_directory_beneath, open_existing_beneath,
+    OpenatBoundaryError, OpenedParent, ensure_root_child_directory_no_symlinks,
+    open_directory_beneath, open_directory_beneath_no_symlinks, open_existing_beneath,
     open_parent_beneath, probe_filesystem_boundary,
 };
 pub use path_identity::{
@@ -26,7 +27,9 @@ pub use read::{
     TREE_MAX_ENTRIES, TreeEntry, TreeEntryKind, TreeResult, WorkspaceReadError, read_file_beneath,
     search_utf8_beneath, search_utf8_beneath_scoped, tree_beneath, tree_beneath_scoped,
 };
-pub use registry::{WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError};
+pub use registry::{
+    ReadyWorkspaceRoot, WorkspaceRegistration, WorkspaceRegistry, WorkspaceRegistryError,
+};
 pub use semantic_scope::TraversalScope;
 pub use skill_source::{
     SKILL_SOURCE_TREE_MAX_ENTRIES, SkillSourceRegistration, SkillSourceRegistry,

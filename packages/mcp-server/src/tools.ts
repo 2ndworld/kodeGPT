@@ -45,6 +45,10 @@ import {
   GitCommitInputSchema,
   GitBranchInputSchema,
   GitLocalMutationResultSchema,
+  GitWorktreeCreateInputSchema,
+  GitWorktreeCreateResultSchema,
+  GitWorktreeRemoveInputSchema,
+  GitWorktreeRemoveResultSchema,
   GitRemoteInputSchema,
   GitRemoteMutationResultSchema,
   GitLogInputSchema,
@@ -204,6 +208,8 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "git.branchCreate", required: ["workspaceId", "name"] },
   { name: "git.branchDelete", required: ["workspaceId", "name"] },
   { name: "git.branchSwitch", required: ["workspaceId", "name"] },
+  { name: "git.worktreeCreate", required: ["workspaceId", "name", "branch"] },
+  { name: "git.worktreeRemove", required: ["workspaceId", "name"] },
   { name: "git.changes", required: ["workspaceId"] },
   { name: "git.commit", required: ["workspaceId", "message"] },
   { name: "git.diff", required: ["workspaceId"] },
@@ -1043,6 +1049,30 @@ export function registerKodegptTools(
     },
     async (input) =>
       nativeCapabilityResult(async () => GitLocalMutationResultSchema.parse(await context.git.branchDelete(input)))
+  );
+
+  server.registerTool(
+    "git.worktreeCreate",
+    {
+      description: "Create a bounded linked worktree at .worktrees/<name> for an existing local branch.",
+      inputSchema: GitWorktreeCreateInputSchema,
+      outputSchema: GitWorktreeCreateResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitWorktreeCreateResultSchema.parse(await context.git.worktreeCreate(input)))
+  );
+
+  server.registerTool(
+    "git.worktreeRemove",
+    {
+      description: "Remove a clean bounded linked worktree from .worktrees/<name> without deleting its branch.",
+      inputSchema: GitWorktreeRemoveInputSchema,
+      outputSchema: GitWorktreeRemoveResultSchema,
+      annotations: LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () => GitWorktreeRemoveResultSchema.parse(await context.git.worktreeRemove(input)))
   );
 
   server.registerTool(

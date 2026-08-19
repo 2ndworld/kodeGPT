@@ -26,6 +26,7 @@ export const RUNTIME_METHODS = [
   "git.checkpoint_patch",
   "git.diff",
   "git.local_mutation",
+  "git.worktree_mutation",
   "git.remote_mutation",
   "git.log",
   "git.show",
@@ -306,6 +307,24 @@ const gitLocalMutationParamsSchema = z.discriminatedUnion("operation", [
   )
 ]);
 
+const gitWorktreeMutationParamsSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("create"),
+      name: z.string().min(1).max(64),
+      branch: z.string().min(1).max(255)
+    })
+    .strict(),
+  z
+    .object({
+      capabilityId: z.string().min(1),
+      operation: z.literal("remove"),
+      name: z.string().min(1).max(64)
+    })
+    .strict()
+]);
+
 const gitRemoteCredentialSchema = z.object({
   kind: z.literal("github_token"),
   token: z.string().min(1).max(4096).refine((value) => !/[\0\r\n]/.test(value))
@@ -488,6 +507,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("git.checkpoint_patch", gitInspectionParamsSchema),
   requestSchema("git.diff", gitInspectionParamsSchema),
   requestSchema("git.local_mutation", gitLocalMutationParamsSchema),
+  requestSchema("git.worktree_mutation", gitWorktreeMutationParamsSchema),
   requestSchema("git.remote_mutation", gitRemoteMutationParamsSchema),
   requestSchema("git.log", gitLogParamsSchema),
   requestSchema("git.show", gitShowParamsSchema),
