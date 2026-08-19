@@ -551,6 +551,24 @@ export interface ContextBuildInput {
   maxBytes?: number;
 }
 
+export type ContextWorkspaceScope =
+  | { kind: "workspace" }
+  | { kind: "target"; area: string };
+
+export interface ContextWorkspaceSummary {
+  schemaVersion: 1;
+  workspaceId: string;
+  root: string;
+  scope: ContextWorkspaceScope;
+  projectTypes: string[];
+  languages: WorkspaceInspectLanguage[];
+  entrypoints: WorkspaceInspectEntrypoint[];
+  areas: WorkspaceInspectArea[];
+  manifests: WorkspaceInspectManifest[];
+  warnings: string[];
+  truncated: boolean;
+}
+
 export interface ContextSelectedFile {
   path: string;
   reason: string;
@@ -572,7 +590,7 @@ export interface ContextBuildResult {
   intent: ContextIntent;
   target?: string;
   evidenceStatus: ContextEvidenceStatus;
-  workspace: WorkspaceInspectResult;
+  workspace: ContextWorkspaceSummary;
   git?: GitChangesResult;
   selectedFiles: ContextSelectedFile[];
   relevantMatches: CodeSearchResult["matches"];

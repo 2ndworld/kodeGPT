@@ -8,6 +8,7 @@ import {
   type ContextEvidenceState,
   type ContextIntent,
   type ContextSelectedFile,
+  type ContextWorkspaceSummary,
   type GitChangesInput,
   type GitChangesResult,
   type VerificationRecipe,
@@ -87,13 +88,21 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
+  const targetArea =
+    input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
-  const searchEvidence = await collectSearchEvidence(adapter, input);
+  const searchEvidence = await collectSearchEvidence(adapter, input, targetArea);
   const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId);
   const git = gitEvidence.state === "unavailable" ? undefined : gitEvidence.value;
-  const search = searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value;
-  const verifications =
-    verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes;
+  const search = scopeSearchEvidence(
+    searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value,
+    input.target,
+    targetArea
+  );
+  const verifications = scopeVerifications(
+    verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes,
+    input.target
+  );
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
   const relevantMatches = sortedMatches(
@@ -101,6 +110,7 @@ export async function buildContext(
       (match) => match.path === input.target || isSemanticDiscoveryPath(match.path)
     )
   );
+  const workspaceSummary = summarizeWorkspace(workspace, input.target, targetArea);
   const warnings = [...workspace.warnings];
   if (gitEvidence.state === "unavailable") warnings.push("git-evidence-unavailable");
   else if (gitEvidence.value.truncated) warnings.push("git-change-evidence-truncated");
@@ -171,7 +181,7 @@ export async function buildContext(
       search: searchEvidence.state,
       verification: verificationEvidence.state
     },
-    workspace,
+    workspace: workspaceSummary,
     ...(git === undefined ? {} : { git }),
     selectedFiles,
     relevantMatches,
@@ -197,7 +207,8 @@ async function collectGitEvidence(
 
 async function collectSearchEvidence(
   adapter: ContextBuildAdapter,
-  input: ContextBuildInput
+  input: ContextBuildInput,
+  targetArea: string | undefined
 ): Promise<EvidenceResult<CodeSearchResult>> {
   if (input.target === undefined) return { state: "available", value: emptySearchResult() };
   try {
@@ -205,6 +216,7 @@ async function collectSearchEvidence(
       workspaceId: input.workspaceId,
       query: targetQuery(input.target),
       mode: "path",
+      ...(targetArea === undefined || targetArea === "." ? {} : { path: targetArea }),
       maxResults: 100
     });
     return { state: value.truncated ? "incomplete" : "available", value };
@@ -233,6 +245,75 @@ async function collectVerificationEvidence(
 
 function isKnownSourceFailure(error: unknown, codes: ReadonlySet<string>): boolean {
   return error instanceof CapabilityError && codes.has(error.code);
+}
+
+function scopeSearchEvidence(
+  search: CodeSearchResult,
+  target: string | undefined,
+  targetArea: string | undefined
+): CodeSearchResult {
+  if (target === undefined || targetArea === undefined || targetArea === ".") return search;
+  return {
+    ...search,
+    matches: search.matches.filter(
+      (match) => match.path === target || sameArea(match.path, targetArea)
+    )
+  };
+}
+
+function scopeVerifications(
+  recipes: VerificationRecipe[],
+  target: string | undefined
+): VerificationRecipe[] {
+  if (target === undefined) return recipes;
+  return recipes.filter((recipe) => {
+    if (recipe.cwd === undefined || recipe.cwd === ".") return true;
+    return target === recipe.cwd || target.startsWith(`${recipe.cwd}/`);
+  });
+}
+
+function summarizeWorkspace(
+  workspace: WorkspaceInspectResult,
+  target: string | undefined,
+  targetArea: string | undefined
+): ContextWorkspaceSummary {
+  if (target === undefined) {
+    return {
+      schemaVersion: 1,
+      workspaceId: workspace.workspaceId,
+      root: workspace.root,
+      scope: { kind: "workspace" },
+      projectTypes: [...workspace.projectTypes],
+      languages: [...workspace.languages],
+      entrypoints: [...workspace.entrypoints],
+      areas: [...workspace.areas],
+      manifests: [...workspace.manifests],
+      warnings: [...workspace.warnings],
+      truncated: workspace.truncated
+    };
+  }
+
+  const area = targetArea ?? dirname(target);
+  return {
+    schemaVersion: 1,
+    workspaceId: workspace.workspaceId,
+    root: workspace.root,
+    scope: { kind: "target", area },
+    projectTypes: [...workspace.projectTypes],
+    languages: [...workspace.languages],
+    entrypoints: workspace.entrypoints.filter(
+      (entrypoint) => sameArea(entrypoint.path, area) || governsTarget(entrypoint.path, target)
+    ),
+    areas: workspace.areas.filter(
+      (candidate) =>
+        candidate.path === area ||
+        (candidate.kind === "config" &&
+          (sameArea(candidate.path, area) || governsTarget(candidate.path, target)))
+    ),
+    manifests: workspace.manifests.filter((manifest) => governsTarget(manifest.path, target)),
+    warnings: [...workspace.warnings],
+    truncated: workspace.truncated
+  };
 }
 
 function selectCandidates(

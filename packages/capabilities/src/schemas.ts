@@ -652,6 +652,32 @@ export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
   .strict();
 
 const contextEvidenceStateSchema = z.enum(["available", "incomplete", "unavailable"]);
+const contextWorkspaceSummarySchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    workspaceId: z.string().min(1),
+    root: z.string().min(1),
+    scope: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("workspace") }).strict(),
+      z.object({ kind: z.literal("target"), area: z.string().min(1) }).strict()
+    ]),
+    projectTypes: z.array(z.string()),
+    languages: z.array(
+      z.object({ name: z.string().min(1), fileCount: z.number().int().nonnegative().safe() }).strict()
+    ),
+    entrypoints: z.array(
+      z.object({ path: z.string().min(1), kind: z.string().min(1) }).strict()
+    ),
+    areas: z.array(
+      z.object({ path: z.string().min(1), kind: workspaceInspectAreaKindSchema }).strict()
+    ),
+    manifests: z.array(
+      z.object({ path: z.string().min(1), kind: z.string().min(1) }).strict()
+    ),
+    warnings: z.array(z.string()),
+    truncated: z.boolean()
+  })
+  .strict();
 
 export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
   .object({
@@ -666,7 +692,7 @@ export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
         verification: contextEvidenceStateSchema
       })
       .strict(),
-    workspace: WorkspaceInspectResultSchema,
+    workspace: contextWorkspaceSummarySchema,
     git: GitChangesResultSchema.optional(),
     selectedFiles: z.array(
       z
