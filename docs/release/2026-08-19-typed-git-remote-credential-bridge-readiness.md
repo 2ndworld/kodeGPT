@@ -96,13 +96,17 @@ A transient Remote-CI credential-runner failure observed inside an independent r
 
 Because the full tool list is equality-locked to the 76-name snapshot, no `credential.*` public tool is present either. Phase 6 changes only private composition/runtime protocol.
 
-## Remaining release gates
+## Post-merge closure evidence
 
-This record does **not** claim PR, CI, merge, release cutover, or live authenticated Git dogfood yet. The remaining roadmap is:
+The earlier remaining-gates text is superseded by observed post-merge evidence:
 
-1. push this feature branch without force and create a PR;
-2. require exact-head CI and review success;
-3. merge through the existing guarded GitHub authority;
-4. reconcile canonical `main`, stage/cut over an immutable release while retaining rollback;
-5. live-dogfood one authenticated typed Git HTTPS operation without credential disclosure;
-6. verify service health, audit redaction, `0.14` / 76 tools, active/rollback identities, then clean the feature worktree safely.
+1. PR #46 (`feat: authenticate typed Git remote operations`) merged successfully into `main`.
+2. Canonical `main == origin/main` is `75d341aec8c6a4f71cb2fe79d216eaba264e6dbb`.
+3. Merged-main CI run `32235186850` completed `SUCCESS` on that exact merge commit.
+4. The installed service is `running` and `listenerReady=true` on active immutable release `rel_258b83f4f3932614cfca69c99d9b45ac`, retaining `rel_2aa4fd60158c0fe371c334a46bd4adea` as rollback.
+5. Live `system.health` reports healthy audit and filesystem boundary; `system.capabilities` remains exactly `0.1 / 2026-07-28 / 0.14`.
+6. Live typed `git.push({remote:"origin",ref:"main"})` completed with exit code 0 and only `Everything up-to-date`. The issued execution artifact is 22 bytes and contains only that Git message.
+7. The corresponding recent durable audit shows a `git_push` allow decision and success outcome plus ordinary bounded artifact lifecycle events. No credential value, authorization header, provider secret, helper stderr, or host credential path is present in the public result or the observed audit events.
+8. The MCP surface remains exactly 76 public tools with no `provider.*` or `credential.*` public tool.
+
+Phase 6 is therefore **CLOSED**. The remaining linked-worktree creation friction is a separate authority/lifecycle problem and is not part of this credential bridge.
