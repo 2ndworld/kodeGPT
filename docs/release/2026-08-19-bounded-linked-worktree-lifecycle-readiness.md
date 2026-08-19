@@ -1,11 +1,12 @@
 # KodeGPT Bounded Linked-Worktree Lifecycle Readiness
 
 Date: 2026-08-19
-Status: implementation complete and locally verified; PR/CI/merge/release cutover not yet claimed
+Status: **CLOSED — merged, remote-CI verified, deployed, live-dogfooded, and implementation worktree cleaned**
 Baseline: `ed5113f553b5d8beb24800165a07c01935165aa9` (merged PR #47)
-Verified implementation head before readiness docs: `26d004a`
-Candidate contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.15 / 78 tools`
-Installed production at this checkpoint: `runtime 0.1 / protocol 2026-07-28 / surface 0.14 / 76 tools`
+Accepted feature head: `a119dc7fba63b4ded21cef0ac806d8d3ef6f1279`
+Merge: PR #48 → `9082bfcd325d0b4428588c2608ad5be5b4459ff4`
+Live contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.15 / 78 tools`
+Installed production: active `rel_0d1fe87d689de32e7afd466769d59db5`; rollback `rel_258b83f4f3932614cfca69c99d9b45ac`
 
 ## Scope
 
@@ -121,17 +122,19 @@ Existing Rust dead-code/test-only warnings remain unchanged in nature and are ou
 
 ## Final scope review
 
-The complete feature diff from baseline was searched for forbidden authority expansion. Production additions contain no `--force` worktree invocation, no generic `git.worktreeList/Repair/Move/Prune/Lock/Unlock`, no `workflow.run`, no `skill.run`, no `provider.invoke`, and no caller-selected worktree path. Public surface growth is exactly two tools, from `0.14 / 76` to candidate `0.15 / 78`.
+The complete feature diff from baseline was searched for forbidden authority expansion. Production additions contain no `--force` worktree invocation, no generic `git.worktreeList/Repair/Move/Prune/Lock/Unlock`, no `workflow.run`, no `skill.run`, no `provider.invoke`, and no caller-selected worktree path. Public surface growth is exactly two tools, from `0.14 / 76` to live `0.15 / 78`.
 
-## Remaining release gates
+## Final closure evidence
 
-This readiness record does **not** claim PR, remote CI, merge, installed release cutover, or live installed-service dogfood yet. Remaining gates are:
+Phase 7 passed every release gate that was pending in the pre-merge readiness snapshot:
 
-1. commit these readiness/reconciliation docs after final review;
-2. push `feat/bounded-linked-worktree-lifecycle` without force and create a PR;
-3. require exact-head CI success before guarded merge;
-4. reconcile canonical `main` and require merged-main CI success;
-5. stage/cut over an immutable service release while retaining the previous healthy release as rollback;
-6. verify live `system.health`, runtime/protocol/surface `0.1 / 2026-07-28 / 0.15`, and exactly 78 public tools;
-7. live-dogfood a disposable typed create/open/status/close/remove/delete lifecycle with no repair and no canonical-path leakage;
-8. reconcile final live evidence and clean the implementation worktree only after no unique work remains.
+- PR #48 merged accepted feature head `a119dc7fba63b4ded21cef0ac806d8d3ef6f1279` into canonical `main` as `9082bfcd325d0b4428588c2608ad5be5b4459ff4`.
+- Exact PR-head KodeGPT CI run `32252802187` completed `SUCCESS` on `a119dc7fba63b4ded21cef0ac806d8d3ef6f1279`.
+- Exact merged-main KodeGPT CI run `32253363463` completed `SUCCESS` on `9082bfcd325d0b4428588c2608ad5be5b4459ff4`.
+- The immutable installed service is running/listener-ready/managed-exposure ready on active release `rel_0d1fe87d689de32e7afd466769d59db5`, with Phase 6 release `rel_258b83f4f3932614cfca69c99d9b45ac` retained as rollback.
+- Live `system.health` reports `ok=true`, `auditHealthy=true`, and `filesystemBoundaryAvailable=true`; live `system.capabilities` reports exactly `runtime 0.1 / protocol 2026-07-28 / surface 0.15`, and the refreshed connector inventory exposes exactly 78 public tools.
+- Native disposable dogfood on branch `dogfood/phase7-live-final` created `.worktrees/phase7-live-final` from exact merged-main HEAD, returned only the relative path plus branch/OID, closed the parent, trusted/opened the child, observed clean child `git.status`, closed/untrusted the child, reopened the parent, removed the worktree through `git.worktreeRemove`, deleted the merged disposable branch, and returned canonical `git.status` to clean. No `git worktree repair`, prune, force removal, or canonical-path result was used.
+- A second minimal audit probe confirmed durable `git_worktree_create` and `git_worktree_remove` outcomes as `success`; both public results remained relative-only and exposed no canonical host path.
+- The Phase 7 implementation worktree was independently opened after parent closure, proven clean at exact HEAD `a119dc7fba63b4ded21cef0ac806d8d3ef6f1279`, then removed through `git.worktreeRemove`. Its dedicated trust record was revoked and the safely merged local branch `feat/bounded-linked-worktree-lifecycle` was deleted without force. Historical unrelated worktrees were not pruned or removed.
+
+Phase 7 is therefore **CLOSED**. The final repository-only reconciliation that records this evidence changes documentation only and does not alter runtime, protocol, public schemas, provider state, deployment behavior, or authority boundaries.
