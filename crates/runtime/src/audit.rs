@@ -845,6 +845,8 @@ fn valid_ci_error_code(value: &str) -> bool {
             | "CI_RESPONSE_LIMIT_EXCEEDED"
             | "CI_LOG_UNAVAILABLE"
             | "CI_LOG_LIMIT_EXCEEDED"
+            | "CI_MUTATION_OUTCOME_UNKNOWN"
+            | "CI_MUTATION_STATE_CONFLICT"
     )
 }
 
@@ -991,6 +993,41 @@ mod tests {
             assert!(!serialized.contains("Authorization"));
             assert!(!serialized.contains("https://github.com"));
         }
+        fs::remove_dir_all(root).expect("temporary root removed");
+    }
+
+    #[test]
+    fn ci_mutation_state_conflict_is_admitted_and_persisted_without_provider_body() {
+        let root = temporary_root("ci-mutation-state-conflict");
+        let sink = AuditSink::open(&root);
+        let context = AuditContext {
+            request_id: "req_ci_mutation_1".into(),
+            operation_id: "op_ci_mutation_1".into(),
+            capability_id: Some("kc_ci_mutation".into()),
+            action: AuditAction::CiRerun,
+        };
+        let metadata = CiAuditMetadata {
+            provider: "github".into(),
+            repository: "2ndworld/kodeGPT".into(),
+            credential_source: Some("gh".into()),
+            run_id: Some("32215637356".into()),
+            job_id: None,
+            error_code: Some("CI_MUTATION_STATE_CONFLICT".into()),
+            truncated: Some(false),
+            duration_ms: Some(7),
+        };
+
+        sink.outcome_with_ci(&context, AuditOutcome::Failed, &metadata)
+            .expect("mutation state conflict persists");
+
+        let lines = parse_lines(sink.path());
+        assert_eq!(lines.len(), 1);
+        let record = &lines[0];
+        assert_eq!(record["action"], "ci_rerun");
+        assert_eq!(record["errorCode"], "CI_MUTATION_STATE_CONFLICT");
+        let serialized = record.to_string();
+        assert!(!serialized.contains("This workflow is already running"));
+        assert!(!serialized.contains("documentation_url"));
         fs::remove_dir_all(root).expect("temporary root removed");
     }
 

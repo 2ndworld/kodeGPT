@@ -626,6 +626,44 @@ describe("RemoteCiService repository/runs/run", () => {
     expect(JSON.stringify(fixture.audits)).not.toContain("fixture");
   });
 
+  it("preserves mutation state conflicts through failed durable audit without retrying", async () => {
+    const fixture = new Fixture();
+    let attempts = 0;
+    const adapter = fixture.adapter as RemoteCiAdapter & {
+      rerun(input: { runId: string; failedOnly: boolean }): Promise<{ providerRequests: 1 }>;
+    };
+    adapter.rerun = async () => {
+      attempts += 1;
+      fixture.events.push("provider-rerun");
+      throw new CapabilityError(
+        "CI_MUTATION_STATE_CONFLICT",
+        "GitHub mutation state changed; refresh current CI state before retrying",
+        {
+          reason: "STALE_EXPECTED_STATE",
+          retryable: false,
+          suggestedAction: "refresh-state"
+        }
+      );
+    };
+    const service = fixture.service() as RemoteCiService & {
+      rerun(input: { runId: string; failedOnly?: boolean }): Promise<unknown>;
+    };
+
+    await expect(service.rerun({ runId: "10" })).rejects.toMatchObject({
+      code: "CI_MUTATION_STATE_CONFLICT",
+      details: {
+        reason: "STALE_EXPECTED_STATE",
+        retryable: false,
+        suggestedAction: "refresh-state"
+      }
+    });
+    expect(attempts).toBe(1);
+    expect(fixture.audits.at(-1)).toMatchObject({
+      phase: "failed",
+      errorCode: "CI_MUTATION_STATE_CONFLICT"
+    });
+  });
+
   it("surfaces ambiguous mutation outcome without retrying the provider effect", async () => {
     const fixture = new Fixture();
     let attempts = 0;

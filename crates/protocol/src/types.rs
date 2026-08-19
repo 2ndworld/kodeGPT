@@ -179,6 +179,8 @@ pub enum CiErrorCode {
     LogLimitExceeded,
     #[serde(rename = "CI_MUTATION_OUTCOME_UNKNOWN")]
     MutationOutcomeUnknown,
+    #[serde(rename = "CI_MUTATION_STATE_CONFLICT")]
+    MutationStateConflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

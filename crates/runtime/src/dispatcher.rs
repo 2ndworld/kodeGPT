@@ -96,6 +96,7 @@ fn ci_error_code_str(value: CiErrorCode) -> &'static str {
         CiErrorCode::LogUnavailable => "CI_LOG_UNAVAILABLE",
         CiErrorCode::LogLimitExceeded => "CI_LOG_LIMIT_EXCEEDED",
         CiErrorCode::MutationOutcomeUnknown => "CI_MUTATION_OUTCOME_UNKNOWN",
+        CiErrorCode::MutationStateConflict => "CI_MUTATION_STATE_CONFLICT",
     }
 }
 
