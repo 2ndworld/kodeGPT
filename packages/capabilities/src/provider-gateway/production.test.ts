@@ -35,6 +35,12 @@ describe("createProviderGatewayRuntime", () => {
     });
 
     expect(events).toEqual([]);
+    expect(typeof (runtime as unknown as { acquireCredentialForEnabledAdapter?: unknown }).acquireCredentialForEnabledAdapter)
+      .toBe("function");
+    await expect(
+      (runtime as unknown as { acquireCredentialForEnabledAdapter(adapterId: string): Promise<unknown> })
+        .acquireCredentialForEnabledAdapter("github.read.v1")
+    ).resolves.toBeNull();
     await runtime.close();
     await runtime.close();
     expect(events).toEqual([]);

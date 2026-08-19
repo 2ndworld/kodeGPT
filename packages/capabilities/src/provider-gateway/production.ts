@@ -5,7 +5,10 @@ import type {
   ProviderAuditMetadata,
   ProviderGatewayService
 } from "./contracts.js";
-import { DefaultProviderCredentialBroker } from "./credential-broker.js";
+import {
+  DefaultProviderCredentialBroker,
+  type ProviderCredential
+} from "./credential-broker.js";
 import { DefaultProviderNetworkTransport } from "./network-transport.js";
 import {
   ProviderOperatorService,
@@ -24,6 +27,7 @@ export interface ProviderAuditSink {
 export interface ProviderGatewayRuntime {
   operator: ProviderOperatorService;
   gateway: ProviderGatewayService;
+  acquireCredentialForEnabledAdapter(adapterId: string): Promise<ProviderCredential | null>;
   close(): Promise<void>;
 }
 
@@ -79,6 +83,23 @@ export function createProviderGatewayRuntime(input: {
   return {
     operator,
     gateway,
+    async acquireCredentialForEnabledAdapter(adapterId: string): Promise<ProviderCredential | null> {
+      const matching = (await operator.list()).filter(
+        (record) => record.adapterId === adapterId && record.enabled
+      );
+      if (matching.length === 0) return null;
+      if (matching.length !== 1) {
+        throw new CapabilityError(
+          "PROVIDER_STATE_INVALID",
+          "Multiple enabled provider instances match the requested adapter"
+        );
+      }
+      return credentials.acquire({
+        provider: matching[0]!,
+        manifest: adapters.require(adapterId),
+        signal: lifetime.signal
+      });
+    },
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
