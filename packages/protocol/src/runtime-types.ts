@@ -306,10 +306,16 @@ const gitLocalMutationParamsSchema = z.discriminatedUnion("operation", [
   )
 ]);
 
+const gitRemoteCredentialSchema = z.object({
+  kind: z.literal("github_token"),
+  token: z.string().min(1).max(4096).refine((value) => !/[\0\r\n]/.test(value))
+}).strict();
+
 const gitRemoteMutationBase = {
   capabilityId: z.string().min(1),
   remote: z.string().min(1).max(128).refine((value) => !value.includes("\0")),
-  ref: z.string().min(1).max(255).refine((value) => !value.includes("\0"))
+  ref: z.string().min(1).max(255).refine((value) => !value.includes("\0")),
+  credential: gitRemoteCredentialSchema.optional()
 };
 
 const gitRemoteMutationParamsSchema = z.discriminatedUnion("operation", [

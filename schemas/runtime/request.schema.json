@@ -733,7 +733,16 @@
             "capabilityId": { "type": "string", "minLength": 1 },
             "operation": { "enum": ["fetch", "pull", "push"] },
             "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
-            "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+            "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "credential": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "token"],
+              "properties": {
+                "kind": { "const": "github_token" },
+                "token": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$" }
+              }
+            }
           },
           "oneOf": [
             {
@@ -744,7 +753,16 @@
                 "capabilityId": { "type": "string", "minLength": 1 },
                 "operation": { "const": "fetch" },
                 "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
-                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+                "credential": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "token"],
+                  "properties": {
+                    "kind": { "const": "github_token" },
+                    "token": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$" }
+                  }
+                }
               }
             },
             {
@@ -755,7 +773,16 @@
                 "capabilityId": { "type": "string", "minLength": 1 },
                 "operation": { "const": "pull" },
                 "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
-                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+                "credential": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "token"],
+                  "properties": {
+                    "kind": { "const": "github_token" },
+                    "token": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$" }
+                  }
+                }
               }
             },
             {
@@ -766,7 +793,16 @@
                 "capabilityId": { "type": "string", "minLength": 1 },
                 "operation": { "const": "push" },
                 "remote": { "type": "string", "minLength": 1, "maxLength": 128 },
-                "ref": { "type": "string", "minLength": 1, "maxLength": 255 }
+                "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+                "credential": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "token"],
+                  "properties": {
+                    "kind": { "const": "github_token" },
+                    "token": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000\\r\\n]+$" }
+                  }
+                }
               }
             }
           ]
