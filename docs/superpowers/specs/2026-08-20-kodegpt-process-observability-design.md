@@ -1,7 +1,7 @@
 # KodeGPT Process Observability Design
 
 Date: 2026-08-20
-Status: approved direction; written-spec review pending
+Status: implemented and verified on `feat/development-efficiency-v2`
 
 ## Goal
 
