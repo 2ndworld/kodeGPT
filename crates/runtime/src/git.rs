@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::Read;
 use std::os::fd::OwnedFd;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -12,10 +12,14 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use kodegpt_protocol::GitRemoteCredential;
 use kodegpt_sandbox::{
     BubblewrapProvider, GitMetadataAccess, PRIVATE_GIT_CONFIG_PATH, SandboxError,
-    SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable, WorkspaceAccess,
-    resolve_trusted_executable,
+    SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable, WorkspaceAccess, WorkspaceAlias,
+    open_linked_worktree_git_metadata, resolve_trusted_executable,
 };
-use kodegpt_workspace_io::{PathIdentityKind, PathIdentityResult, path_identity_beneath};
+use kodegpt_workspace_io::{
+    OpenatBoundaryError, PathIdentityKind, PathIdentityResult,
+    ensure_root_child_directory_no_symlinks, open_directory_beneath_no_symlinks,
+    path_identity_beneath,
+};
 use serde::Serialize;
 
 use crate::execution::{ExecutionKind, ExecutionRegistry};
@@ -32,6 +36,7 @@ const GIT_REPOSITORY_IDENTITY_TIMEOUT: Duration = Duration::from_secs(5);
 const GIT_REPOSITORY_IDENTITY_MAX_REMOTES: usize = 32;
 const GIT_REPOSITORY_IDENTITY_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 const GIT_REMOTE_CREDENTIAL_MAX_BYTES: usize = 4096;
+const WORKTREE_NAME_MAX_BYTES: usize = 64;
 const STAGED_PATCH_HEADER: &[u8] = b"=== KODEGPT STAGED DIFF ===\n";
 const WORKTREE_PATCH_HEADER: &[u8] = b"\n=== KODEGPT WORKTREE DIFF ===\n";
 
@@ -48,6 +53,34 @@ pub enum GitLocalMutation {
     BranchCreate { name: String },
     BranchSwitch { name: String },
     BranchDelete { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitWorktreeMutation {
+    Create { name: String, branch: String },
+    Remove { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum GitWorktreeMutationResult {
+    Create {
+        schema_version: u32,
+        name: String,
+        relative_path: String,
+        branch: String,
+        head_oid: String,
+    },
+    Remove {
+        schema_version: u32,
+        name: String,
+        relative_path: String,
+        removed: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +218,16 @@ pub enum GitInspectionError {
     UnsafeRepositoryConfig,
     InvalidCheckpointStatus,
     InvalidMutationInput,
+    WorktreeInputInvalid,
+    WorktreeTargetExists,
+    WorktreeBranchMissing,
+    WorktreeBranchInUse,
+    WorktreeMetadataInvalid,
+    WorktreeDirty,
+    WorktreeLocked,
+    WorktreeUnavailable,
+    WorktreeFailed,
+    WorktreeInconsistent,
     CommandFailed,
     CheckpointIdentityUnavailable,
     RepositoryIdentityInvalid,
@@ -208,6 +251,26 @@ impl fmt::Display for GitInspectionError {
                 formatter.write_str("Git checkpoint status is invalid")
             }
             Self::InvalidMutationInput => formatter.write_str("Git mutation input is invalid"),
+            Self::WorktreeInputInvalid => formatter.write_str("Git worktree input is invalid"),
+            Self::WorktreeTargetExists => formatter.write_str("Git worktree target already exists"),
+            Self::WorktreeBranchMissing => {
+                formatter.write_str("Git worktree branch does not exist")
+            }
+            Self::WorktreeBranchInUse => {
+                formatter.write_str("Git worktree branch is already checked out")
+            }
+            Self::WorktreeMetadataInvalid => {
+                formatter.write_str("Git worktree metadata is invalid")
+            }
+            Self::WorktreeDirty => formatter.write_str("Git worktree is dirty"),
+            Self::WorktreeLocked => formatter.write_str("Git worktree is locked"),
+            Self::WorktreeUnavailable => {
+                formatter.write_str("Git worktree lifecycle is unavailable")
+            }
+            Self::WorktreeFailed => formatter.write_str("Git worktree lifecycle command failed"),
+            Self::WorktreeInconsistent => {
+                formatter.write_str("Git worktree lifecycle postcondition is inconsistent")
+            }
             Self::CommandFailed => formatter.write_str("Git command failed"),
             Self::CheckpointIdentityUnavailable => {
                 formatter.write_str("Git checkpoint path identity is unavailable")
@@ -506,6 +569,392 @@ pub fn run_git_local_mutation(
         bytes_spooled: budgeted.artifact.bytes_written,
         artifact: budgeted.artifact,
     })
+}
+
+pub fn run_git_worktree_mutation(
+    workspace_root: &OwnedFd,
+    canonical_root: &Path,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    mutation: GitWorktreeMutation,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitWorktreeMutationResult, GitInspectionError> {
+    if !canonical_root.is_absolute() {
+        return Err(GitInspectionError::WorktreeUnavailable);
+    }
+    let provider = BubblewrapProvider::discover()?;
+    let program = resolve_trusted_executable("git").map_err(SandboxError::from)?;
+    let filter_overrides = discover_filter_overrides(
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        &provider,
+        &program,
+        spool,
+        executions,
+    )?;
+
+    match mutation {
+        GitWorktreeMutation::Create { name, branch } => {
+            if !valid_worktree_name(&name) || !valid_branch_name(&branch) {
+                return Err(GitInspectionError::WorktreeInputInvalid);
+            }
+            let relative_path = PathBuf::from(".worktrees").join(&name);
+            let target = path_identity_beneath(workspace_root, &relative_path, false)
+                .map_err(|_| GitInspectionError::WorktreeUnavailable)?;
+            if target.exists {
+                return Err(GitInspectionError::WorktreeTargetExists);
+            }
+            let container = ensure_root_child_directory_no_symlinks(workspace_root, ".worktrees")
+                .map_err(map_worktree_boundary_error)?;
+            drop(container);
+            if !worktree_branch_exists(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                &branch,
+                &provider,
+                &program,
+                spool,
+                executions,
+            )? {
+                return Err(GitInspectionError::WorktreeBranchMissing);
+            }
+            if worktree_branch_in_use(
+                workspace_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                &branch,
+                &provider,
+                &program,
+                spool,
+                executions,
+            )? {
+                return Err(GitInspectionError::WorktreeBranchInUse);
+            }
+
+            let canonical_target = canonical_root.join(&relative_path);
+            let mut args = base_git_args();
+            args.extend(filter_overrides.iter().cloned());
+            args.push(OsString::from("-C"));
+            args.push(canonical_root.as_os_str().to_owned());
+            args.extend(["worktree", "add"].into_iter().map(OsString::from));
+            args.push(canonical_target.as_os_str().to_owned());
+            args.push(OsString::from(&branch));
+            let output = run_worktree_alias_command(
+                workspace_root,
+                canonical_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                args,
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
+            if output.exit_code != 0 {
+                let stderr = String::from_utf8_lossy(&output.stderr_preview);
+                if stderr.contains("is already checked out at") {
+                    return Err(GitInspectionError::WorktreeBranchInUse);
+                }
+                if stderr.contains("already exists") {
+                    return Err(GitInspectionError::WorktreeTargetExists);
+                }
+                return Err(GitInspectionError::WorktreeFailed);
+            }
+
+            let head_oid = validate_created_worktree(
+                workspace_root,
+                &relative_path,
+                &branch,
+                workspace_capability,
+                request_id,
+                operation_id,
+                spool,
+                executions,
+            )?;
+            Ok(GitWorktreeMutationResult::Create {
+                schema_version: 1,
+                name,
+                relative_path: relative_path.to_string_lossy().into_owned(),
+                branch,
+                head_oid,
+            })
+        }
+        GitWorktreeMutation::Remove { name } => {
+            if !valid_worktree_name(&name) {
+                return Err(GitInspectionError::WorktreeInputInvalid);
+            }
+            let relative_path = PathBuf::from(".worktrees").join(&name);
+            let child_root = open_directory_beneath_no_symlinks(workspace_root, &relative_path)
+                .map_err(map_worktree_boundary_error)?;
+            let metadata = open_linked_worktree_git_metadata(&child_root)
+                .map_err(|_| GitInspectionError::WorktreeMetadataInvalid)?
+                .ok_or(GitInspectionError::WorktreeMetadataInvalid)?;
+            if metadata.git_dir_path.join("locked").exists() {
+                return Err(GitInspectionError::WorktreeLocked);
+            }
+            let admin_path = metadata.git_dir_path.clone();
+            drop(metadata);
+
+            let status = run_git_inspection(
+                &child_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                GitOperation::Status,
+                spool,
+                executions,
+            )?;
+            if status.exit_code != 0 {
+                return Err(GitInspectionError::WorktreeFailed);
+            }
+            if !status.stdout_preview.is_empty() {
+                return Err(GitInspectionError::WorktreeDirty);
+            }
+            drop(child_root);
+
+            let canonical_target = canonical_root.join(&relative_path);
+            let mut args = base_git_args();
+            args.extend(filter_overrides.iter().cloned());
+            args.push(OsString::from("-C"));
+            args.push(canonical_root.as_os_str().to_owned());
+            args.extend(["worktree", "remove"].into_iter().map(OsString::from));
+            args.push(canonical_target.as_os_str().to_owned());
+            let output = run_worktree_alias_command(
+                workspace_root,
+                canonical_root,
+                workspace_capability,
+                request_id,
+                operation_id,
+                args,
+                &provider,
+                &program,
+                spool,
+                executions,
+            )?;
+            if output.exit_code != 0 {
+                let stderr = String::from_utf8_lossy(&output.stderr_preview);
+                if stderr.contains("contains modified or untracked files") {
+                    return Err(GitInspectionError::WorktreeDirty);
+                }
+                if stderr.contains("is locked") {
+                    return Err(GitInspectionError::WorktreeLocked);
+                }
+                return Err(GitInspectionError::WorktreeFailed);
+            }
+
+            let target = path_identity_beneath(workspace_root, &relative_path, false)
+                .map_err(|_| GitInspectionError::WorktreeUnavailable)?;
+            if target.exists || admin_path.exists() {
+                return Err(GitInspectionError::WorktreeInconsistent);
+            }
+            Ok(GitWorktreeMutationResult::Remove {
+                schema_version: 1,
+                name,
+                relative_path: relative_path.to_string_lossy().into_owned(),
+                removed: true,
+            })
+        }
+    }
+}
+
+fn map_worktree_boundary_error(error: OpenatBoundaryError) -> GitInspectionError {
+    match error {
+        OpenatBoundaryError::BoundaryUnavailable | OpenatBoundaryError::NotFound => {
+            GitInspectionError::WorktreeUnavailable
+        }
+        OpenatBoundaryError::InvalidRelativePath
+        | OpenatBoundaryError::BoundaryViolation
+        | OpenatBoundaryError::Os(_) => GitInspectionError::WorktreeMetadataInvalid,
+    }
+}
+
+fn run_worktree_alias_command(
+    workspace_root: &OwnedFd,
+    canonical_root: &Path,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    args: Vec<OsString>,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<GitCommandOutput, GitInspectionError> {
+    let result = run_git_command_with_budget_and_private_git_config(
+        provider,
+        program,
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        args,
+        GitCommandBudget {
+            wall_timeout: Some(GIT_MUTATION_TIMEOUT),
+            stdout_source_bytes: GIT_MUTATION_MAX_OUTPUT_BYTES,
+            stderr_source_bytes: GIT_MUTATION_MAX_OUTPUT_BYTES,
+            preview_bytes: PREVIEW_MAX_BYTES,
+            overflow_policy: GitOverflowPolicy::Truncate,
+        },
+        spool,
+        executions,
+        false,
+        WorkspaceAccess::ReadWrite,
+        SandboxNetworkMode::Deny,
+        WorkspaceAlias::Canonical(canonical_root.to_path_buf()),
+        None,
+    )?;
+    Ok(result.output)
+}
+
+fn worktree_branch_exists(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    branch: &str,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<bool, GitInspectionError> {
+    let mut args = base_git_args();
+    args.extend(
+        ["show-ref", "--verify", "--quiet"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    args.push(OsString::from(format!("refs/heads/{branch}")));
+    let result = run_git_command_with_stdout_limit(
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        provider,
+        program,
+        args,
+        PREVIEW_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    Ok(result.exit_code == 0)
+}
+
+fn worktree_branch_in_use(
+    workspace_root: &OwnedFd,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    branch: &str,
+    provider: &BubblewrapProvider,
+    program: &TrustedExecutable,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<bool, GitInspectionError> {
+    let mut args = base_git_args();
+    args.extend(
+        ["worktree", "list", "--porcelain"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    let result = run_git_command_with_stdout_limit(
+        workspace_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        provider,
+        program,
+        args,
+        GIT_MUTATION_MAX_OUTPUT_BYTES,
+        spool,
+        executions,
+    )?;
+    if result.exit_code != 0 || result.stdout_truncated || result.artifact.source_truncated {
+        return Err(GitInspectionError::WorktreeUnavailable);
+    }
+    let expected = format!("branch refs/heads/{branch}");
+    Ok(String::from_utf8_lossy(&result.stdout_preview)
+        .lines()
+        .any(|line| line == expected))
+}
+
+fn validate_created_worktree(
+    workspace_root: &OwnedFd,
+    relative_path: &Path,
+    expected_branch: &str,
+    workspace_capability: &str,
+    request_id: &str,
+    operation_id: &str,
+    spool: &RawSpoolStore,
+    executions: &Mutex<ExecutionRegistry>,
+) -> Result<String, GitInspectionError> {
+    let child_root = open_directory_beneath_no_symlinks(workspace_root, relative_path)
+        .map_err(map_worktree_boundary_error)?;
+    let metadata = open_linked_worktree_git_metadata(&child_root)
+        .map_err(|_| GitInspectionError::WorktreeMetadataInvalid)?
+        .ok_or(GitInspectionError::WorktreeMetadataInvalid)?;
+    drop(metadata);
+
+    let provider = BubblewrapProvider::discover()?;
+    let program = resolve_trusted_executable("git").map_err(SandboxError::from)?;
+
+    let mut branch_args = base_git_args();
+    branch_args.extend(
+        ["symbolic-ref", "--quiet", "HEAD"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    let branch = run_git_command_with_stdout_limit(
+        &child_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        &provider,
+        &program,
+        branch_args,
+        PREVIEW_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    if branch.exit_code != 0
+        || String::from_utf8_lossy(&branch.stdout_preview).trim()
+            != format!("refs/heads/{expected_branch}")
+    {
+        return Err(GitInspectionError::WorktreeInconsistent);
+    }
+
+    let mut head_args = base_git_args();
+    head_args.extend(
+        ["rev-parse", "--verify", "HEAD"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    let head = run_git_command_with_stdout_limit(
+        &child_root,
+        workspace_capability,
+        request_id,
+        operation_id,
+        &provider,
+        &program,
+        head_args,
+        PREVIEW_MAX_BYTES,
+        spool,
+        executions,
+    )?;
+    let oid = String::from_utf8_lossy(&head.stdout_preview)
+        .trim()
+        .to_owned();
+    if head.exit_code != 0 || oid.len() != 40 || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(GitInspectionError::WorktreeInconsistent);
+    }
+    Ok(oid)
 }
 
 pub fn run_git_remote_mutation(
@@ -825,6 +1274,7 @@ fn run_remote_mutation_command(
         false,
         WorkspaceAccess::ReadWrite,
         SandboxNetworkMode::Unrestricted,
+        WorkspaceAlias::None,
         private_git_config,
     )?;
 
@@ -940,6 +1390,19 @@ pub(crate) fn validate_remote_mutation_input(
         return Err(GitInspectionError::InvalidMutationInput);
     }
     Ok(())
+}
+
+fn valid_worktree_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.len() > WORKTREE_NAME_MAX_BYTES || matches!(name, "." | "..") {
+        return false;
+    }
+    if !bytes[0].is_ascii_alphanumeric() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_remote_name(remote: &str) -> bool {
@@ -1731,6 +2194,7 @@ fn run_git_command_with_budget(
         history_no_lazy_fetch,
         workspace_access,
         network,
+        WorkspaceAlias::None,
         None,
     )
 }
@@ -1750,6 +2214,7 @@ fn run_git_command_with_budget_and_private_git_config(
     history_no_lazy_fetch: bool,
     workspace_access: WorkspaceAccess,
     network: SandboxNetworkMode,
+    workspace_alias: WorkspaceAlias,
     private_git_config: Option<&str>,
 ) -> Result<BudgetedGitCommandResult, GitInspectionError> {
     let mut spec = hardened_git_spec_with_access(
@@ -1762,6 +2227,7 @@ fn run_git_command_with_budget_and_private_git_config(
         spec.set_private_git_config(private_git_config.to_owned())?;
     }
     spec.network = network;
+    spec.workspace_alias = workspace_alias;
     let mut child = provider.spawn(workspace_root, &spec)?;
     let process_group = child.process_group();
     let execution_id = match executions.lock() {
@@ -2306,11 +2772,39 @@ mod tests {
 
     use super::{
         GitCheckpointRecordType, GitCommandBudget, GitInspectionError, GitLocalMutation,
-        GitOperation, GitOverflowPolicy, GitRemoteMutation, hardened_git_args, hardened_git_spec,
+        GitOperation, GitOverflowPolicy, GitRemoteMutation, GitWorktreeMutation,
+        GitWorktreeMutationResult, hardened_git_args, hardened_git_spec,
         hardened_git_spec_with_options, parse_checkpoint_status, run_git_checkpoint,
         run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
-        run_git_remote_mutation, run_git_repository_identity, run_hardened_git_command,
+        run_git_remote_mutation, run_git_repository_identity, run_git_worktree_mutation,
+        run_hardened_git_command, valid_worktree_name,
     };
+
+    #[test]
+    fn worktree_input_name_grammar_is_bounded_and_path_free() {
+        for valid in ["phase7", "review-47", "x.y_z", "a"] {
+            assert!(
+                valid_worktree_name(valid),
+                "expected valid worktree name: {valid}"
+            );
+        }
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "-phase7",
+            "feature/phase7",
+            "feature phase7",
+            "../escape",
+            "a%2Fb",
+            &"a".repeat(65),
+        ] {
+            assert!(
+                !valid_worktree_name(invalid),
+                "expected invalid worktree name: {invalid}"
+            );
+        }
+    }
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -2322,6 +2816,23 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(&root).expect("temporary root");
+        root
+    }
+
+    fn temporary_canonical_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let base = std::env::current_dir()
+            .expect("current directory")
+            .join("target/kodegpt-test-fixtures");
+        fs::create_dir_all(&base).expect("canonical fixture base");
+        let root = base.join(format!(
+            "kodegpt-git-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("canonical temporary root");
         root
     }
 
@@ -2925,6 +3436,221 @@ mod tests {
 
         drop(root_fd);
         fs::remove_dir_all(repository).expect("repository cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn worktree_create_uses_host_valid_metadata_without_repair() {
+        let workspace = temporary_canonical_root("worktree-create");
+        let state = temporary_root("worktree-create-state");
+        git(&workspace, &["init", "-b", "main"]);
+        git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        git(
+            &workspace,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(workspace.join("tracked.txt"), "base\n").expect("tracked file");
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "base"]);
+        git(&workspace, &["branch", "feat/phase7"]);
+
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let result = run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_create",
+            "req_worktree_create",
+            "op_worktree_create",
+            GitWorktreeMutation::Create {
+                name: "phase7".to_owned(),
+                branch: "feat/phase7".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("worktree create succeeds");
+
+        match result {
+            GitWorktreeMutationResult::Create {
+                name,
+                relative_path,
+                branch,
+                head_oid,
+                ..
+            } => {
+                assert_eq!(name, "phase7");
+                assert_eq!(relative_path, ".worktrees/phase7");
+                assert_eq!(branch, "feat/phase7");
+                assert_eq!(head_oid.len(), 40);
+            }
+            other => panic!("unexpected create result: {other:?}"),
+        }
+
+        let child = workspace.join(".worktrees/phase7");
+        let dot_git = fs::read_to_string(child.join(".git")).expect("child .git pointer");
+        assert!(!dot_git.contains("/workspace/"));
+        let admin_path = PathBuf::from(
+            dot_git
+                .trim()
+                .strip_prefix("gitdir: ")
+                .expect("gitdir prefix"),
+        );
+        let backlink = fs::read_to_string(admin_path.join("gitdir")).expect("admin backlink");
+        assert!(!backlink.contains("/workspace/"));
+        assert_eq!(
+            git_stdout(&child, &["branch", "--show-current"]).trim(),
+            "feat/phase7"
+        );
+        assert_eq!(git_stdout(&child, &["status", "--short"]), "");
+
+        drop(root_fd);
+        git(
+            &workspace,
+            &["worktree", "remove", child.to_str().expect("child path")],
+        );
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn worktree_remove_rejects_missing_dirty_and_locked_then_removes_clean() {
+        let workspace = temporary_canonical_root("worktree-remove");
+        let state = temporary_root("worktree-remove-state");
+        git(&workspace, &["init", "-b", "main"]);
+        git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        git(
+            &workspace,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(workspace.join("tracked.txt"), "base\n").expect("tracked file");
+        git(&workspace, &["add", "tracked.txt"]);
+        git(&workspace, &["commit", "-m", "base"]);
+        git(&workspace, &["branch", "feat/remove"]);
+
+        let root_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let audit = Arc::new(AuditSink::open(&state));
+        let spool = RawSpoolStore::open(&state, audit).expect("spool store");
+        let executions = Mutex::new(ExecutionRegistry::default());
+
+        let missing = run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_remove",
+            "req_worktree_missing",
+            "op_worktree_missing",
+            GitWorktreeMutation::Remove {
+                name: "missing".to_owned(),
+            },
+            &spool,
+            &executions,
+        );
+        assert!(matches!(
+            missing,
+            Err(GitInspectionError::WorktreeUnavailable)
+        ));
+
+        run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_remove",
+            "req_worktree_create_remove",
+            "op_worktree_create_remove",
+            GitWorktreeMutation::Create {
+                name: "remove".to_owned(),
+                branch: "feat/remove".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("worktree create for remove test");
+        let child = workspace.join(".worktrees/remove");
+
+        fs::write(child.join("tracked.txt"), "dirty\n").expect("dirty tracked file");
+        let dirty = run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_remove",
+            "req_worktree_dirty",
+            "op_worktree_dirty",
+            GitWorktreeMutation::Remove {
+                name: "remove".to_owned(),
+            },
+            &spool,
+            &executions,
+        );
+        assert!(matches!(dirty, Err(GitInspectionError::WorktreeDirty)));
+        assert!(child.exists());
+        fs::write(child.join("tracked.txt"), "base\n").expect("restore tracked file");
+
+        git(
+            &workspace,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                "phase7-test",
+                child.to_str().expect("child path"),
+            ],
+        );
+        let locked = run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_remove",
+            "req_worktree_locked",
+            "op_worktree_locked",
+            GitWorktreeMutation::Remove {
+                name: "remove".to_owned(),
+            },
+            &spool,
+            &executions,
+        );
+        assert!(matches!(locked, Err(GitInspectionError::WorktreeLocked)));
+        assert!(child.exists());
+        git(
+            &workspace,
+            &["worktree", "unlock", child.to_str().expect("child path")],
+        );
+
+        let removed = run_git_worktree_mutation(
+            &root_fd,
+            &workspace,
+            "kc_worktree_remove",
+            "req_worktree_remove",
+            "op_worktree_remove",
+            GitWorktreeMutation::Remove {
+                name: "remove".to_owned(),
+            },
+            &spool,
+            &executions,
+        )
+        .expect("clean worktree removal succeeds");
+        assert!(matches!(
+            removed,
+            GitWorktreeMutationResult::Remove {
+                removed: true,
+                ref name,
+                ref relative_path,
+                ..
+            } if name == "remove" && relative_path == ".worktrees/remove"
+        ));
+        assert!(!child.exists());
+        assert!(
+            TestCommand::new("git")
+                .arg("-C")
+                .arg(&workspace)
+                .args(["show-ref", "--verify", "--quiet", "refs/heads/feat/remove"])
+                .status()
+                .expect("branch existence check")
+                .success(),
+            "worktree removal must not delete the branch"
+        );
+
+        drop(root_fd);
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");
     }
 

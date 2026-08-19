@@ -224,6 +224,15 @@ impl BubblewrapProvider {
         let inherited_workspace_fd = workspace_root.try_clone()?;
         fcntl_setfd(&inherited_workspace_fd, FdFlags::empty())
             .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let inherited_workspace_alias_fd = match &spec.workspace_alias {
+            WorkspaceAlias::None => None,
+            WorkspaceAlias::Canonical(_) => {
+                let alias_fd = workspace_root.try_clone()?;
+                fcntl_setfd(&alias_fd, FdFlags::empty())
+                    .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+                Some(alias_fd)
+            }
+        };
         let linked_git_metadata = match spec.git_metadata_access {
             GitMetadataAccess::None => None,
             GitMetadataAccess::ReadOnly | GitMetadataAccess::ReadWrite => {
@@ -302,6 +311,9 @@ impl BubblewrapProvider {
 
         let mut command = self.build_command(
             inherited_workspace_fd.as_raw_fd(),
+            inherited_workspace_alias_fd
+                .as_ref()
+                .map(AsRawFd::as_raw_fd),
             Some(status_writer.as_raw_fd()),
             linked_git_metadata.as_ref(),
             &explicit_mounts,
@@ -356,6 +368,7 @@ impl BubblewrapProvider {
         }
         drop(status_writer);
         drop(inherited_workspace_fd);
+        drop(inherited_workspace_alias_fd);
         let process_group = match read_child_pid(&status_reader) {
             Ok(process_group) => process_group,
             Err(error) => {
@@ -385,6 +398,7 @@ impl BubblewrapProvider {
     fn build_command(
         &self,
         workspace_fd: i32,
+        workspace_alias_fd: Option<i32>,
         status_fd: Option<i32>,
         linked_git_metadata: Option<&LinkedWorktreeGitMetadata>,
         explicit_mounts: &[ExplicitExecutableMount],
@@ -531,15 +545,17 @@ impl BubblewrapProvider {
             }
         }
         if let WorkspaceAlias::Canonical(target) = &spec.workspace_alias {
+            let alias_fd = workspace_alias_fd.ok_or_else(|| {
+                SandboxError::SandboxUnavailable(
+                    "canonical workspace alias descriptor was not provided".to_owned(),
+                )
+            })?;
             append_parent_directories(&mut command, target);
             let bind_flag = match spec.workspace_access {
                 WorkspaceAccess::ReadOnly => "--ro-bind-fd",
                 WorkspaceAccess::ReadWrite => "--bind-fd",
             };
-            command
-                .arg(bind_flag)
-                .arg(workspace_fd.to_string())
-                .arg(target);
+            command.arg(bind_flag).arg(alias_fd.to_string()).arg(target);
         }
 
         let child_path = if explicit_mounts.is_empty() {
@@ -870,7 +886,7 @@ mod tests {
         spec.set_private_git_config("fixture-private-config\n".to_owned())
             .expect("bounded private Git config");
         let command = provider
-            .build_command(3, None, None, &[], None, None, None, &spec)
+            .build_command(3, None, None, None, &[], None, None, None, &spec)
             .expect("private-config command construction");
         let args = command
             .get_args()
@@ -899,7 +915,7 @@ mod tests {
         spec.workspace_access = WorkspaceAccess::ReadWrite;
         spec.workspace_alias = WorkspaceAlias::Canonical(PathBuf::from("/home/example/repo"));
         let command = provider
-            .build_command(17, None, None, &[], None, None, None, &spec)
+            .build_command(17, Some(18), None, None, &[], None, None, None, &spec)
             .expect("canonical workspace alias command construction");
         let args = command
             .get_args()
@@ -916,7 +932,7 @@ mod tests {
         );
         assert!(
             args.windows(3)
-                .any(|window| { window == ["--bind-fd", "17", "/home/example/repo"] })
+                .any(|window| { window == ["--bind-fd", "18", "/home/example/repo"] })
         );
         assert!(!args.windows(3).any(|window| {
             matches!(
@@ -977,7 +993,7 @@ mod tests {
         );
         spec.network = SandboxNetworkMode::Unrestricted;
         let command = provider
-            .build_command(3, None, None, &[], None, Some(9), None, &spec)
+            .build_command(3, None, None, None, &[], None, Some(9), None, &spec)
             .expect("unrestricted command construction");
         let args = command
             .get_args()
@@ -1219,7 +1235,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, None, &[], None, None, None, &spec),
+                provider.build_command(3, None, None, None, &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }

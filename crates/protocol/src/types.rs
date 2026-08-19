@@ -603,6 +603,25 @@ pub enum GitRemoteCredential {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
+pub enum GitWorktreeMutationParams {
+    Create {
+        capability_id: String,
+        name: String,
+        branch: String,
+    },
+    Remove {
+        capability_id: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum GitRemoteMutationParams {
     Fetch {
         capability_id: String,
@@ -919,6 +938,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: GitLocalMutationParams,
+    },
+    #[serde(rename = "git.worktree_mutation")]
+    GitWorktreeMutation {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: GitWorktreeMutationParams,
     },
     #[serde(rename = "git.remote_mutation")]
     GitRemoteMutation {

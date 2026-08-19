@@ -8,15 +8,15 @@ use kodegpt_protocol::{
     CiProvider, FileCommitPatchParams, FileEditParams, FileIdentityParams, FileReadParams,
     FileSearchParams, FileTreeParams, FileWriteParams, FileWritePrecondition, GitDiffHistoryParams,
     GitDiffParams, GitLocalMutationParams, GitLogParams, GitRangeParams, GitRemoteMutationParams,
-    GitRepositoryIdentityParams, GitShowParams, GitStatusParams, NetworkMode,
-    PersistentFilesystemIdentity as ProtocolFilesystemIdentity, ProcessInspectExecutableParams,
-    ProcessOperationParams, ProcessRunParams, ProfileName, ProviderAuditOperation,
-    ProviderAuditParams, ProviderAuditPhase, ProviderErrorCode, RuntimePolicy,
-    SkillSourceCapabilityParams, SkillSourceInspectRootParams, SkillSourceReadEncoding,
-    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
-    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
-    WorkspaceCapabilityParams, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
-    WorkspaceTraversalScope as ProtocolTraversalScope,
+    GitRepositoryIdentityParams, GitShowParams, GitStatusParams, GitWorktreeMutationParams,
+    NetworkMode, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
+    ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
+    ProviderAuditOperation, ProviderAuditParams, ProviderAuditPhase, ProviderErrorCode,
+    RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
+    SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
+    SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
 use kodegpt_workspace_io::{
@@ -36,9 +36,10 @@ use crate::audit::{
 };
 use crate::execution::ExecutionRegistry;
 use crate::git::{
-    GitInspectionError, GitLocalMutation, GitOperation, GitRemoteMutation, run_git_checkpoint,
-    run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation, run_git_remote_mutation,
-    run_git_repository_identity, validate_remote_mutation_input,
+    GitInspectionError, GitLocalMutation, GitOperation, GitRemoteMutation, GitWorktreeMutation,
+    run_git_checkpoint, run_git_checkpoint_patch, run_git_inspection, run_git_local_mutation,
+    run_git_remote_mutation, run_git_repository_identity, run_git_worktree_mutation,
+    validate_remote_mutation_input,
 };
 use crate::git_history::{
     GIT_LOG_MAX_LIMIT, GIT_PATCH_HARD_MAX_BYTES, GIT_RANGE_MAX_LIMIT, GitHistoryError,
@@ -1199,6 +1200,47 @@ async fn dispatch_one(
             )
             .await
         }
+        "git.worktree_mutation" => {
+            let params = match serde_json::from_value::<GitWorktreeMutationParams>(request.params) {
+                Ok(params) => params,
+                Err(_) => {
+                    return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+                }
+            };
+            let (capability_id, mutation, action) = match params {
+                GitWorktreeMutationParams::Create {
+                    capability_id,
+                    name,
+                    branch,
+                } => (
+                    capability_id,
+                    GitWorktreeMutation::Create { name, branch },
+                    AuditAction::GitWorktreeCreate,
+                ),
+                GitWorktreeMutationParams::Remove {
+                    capability_id,
+                    name,
+                } => (
+                    capability_id,
+                    GitWorktreeMutation::Remove { name },
+                    AuditAction::GitWorktreeRemove,
+                ),
+            };
+            if capability_id.is_empty() {
+                return error_response(Some(request.id), -32602, "INVALID_PARAMS");
+            }
+            dispatch_git_worktree_mutation(
+                &audit,
+                &workspace_registry,
+                &execution_registry,
+                raw_spool,
+                request.id,
+                capability_id,
+                mutation,
+                action,
+            )
+            .await
+        }
         "git.remote_mutation" => {
             let params = match serde_json::from_value::<GitRemoteMutationParams>(request.params) {
                 Ok(params) => params,
@@ -2059,6 +2101,145 @@ async fn dispatch_git_local_mutation(
         AuditOutcome::Failed
     };
     if audit.outcome(&context, outcome).is_err() {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+    success_response(request_id, json!(result))
+}
+
+fn git_worktree_error_contract(error: &GitInspectionError) -> (i64, &'static str) {
+    match error {
+        GitInspectionError::WorktreeInputInvalid | GitInspectionError::InvalidMutationInput => {
+            (-32080, "GIT_WORKTREE_INPUT_INVALID")
+        }
+        GitInspectionError::WorktreeTargetExists => (-32081, "GIT_WORKTREE_TARGET_EXISTS"),
+        GitInspectionError::WorktreeBranchMissing => (-32082, "GIT_WORKTREE_BRANCH_MISSING"),
+        GitInspectionError::WorktreeBranchInUse => (-32083, "GIT_WORKTREE_BRANCH_IN_USE"),
+        GitInspectionError::WorktreeMetadataInvalid => (-32084, "GIT_WORKTREE_METADATA_INVALID"),
+        GitInspectionError::WorktreeDirty => (-32085, "GIT_WORKTREE_DIRTY"),
+        GitInspectionError::WorktreeLocked => (-32086, "GIT_WORKTREE_LOCKED"),
+        GitInspectionError::WorktreeUnavailable | GitInspectionError::Sandbox(_) => {
+            (-32087, "GIT_WORKTREE_UNAVAILABLE")
+        }
+        GitInspectionError::WorktreeInconsistent => (-32088, "GIT_WORKTREE_INCONSISTENT"),
+        GitInspectionError::WorktreeFailed
+        | GitInspectionError::Spool(_)
+        | GitInspectionError::RegistryUnavailable
+        | GitInspectionError::CaptureFailed
+        | GitInspectionError::UnsafeRepositoryConfig
+        | GitInspectionError::InvalidCheckpointStatus
+        | GitInspectionError::CommandFailed
+        | GitInspectionError::CheckpointIdentityUnavailable
+        | GitInspectionError::RepositoryIdentityInvalid
+        | GitInspectionError::RepositoryIdentityLimitExceeded
+        | GitInspectionError::Timeout
+        | GitInspectionError::OutputLimitExceeded
+        | GitInspectionError::WaitFailed(_) => (-32089, "GIT_WORKTREE_FAILED"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_git_worktree_mutation(
+    audit: &Arc<AuditSink>,
+    registry: &Arc<Mutex<WorkspaceRegistry<RuntimePolicy>>>,
+    executions: &Arc<Mutex<ExecutionRegistry>>,
+    raw_spool: Option<Arc<RawSpoolStore>>,
+    request_id: String,
+    capability_id: String,
+    mutation: GitWorktreeMutation,
+    action: AuditAction,
+) -> Value {
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
+        Err(_) => {
+            return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
+        }
+    };
+    if policy.name != ProfileName::Trusted || !policy.allow_write {
+        return error_response(Some(request_id), -32059, "GIT_POLICY_DENIED");
+    }
+
+    let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
+    let operation_id = format!("op_{operation_suffix}");
+    let context = AuditContext {
+        request_id: request_id.clone(),
+        operation_id: operation_id.clone(),
+        capability_id: Some(capability_id.clone()),
+        action,
+    };
+    if audit
+        .decision(
+            &context,
+            AuditDecision::Allow,
+            AuditReason::RequestValidated,
+        )
+        .is_err()
+    {
+        return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
+    }
+
+    let ready_root = match registry.lock() {
+        Ok(registry) => match registry.duplicate_ready_root(&capability_id) {
+            Ok(ready_root) => ready_root,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return audited_failure(audit, &context, request_id, code, message);
+            }
+        },
+        Err(_) => {
+            return audited_failure(
+                audit,
+                &context,
+                request_id,
+                -32026,
+                "WORKSPACE_REGISTRY_UNAVAILABLE",
+            );
+        }
+    };
+    let Some(raw_spool) = raw_spool else {
+        return audited_failure(
+            audit,
+            &context,
+            request_id,
+            -32087,
+            "GIT_WORKTREE_UNAVAILABLE",
+        );
+    };
+
+    let executions = Arc::clone(executions);
+    let capability_for_run = capability_id.clone();
+    let request_for_run = request_id.clone();
+    let operation_for_run = operation_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        run_git_worktree_mutation(
+            &ready_root.root_fd,
+            &ready_root.canonical_display_root,
+            &capability_for_run,
+            &request_for_run,
+            &operation_for_run,
+            mutation,
+            &raw_spool,
+            &executions,
+        )
+    })
+    .await;
+
+    let result = match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => {
+            let (code, message) = git_worktree_error_contract(&error);
+            return audited_failure(audit, &context, request_id, code, message);
+        }
+        Err(_) => {
+            return audited_failure(audit, &context, request_id, -32089, "GIT_WORKTREE_FAILED");
+        }
+    };
+    if audit.outcome(&context, AuditOutcome::Success).is_err() {
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
     success_response(request_id, json!(result))
@@ -3355,6 +3536,17 @@ mod tests {
         (sink, root)
     }
 
+    fn canonical_fixture_root(label: &str) -> PathBuf {
+        let base = std::env::current_dir()
+            .expect("current directory")
+            .join("target/kodegpt-dispatcher-fixtures");
+        fs::create_dir_all(&base).expect("dispatcher fixture base");
+        let root = base.join(format!("{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dispatcher canonical fixture root");
+        root
+    }
+
     fn request(id: &str, method: &str, params: Value) -> Value {
         json!({
             "jsonrpc": "2.0",
@@ -4013,6 +4205,105 @@ mod tests {
         .await;
         assert_eq!(activated["result"]["ok"], true);
         capability_id
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worktree_mutation_requires_trusted_policy_and_audits_structured_lifecycle() {
+        let (audit, audit_root) = audit_sink("git-worktree-mutation");
+        let workspace = canonical_fixture_root("git-worktree-mutation");
+        test_git(&workspace, &["init", "-b", "main"]);
+        test_git(&workspace, &["config", "user.name", "KodeGPT Test"]);
+        test_git(
+            &workspace,
+            &["config", "user.email", "kodegpt@example.invalid"],
+        );
+        fs::write(workspace.join("tracked.txt"), "content\n").expect("tracked file");
+        test_git(&workspace, &["add", "tracked.txt"]);
+        test_git(&workspace, &["commit", "-m", "base"]);
+        test_git(&workspace, &["branch", "feat/worktree-dispatch"]);
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            trusted_policy(),
+            "git_worktree_trusted",
+        )
+        .await;
+
+        let created = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_worktree_create",
+            "git.worktree_mutation",
+            json!({
+                "capabilityId": capability,
+                "operation": "create",
+                "name": "phase7",
+                "branch": "feat/worktree-dispatch"
+            }),
+        )
+        .await;
+        assert_eq!(created["result"]["schemaVersion"], 1);
+        assert_eq!(created["result"]["operation"], "create");
+        assert_eq!(created["result"]["name"], "phase7");
+        assert_eq!(created["result"]["relativePath"], ".worktrees/phase7");
+        assert_eq!(created["result"]["branch"], "feat/worktree-dispatch");
+        assert_eq!(
+            created["result"]["headOid"]
+                .as_str()
+                .expect("head oid")
+                .len(),
+            40
+        );
+        assert!(workspace.join(".worktrees/phase7").exists());
+        assert!(
+            !created
+                .to_string()
+                .contains(&workspace.to_string_lossy().to_string())
+        );
+
+        let removed = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_git_worktree_remove",
+            "git.worktree_mutation",
+            json!({
+                "capabilityId": capability,
+                "operation": "remove",
+                "name": "phase7"
+            }),
+        )
+        .await;
+        assert_eq!(removed["result"]["schemaVersion"], 1);
+        assert_eq!(removed["result"]["operation"], "remove");
+        assert_eq!(removed["result"]["relativePath"], ".worktrees/phase7");
+        assert_eq!(removed["result"]["removed"], true);
+        assert!(!workspace.join(".worktrees/phase7").exists());
+        assert!(
+            !removed
+                .to_string()
+                .contains(&workspace.to_string_lossy().to_string())
+        );
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit log");
+        assert!(audit_text.contains("git_worktree_create"));
+        assert!(audit_text.contains("git_worktree_remove"));
+        assert!(!audit_text.contains("feat/worktree-dispatch"));
+        assert!(!audit_text.contains("phase7"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(audit_root).expect("audit cleanup");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
