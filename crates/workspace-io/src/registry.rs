@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::identity::{FilesystemIdentity, filesystem_identity, inspect_root};
@@ -49,6 +49,12 @@ struct WorkspaceSecurityContext<P> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceRegistration {
     pub capability_id: String,
+}
+
+#[derive(Debug)]
+pub struct ReadyWorkspaceRoot {
+    pub root_fd: OwnedFd,
+    pub canonical_display_root: PathBuf,
 }
 
 #[derive(Debug)]
@@ -457,6 +463,21 @@ impl<P> WorkspaceRegistry<P> {
             .map_err(|_| WorkspaceRegistryError::FileReadFailed)
     }
 
+    pub fn duplicate_ready_root(
+        &self,
+        capability_id: &str,
+    ) -> Result<ReadyWorkspaceRoot, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        let root_fd = context
+            .root_fd
+            .try_clone()
+            .map_err(|_| WorkspaceRegistryError::FileReadFailed)?;
+        Ok(ReadyWorkspaceRoot {
+            root_fd,
+            canonical_display_root: context.canonical_display_root.clone(),
+        })
+    }
+
     pub fn clone_ready_policy(&self, capability_id: &str) -> Result<P, WorkspaceRegistryError>
     where
         P: Clone,
@@ -803,6 +824,10 @@ mod tests {
             registry.duplicate_ready_root_fd(&capability_id),
             Err(WorkspaceRegistryError::WorkspaceNotReady)
         ));
+        assert!(matches!(
+            registry.duplicate_ready_root(&capability_id),
+            Err(WorkspaceRegistryError::WorkspaceNotReady)
+        ));
         registry
             .restrict_policy_with(&capability_id, (), |_, _| Ok::<(), ()>(()))
             .expect("opening policy restriction accepted");
@@ -818,6 +843,22 @@ mod tests {
         let duplicated_file = fs::File::from(duplicated);
         assert_eq!(
             filesystem_identity(&duplicated_file.metadata().expect("duplicated metadata")),
+            identity
+        );
+        let duplicated_root = registry
+            .duplicate_ready_root(&capability_id)
+            .expect("ready root duplicates with canonical display path");
+        assert_eq!(
+            duplicated_root.canonical_display_root,
+            fs::canonicalize(&root).expect("root canonicalized")
+        );
+        let duplicated_root_file = fs::File::from(duplicated_root.root_fd);
+        assert_eq!(
+            filesystem_identity(
+                &duplicated_root_file
+                    .metadata()
+                    .expect("duplicated root metadata")
+            ),
             identity
         );
         assert!(matches!(
