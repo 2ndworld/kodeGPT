@@ -153,6 +153,31 @@ describe("netlify.deploy.v1", () => {
     });
   });
 
+  it("redacts credential-like provider error evidence before exposing inspect output", () => {
+    const input = NetlifyDeployInspectInputSchema.parse({ siteId: SITE_ID, deploymentId: DEPLOYMENT_ID });
+    const value = parseProviderSemanticOutput(
+      Buffer.from(JSON.stringify({
+        id: DEPLOYMENT_ID,
+        site_id: SITE_ID,
+        state: "error",
+        deploy_ssl_url: "https://deploy-123--example.netlify.app",
+        branch: "feat/typed-preview",
+        commit_ref: OID,
+        created_at: "2026-08-19T00:00:00Z",
+        updated_at: "2026-08-19T00:01:00Z",
+        error_message: "build failed: Authorization: Bearer [REDACTED_SECRET]"
+      })),
+      NetlifyDeployInspectResultSchema,
+      { semanticInput: input, mapOutput: mapping("netlify.deploy.preview.inspect").mapOutput }
+    );
+
+    expect(value).toMatchObject({
+      state: "error",
+      errorMessage: "build failed: Authorization: [REDACTED]"
+    });
+    expect(JSON.stringify(value)).not.toContain("[REDACTED_SECRET]");
+  });
+
   it("rejects inspect identity mismatches instead of trusting a raw provider object", () => {
     const input = NetlifyDeployInspectInputSchema.parse({ siteId: SITE_ID, deploymentId: DEPLOYMENT_ID });
     expect(() => parseProviderSemanticOutput(

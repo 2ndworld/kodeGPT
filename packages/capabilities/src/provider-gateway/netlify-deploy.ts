@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import type { ProviderAdapterManifest, ProviderEncodedRequest } from "./contracts.js";
+import { redactCiText } from "../remote-ci/redaction.js";
 import { GitHubBranchValueSchema, GitHubRepositorySchema } from "./github.js";
 
 const ADAPTER_ID = "netlify.deploy.v1";
@@ -203,7 +204,7 @@ function mapInspect(providerValue: unknown, semanticInput: unknown): unknown {
     updatedAt: raw.updated_at,
     ...(raw.error_message === undefined || raw.error_message === null || raw.error_message.length === 0
       ? {}
-      : { errorMessage: raw.error_message })
+      : { errorMessage: redactCiText(raw.error_message, "") })
   };
 }
 
