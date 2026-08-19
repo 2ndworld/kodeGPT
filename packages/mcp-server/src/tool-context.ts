@@ -167,6 +167,7 @@ export interface ProcessToolContext {
   status(input: {
     workspaceId: string;
     operationId: string;
+    waitMs?: number;
   }): MaybePromise<WorkspaceProcessOperationResult>;
   cancel(input: {
     workspaceId: string;
@@ -424,8 +425,8 @@ export function createKodegptToolContext(options: {
     },
     process: {
       run: (input) => options.executionManager.run(input),
-      status: ({ workspaceId, operationId }) =>
-        options.executionManager.status(workspaceId, operationId),
+      status: ({ workspaceId, operationId, waitMs }) =>
+        options.executionManager.status(workspaceId, operationId, waitMs),
       cancel: ({ workspaceId, operationId }) =>
         options.executionManager.cancel(workspaceId, operationId)
     },
