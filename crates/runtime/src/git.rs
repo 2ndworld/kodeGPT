@@ -901,9 +901,7 @@ fn github_auth_config(url: &str, token: &str) -> Result<String, GitInspectionErr
          \textraHeader = Authorization: Basic {encoded}\n\
          \tfollowRedirects = false\n\
          \tproxy =\n\
-         \tsslVerify = true\n\
-         \tsslCAInfo = /etc/ssl/certs/ca-certificates.crt\n\
-         \tsslCAPath = /etc/ssl/certs\n"
+         \tsslVerify = true\n"
     ))
 }
 
@@ -3148,8 +3146,8 @@ mod tests {
         assert!(config.contains("followRedirects = false"));
         assert!(config.contains("proxy ="));
         assert!(config.contains("sslVerify = true"));
-        assert!(config.contains("sslCAInfo = /etc/ssl/certs/ca-certificates.crt"));
-        assert!(config.contains("sslCAPath = /etc/ssl/certs"));
+        assert!(!config.contains("sslCAInfo"));
+        assert!(!config.contains("sslCAPath"));
         assert!(config.contains("extraHeader = Authorization: Basic "));
 
         let push_args = super::remote_push_args(url, "main", &[], true);
