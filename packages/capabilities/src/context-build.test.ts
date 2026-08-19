@@ -5,6 +5,7 @@ import {
   type CodeSearchInput,
   type CodeSearchResult,
   type GitChangesResult,
+  type VerifyListInput,
   type VerifyListResult,
   type WorkspaceInspectInput,
   type WorkspaceInspectResult
@@ -104,7 +105,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         if (options.searchFailure !== undefined) throw options.searchFailure;
         return search;
       },
-      verify: async () => {
+      verify: async (_input: VerifyListInput) => {
         if (options.verifyFailure !== undefined) throw options.verifyFailure;
         return verify;
       },
@@ -223,42 +224,36 @@ describe("context.build", () => {
         ]
       };
     };
-    fixture.adapter.verify = async () => ({
-      schemaVersion: 1,
-      workspaceId: "ws_1",
-      recipes: [
-        {
-          id: "package:test",
-          label: "Root test",
-          category: "test",
-          logicalExecutable: "pnpm",
-          argv: ["run", "test"],
-          cwd: ".",
-          source: "package-script",
-          allowed: true
-        },
-        {
-          id: "package:packages/core:test",
-          label: "Core test",
-          category: "test",
-          logicalExecutable: "pnpm",
-          argv: ["run", "test"],
-          cwd: "packages/core",
-          source: "package-script",
-          allowed: true
-        },
-        {
-          id: "package:packages/other:test",
-          label: "Other test",
-          category: "test",
-          logicalExecutable: "pnpm",
-          argv: ["run", "test"],
-          cwd: "packages/other",
-          source: "package-script",
-          allowed: true
-        }
-      ]
-    });
+    const verifyCalls: VerifyListInput[] = [];
+    fixture.adapter.verify = async (input) => {
+      verifyCalls.push(input);
+      return {
+        schemaVersion: 1,
+        workspaceId: "ws_1",
+        recipes: [
+          {
+            id: "package:packages/core:test",
+            label: "Core test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: "packages/core",
+            source: "package-script",
+            allowed: true
+          },
+          {
+            id: "package:test",
+            label: "Root test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: ".",
+            source: "package-script",
+            allowed: true
+          }
+        ]
+      };
+    };
 
     const result = await buildContext(fixture.adapter, {
       workspaceId: "ws_1",
@@ -276,6 +271,7 @@ describe("context.build", () => {
         maxResults: 100
       }
     ]);
+    expect(verifyCalls).toEqual([{ workspaceId: "ws_1", target: TARGET }]);
     expect(result.workspace).toMatchObject({
       scope: { kind: "target", area: "packages/core" },
       entrypoints: [

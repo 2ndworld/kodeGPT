@@ -1091,9 +1091,11 @@ export function registerKodegptTools(
       outputSchema: VerifyListResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) =>
+    async ({ workspaceId, target }) =>
       nativeCapabilityResult(async () =>
-        VerifyListResultSchema.parse(await context.verify.list({ workspaceId }))
+        VerifyListResultSchema.parse(
+          await context.verify.list({ workspaceId, ...(target === undefined ? {} : { target }) })
+        )
       )
   );
 

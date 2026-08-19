@@ -1139,7 +1139,13 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const context = makeContext();
+    let listInput: unknown;
+    context.verify.list = async (input) => {
+      listInput = input;
+      return typedVerifyListResult;
+    };
+    registerKodegptTools(server, context);
     const handler = handlers.get("verify.list");
     const definition = definitions.get("verify.list");
     expect(handler).toBeDefined();
@@ -1147,10 +1153,14 @@ describe("structured MCP tool results", () => {
     expect(definition?.outputSchema).toBe(VerifyListResultSchema);
     expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
 
-    const result = (await handler!({ workspaceId: "ws_1" } as never)) as {
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      target: "crates/runtime/src/process.rs"
+    } as never)) as {
       content: Array<{ type: string; text: string }>;
       structuredContent?: unknown;
     };
+    expect(listInput).toEqual({ workspaceId: "ws_1", target: "crates/runtime/src/process.rs" });
     expect(result.structuredContent).toEqual(typedVerifyListResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });

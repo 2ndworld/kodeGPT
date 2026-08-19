@@ -614,7 +614,10 @@ const verificationOperationSchema = z
   .strict();
 
 export const VerifyListInputSchema: z.ZodType<VerifyListInput> = z
-  .object({ workspaceId: z.string().min(1) })
+  .object({
+    workspaceId: z.string().min(1),
+    target: z.string().min(1).optional()
+  })
   .strict();
 
 export const VerifyListResultSchema: z.ZodType<VerifyListResult> = z
