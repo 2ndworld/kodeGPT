@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
@@ -28,6 +28,8 @@ const CHILD_WORKSPACE: &str = "/workspace";
 const FIXED_PATH: &str = "/usr/local/bin:/usr/bin:/bin";
 const RUNTIME_SYSTEM_PATHS: [&str; 5] = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
 const RESOLVER_RUNTIME_DIRECTORY: &str = "/run/systemd/resolve";
+pub const PRIVATE_GIT_CONFIG_PATH: &str = "/run/kodegpt/git-auth.config";
+const PRIVATE_GIT_CONFIG_MAX_BYTES: usize = 16 * 1024;
 const RESERVED_ENV: [&str; 6] = [
     "COREPACK_HOME",
     "HOME",
@@ -58,6 +60,18 @@ pub enum GitMetadataAccess {
     ReadWrite,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct PrivateGitConfig(String);
+
+impl fmt::Debug for PrivateGitConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateGitConfig")
+            .field("byte_len", &self.0.len())
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLaunchSpec {
     pub program: TrustedExecutable,
@@ -70,6 +84,7 @@ pub struct SandboxLaunchSpec {
     pub git_metadata_access: GitMetadataAccess,
     pub require_git_metadata: bool,
     pub cargo_home: Option<PathBuf>,
+    private_git_config: Option<PrivateGitConfig>,
 }
 
 impl SandboxLaunchSpec {
@@ -85,7 +100,19 @@ impl SandboxLaunchSpec {
             git_metadata_access: GitMetadataAccess::None,
             require_git_metadata: true,
             cargo_home: None,
+            private_git_config: None,
         }
+    }
+
+    pub fn set_private_git_config(&mut self, contents: String) -> Result<(), SandboxError> {
+        if contents.is_empty()
+            || contents.len() > PRIVATE_GIT_CONFIG_MAX_BYTES
+            || contents.contains('\0')
+        {
+            return Err(SandboxError::InvalidPrivateGitConfig);
+        }
+        self.private_git_config = Some(PrivateGitConfig(contents));
+        Ok(())
     }
 }
 
@@ -94,6 +121,7 @@ pub enum SandboxError {
     TrustedExecutable(TrustedExecutableError),
     Io(std::io::Error),
     InvalidCwd,
+    InvalidPrivateGitConfig,
     ReservedEnvironment,
     NetworkPolicyUnavailable,
     SandboxUnavailable(String),
@@ -105,6 +133,9 @@ impl fmt::Display for SandboxError {
             Self::TrustedExecutable(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "sandbox I/O failed: {error}"),
             Self::InvalidCwd => formatter.write_str("sandbox cwd must remain beneath /workspace"),
+            Self::InvalidPrivateGitConfig => {
+                formatter.write_str("sandbox private Git config is invalid")
+            }
             Self::ReservedEnvironment => {
                 formatter.write_str("sandbox environment attempts to override a reserved value")
             }
@@ -296,6 +327,21 @@ impl BubblewrapProvider {
                 "sandbox parent thread exited before publishing child".to_owned(),
             )
         })??;
+        if let Some(private_git_config) = &spec.private_git_config {
+            let Some(mut stdin) = child.stdin.take() else {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SandboxError::SandboxUnavailable(
+                    "private Git config pipe was not created".to_owned(),
+                ));
+            };
+            if let Err(error) = stdin.write_all(private_git_config.0.as_bytes()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SandboxError::Io(error));
+            }
+            drop(stdin);
+        }
         drop(status_writer);
         drop(inherited_workspace_fd);
         let process_group = match read_child_pid(&status_reader) {
@@ -343,28 +389,29 @@ impl BubblewrapProvider {
         }
 
         let mut command = Command::new(self.executable.canonical_path());
-        command
-            .env_clear()
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .args([
-                "--unshare-user",
-                "--unshare-pid",
-                "--unshare-ipc",
-                "--unshare-uts",
-                "--disable-userns",
-                "--assert-userns-disabled",
-                "--new-session",
-                "--die-with-parent",
-                "--clearenv",
-                "--uid",
-                "0",
-                "--gid",
-                "0",
-                "--cap-drop",
-                "ALL",
-            ]);
+        command.env_clear();
+        if spec.private_git_config.is_some() {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped()).args([
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--disable-userns",
+            "--assert-userns-disabled",
+            "--new-session",
+            "--die-with-parent",
+            "--clearenv",
+            "--uid",
+            "0",
+            "--gid",
+            "0",
+            "--cap-drop",
+            "ALL",
+        ]);
 
         if let Some(status_fd) = status_fd {
             command.arg("--json-status-fd").arg(status_fd.to_string());
@@ -379,15 +426,30 @@ impl BubblewrapProvider {
                 command.args(["--ro-bind", system_path, system_path]);
             }
         }
+        if resolver_fd.is_some() || spec.private_git_config.is_some() {
+            command.args(["--dir", "/run"]);
+        }
         if let Some(resolver_fd) = resolver_fd {
             command.args([
-                "--dir",
-                "/run",
                 "--dir",
                 "/run/systemd",
                 "--ro-bind-fd",
                 &resolver_fd.to_string(),
                 RESOLVER_RUNTIME_DIRECTORY,
+            ]);
+        }
+        if spec.private_git_config.is_some() {
+            command.args([
+                "--dir",
+                "/run/kodegpt",
+                "--chmod",
+                "0500",
+                "/run/kodegpt",
+                "--perms",
+                "0400",
+                "--ro-bind-data",
+                "0",
+                PRIVATE_GIT_CONFIG_PATH,
             ]);
         }
 
@@ -743,6 +805,55 @@ mod tests {
             super::resolver_runtime_directory(Path::new("/etc/static-resolv.conf")),
             None
         );
+    }
+
+    #[test]
+    fn private_git_config_uses_stdin_data_mount_without_secret_argv() {
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("cat").expect("trusted cat executable"),
+        );
+        spec.set_private_git_config("fixture-private-config\n".to_owned())
+            .expect("bounded private Git config");
+        let command = provider
+            .build_command(3, None, None, &[], None, None, None, &spec)
+            .expect("private-config command construction");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.contains("fixture-private-config"))
+        );
+        assert!(!format!("{spec:?}").contains("fixture-private-config"));
+        assert!(
+            args.windows(3).any(|window| {
+                window == ["--ro-bind-data", "0", super::PRIVATE_GIT_CONFIG_PATH]
+            })
+        );
+    }
+
+    #[test]
+    fn private_git_config_is_readable_only_inside_the_sandbox_mount() {
+        let workspace = temporary_root("private-git-config");
+        let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let mut spec = SandboxLaunchSpec::new(
+            resolve_trusted_executable("cat").expect("trusted cat executable"),
+        );
+        spec.args = vec![super::PRIVATE_GIT_CONFIG_PATH.into()];
+        spec.set_private_git_config("fixture-private-config\n".to_owned())
+            .expect("bounded private Git config");
+
+        let output = provider
+            .run_capture(&workspace_fd, &spec)
+            .expect("private config sandbox execution");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"fixture-private-config\n");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
     }
 
     #[test]

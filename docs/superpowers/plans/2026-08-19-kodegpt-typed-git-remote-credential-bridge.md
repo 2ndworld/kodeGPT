@@ -86,17 +86,19 @@
 
 **Interfaces:**
 - `run_git_remote_mutation(..., credential: Option<GitRemoteCredential>, ...)`.
-- Private helpers validate token framing, resolve actual fetch/push URL, classify canonical GitHub HTTPS, generate fixed Basic auth, and add URL-scoped Git config through environment.
+- Private helpers validate token framing, resolve actual fetch/push URL, classify canonical GitHub HTTPS, reject repository-controlled transport overrides, generate fixed Basic auth, and materialize one bounded private Git config through Bubblewrap's read-only data channel without secret-bearing argv/environment.
 
 - [ ] **Step 1: Add failing pure tests** for canonical GitHub HTTPS acceptance and rejection of userinfo/query/fragment/alternate host/port/scheme/extra path/control characters.
-- [ ] **Step 2: Add failing tests** for token bounds and for a credentialed launch spec that contains scoped auth + redirect denial but not the token in argv.
+- [ ] **Step 2: Add failing tests** for token bounds and for a credentialed launch spec that contains scoped auth + redirect denial but not the token in Git argv/output metadata.
 - [ ] **Step 3: Run** `cargo test -p kodegpt-runtime git -- --nocapture` (or the narrow exact test names) and verify RED on missing helpers/behavior.
 - [ ] **Step 4: Implement target resolution** with hardened local Git using `remote get-url` / `remote get-url --push`; credentialed operations use the exact validated URL as the network target.
-- [ ] **Step 5: Implement ephemeral auth config** using fixed `x-access-token`, `base64`, URL-scoped `http.https://github.com/.extraHeader`, and redirect denial; retain prompt/helper disabling.
-- [ ] **Step 6: Update the existing local bare-remote regression** to pass `None` and prove anonymous file remotes remain unchanged.
-- [ ] **Step 7: Add canary redaction test** proving token text is absent from result previews/artifact/audit-visible metadata for a failing credentialed path.
-- [ ] **Step 8: Run focused Rust tests** and require PASS.
-- [ ] **Step 9: Commit** `feat(runtime): authenticate bounded GitHub remotes`.
+- [ ] **Step 5: Implement ephemeral auth config** using fixed `x-access-token`, `base64`, exact-URL HTTP auth, redirect denial, empty proxy, and verified system CA settings; retain prompt/helper disabling.
+- [ ] **Step 6: Keep secret-bearing config out of both Git and Bubblewrap argv/environment** by adding one bounded private Git-config data channel: Bubblewrap receives the config over stdin and exposes it read-only only at `/run/kodegpt/git-auth.config` via `--ro-bind-data`; authenticated Git consumes it at command scope with fixed `-c include.path=...`.
+- [ ] **Step 7: Before authenticated GitHub network execution, inspect effective repository/worktree config under network denial** and fail closed if any `http.*`, `url.*`, or remote proxy override could rewrite or weaken the authenticated transport.
+- [ ] **Step 8: Update the existing local bare-remote regression** to prove anonymous file remotes remain unchanged even when a credential is available.
+- [ ] **Step 9: Add redaction/regression tests** proving the credential is absent from Bubblewrap argv/debug output, Git argv, result previews, and public structured results; prove unsafe local transport config is rejected before network.
+- [ ] **Step 10: Run focused sandbox/Rust tests** and require PASS.
+- [ ] **Step 11: Commit the review-driven hardening** after the original authentication implementation; record the independent reviewer findings and their closure in readiness evidence.
 
 ### Task 5: Surface regression, docs, and release evidence
 

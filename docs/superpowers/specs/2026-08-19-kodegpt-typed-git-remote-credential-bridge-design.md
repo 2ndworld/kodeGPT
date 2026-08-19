@@ -23,10 +23,12 @@ Allow the existing typed remote Git mutations to use the already-admitted GitHub
    - no enabled matching provider means no credential and preserves the existing anonymous Git behavior;
    - multiple enabled matching providers fail closed as provider state invalid.
 4. Pass the credential ephemerally through the existing private Node-to-Rust framed RPC. The kernel client does not log request bodies, and the Git remote audit records only capability, remote name, ref and outcome. The credential is never returned in a result.
-5. Rust remains final authority. An optional credential is accepted only as a fixed `github_token` variant with a bounded single-line token. Rust resolves the configured Git target with hardened local Git, independently validates that the actual target is canonical credential-free GitHub HTTPS, and only then installs an in-memory URL-scoped HTTP Authorization header for that invocation.
+5. Rust remains final authority. An optional credential is accepted only as a fixed `github_token` variant with a bounded single-line token. Rust resolves the configured Git target with hardened local Git and independently validates that the actual target is canonical credential-free GitHub HTTPS before any authenticated network operation.
 6. Credentialed Git uses the exact validated URL as the transport target rather than trusting the remote name after validation. Fetch/pull still write the validated remote-tracking ref under the caller-validated remote name.
-7. Authentication is injected through Git's process environment/config, never through argv, repository config, artifact content, audit metadata, or host HOME. `credential.helper=` stays disabled and `GIT_TERMINAL_PROMPT=0` stays enforced.
-8. Redirect following is disabled for credentialed Git HTTP so an authorization header cannot be carried to a redirected origin.
+7. Secret-bearing Git configuration is never passed through process argv or process environment. Rust constructs one bounded private Git config and sends its contents through Bubblewrap stdin; Bubblewrap materializes that stream read-only at the fixed sandbox-only path `/run/kodegpt/git-auth.config` using `--ro-bind-data`. The command line carries only the fixed path and file descriptor number, while the private config value is Debug-redacted and never persisted to host storage.
+8. The authenticated Git command consumes that private config at command scope through fixed `-c include.path=/run/kodegpt/git-auth.config`. The config contains the exact-URL Authorization header plus explicit `followRedirects=false`, empty proxy, `sslVerify=true`, and fixed system CA bundle/path guards. `credential.helper=` remains disabled and `GIT_TERMINAL_PROMPT=0` remains enforced.
+9. Before attaching a credential to a canonical GitHub HTTPS target, Rust performs a network-denied bounded inspection of effective repository/worktree Git configuration. Any matching `http.*`, `url.*`, or remote proxy configuration fails closed as unsafe rather than allowing repository-controlled redirect/proxy/TLS rewriting to influence an authenticated request.
+10. Non-GitHub targets keep the existing anonymous remote-Git path and do not receive the private config mount.
 
 ## Credential and URL bounds
 
@@ -45,7 +47,8 @@ Allow the existing typed remote Git mutations to use the already-admitted GitHub
 - invalid/multiple provider state and credential-helper identity/acquisition failures are normalized to `GIT_REMOTE_UNAVAILABLE` without provider body, helper stderr, path, or credential disclosure;
 - invalid credential framing fails before Git network execution;
 - a non-GitHub remote is executed exactly as before with no credential header;
-- Git authentication rejection remains ordinary bounded Git command evidence with the credential redacted by construction because it is absent from argv/output metadata.
+- repository/worktree transport overrides (`http.*`, `url.*`, or remote proxy configuration) fail closed before an authenticated GitHub network operation;
+- Git authentication rejection remains ordinary bounded Git command evidence with the credential redacted by construction because secret-bearing config is absent from argv/environment/output metadata and exists only in the ephemeral sandbox data mount.
 
 ## Surface and authority freeze
 
