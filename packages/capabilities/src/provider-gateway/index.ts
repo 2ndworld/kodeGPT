@@ -51,3 +51,4 @@ export type {
 } from "./github-write.js";
 export * from "./github-tool-adapter.js";
 export * from "./github-write-tool-adapter.js";
+export * from "./netlify-deploy-tool-adapter.js";
