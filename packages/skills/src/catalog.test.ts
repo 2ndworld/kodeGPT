@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -18,6 +22,9 @@ import {
 } from "./index.js";
 import { createSkillTestStateRoot, removeSkillTestStateRoot } from "./test-support.js";
 
+const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const WORKFLOW_SKILL_NAME = "kodegpt-application-development-workflow";
+const WORKFLOW_SKILL_PATH = join(REPOSITORY_ROOT, "skills", WORKFLOW_SKILL_NAME, "SKILL.md");
 const catalogStateRoots: string[] = [];
 
 afterEach(async () => {
@@ -146,6 +153,77 @@ function compareUtf8(left: string, right: string): number {
 }
 
 describe("SkillCatalog live discovery", () => {
+  it("discovers, inspects, and loads the repository application-development workflow as native host guidance", async () => {
+    const document = await readFile(WORKFLOW_SKILL_PATH);
+    const manager = new FakeSourceManager();
+    manager.addSource(SOURCE_A, "repository-skills");
+    manager.setEntry(SOURCE_A, { path: WORKFLOW_SKILL_NAME, kind: "directory", sizeBytes: 4096 });
+    manager.setFile(SOURCE_A, `${WORKFLOW_SKILL_NAME}/SKILL.md`, document);
+    const catalog = new SkillCatalog(manager);
+
+    const listed = await catalog.listLive();
+    expect(listed.skills).toHaveLength(1);
+    const workflow = listed.skills[0]!;
+    expect(workflow).toMatchObject({
+      name: WORKFLOW_SKILL_NAME,
+      sourceKind: "agent-skills",
+      compatibility: {
+        classification: "NATIVE",
+        missingCapabilities: [],
+        requiredProviders: []
+      }
+    });
+
+    const inspected = await catalog.inspect({ skillId: workflow.skillId });
+    expect(inspected.capabilityPlan).toMatchObject({
+      classification: "NATIVE",
+      missingCapabilities: [],
+      externalRequirements: [],
+      blockedSemantics: []
+    });
+    expect(inspected.capabilityPlan.nativeCapabilities).toEqual(
+      expect.arrayContaining([
+        "context.build",
+        "code.search",
+        "code.impact",
+        "file.edit",
+        "verify.run",
+        "process.run",
+        "git.diff",
+        "git.commit",
+        "git.push",
+        "ci.status",
+        "ci.runs",
+        "ci.failure",
+        "ci.rerun"
+      ])
+    );
+
+    const loaded = await catalog.loadLiveRaw({ skillId: workflow.skillId });
+    const instructions = Buffer.from(loaded.skillDocument).toString("utf8");
+    for (const toolFamily of ["preview.start", "browser.openPreview", "visual.captureMatrix", "github.pr.create"]) {
+      expect(instructions).toContain(toolFamily);
+    }
+    for (const behavior of [
+      "Host owns orchestration",
+      "never blind retry",
+      "final diff review",
+      "CI failure evidence",
+      "never busy-poll",
+      "ci.rerun",
+      "Netlify"
+    ]) {
+      expect(instructions).toContain(behavior);
+    }
+    expect(instructions).toContain("skill.run");
+    expect(instructions).toContain("Do not automatically deploy");
+    expect(loaded.descriptor.compatibility).toMatchObject({
+      classification: "NATIVE",
+      missingCapabilities: [],
+      requiredProviders: []
+    });
+  });
+
   it("discovers only direct regular Agent Skills, sorts deterministically, and marks name collisions", async () => {
     const manager = new FakeSourceManager();
     manager.addSource(SOURCE_B, "private-b");
