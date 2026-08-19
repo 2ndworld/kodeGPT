@@ -9,6 +9,8 @@ description: Use when developing or fixing an application with KodeGPT from repo
 
 **Host owns orchestration.** Interpret the user's intent and acceptance criteria, choose only the stages that apply, sequence explicit KodeGPT calls, interpret returned evidence, and keep conversational identifiers such as preview, PR, and CI run IDs. KodeGPT remains the typed authority for every operation; loading this skill grants no execution permission. Do not invent `workflow.run` or `skill.run`, and do not delegate the workflow to another execution agent.
 
+When isolated branch work materially helps, the host may explicitly compose `git.branchCreate` followed by `git.worktreeCreate`, then trust/open the returned `.worktrees/<name>` child through the normal workspace control plane. Isolation is optional, never automatic. Close the child before returning to the parent for `git.worktreeRemove`; delete the branch separately only when normal Git lifecycle evidence says that is safe. Do not treat these tools as an agent/worktree scheduler.
+
 ## Adaptive flow
 
 Use this order, skipping conditional stages that do not add relevant evidence:
