@@ -120,6 +120,7 @@ export type {
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
+export * from "./github-repository-identity.js";
 export * from "./remote-ci/index.js";
 export * from "./provider-gateway/index.js";
 export { gitLog, gitShow, gitRange, gitDiffHistory } from "./git-history.js";
