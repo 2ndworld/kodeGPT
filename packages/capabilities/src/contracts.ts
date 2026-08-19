@@ -486,6 +486,7 @@ export interface VerificationRecipe {
 
 export interface VerifyListInput {
   workspaceId: string;
+  target?: string;
 }
 
 export interface VerifyListResult {

@@ -11,7 +11,6 @@ import {
   type ContextWorkspaceSummary,
   type GitChangesInput,
   type GitChangesResult,
-  type VerificationRecipe,
   type VerifyListInput,
   type VerifyListResult,
   type WorkspaceInspectInput,
@@ -92,17 +91,15 @@ export async function buildContext(
     input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
   const searchEvidence = await collectSearchEvidence(adapter, input, targetArea);
-  const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId);
+  const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId, input.target);
   const git = gitEvidence.state === "unavailable" ? undefined : gitEvidence.value;
   const search = scopeSearchEvidence(
     searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value,
     input.target,
     targetArea
   );
-  const verifications = scopeVerifications(
-    verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes,
-    input.target
-  );
+  const verifications =
+    verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes;
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
   const relevantMatches = sortedMatches(
@@ -185,7 +182,7 @@ export async function buildContext(
     ...(git === undefined ? {} : { git }),
     selectedFiles,
     relevantMatches,
-    verifications: sortedVerifications(verifications),
+    verifications,
     warnings: [...new Set(warnings)],
     totalBytes,
     truncated
@@ -230,10 +227,11 @@ async function collectSearchEvidence(
 
 async function collectVerificationEvidence(
   adapter: ContextBuildAdapter,
-  workspaceId: string
+  workspaceId: string,
+  target: string | undefined
 ): Promise<EvidenceResult<VerifyListResult>> {
   try {
-    const value = await adapter.verify({ workspaceId });
+    const value = await adapter.verify({ workspaceId, ...(target === undefined ? {} : { target }) });
     return { state: "available", value };
   } catch (error) {
     if (isKnownSourceFailure(error, VERIFICATION_EVIDENCE_UNAVAILABLE_CODES)) {
@@ -259,17 +257,6 @@ function scopeSearchEvidence(
       (match) => match.path === target || sameArea(match.path, targetArea)
     )
   };
-}
-
-function scopeVerifications(
-  recipes: VerificationRecipe[],
-  target: string | undefined
-): VerificationRecipe[] {
-  if (target === undefined) return recipes;
-  return recipes.filter((recipe) => {
-    if (recipe.cwd === undefined || recipe.cwd === ".") return true;
-    return target === recipe.cwd || target.startsWith(`${recipe.cwd}/`);
-  });
 }
 
 function summarizeWorkspace(
@@ -453,10 +440,6 @@ function sortedMatches(matches: CodeSearchResult["matches"]): CodeSearchResult["
       (left.column ?? 0) - (right.column ?? 0) ||
       compareLexical(left.kind, right.kind)
   );
-}
-
-function sortedVerifications(recipes: VerificationRecipe[]): VerificationRecipe[] {
-  return [...recipes].sort((left, right) => compareLexical(left.id, right.id));
 }
 
 function emptySearchResult(): CodeSearchResult {

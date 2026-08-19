@@ -45,7 +45,10 @@ function service(options: {
     files.add(path);
     packageJsonByPath.set(path, typeof value === "string" ? value : JSON.stringify(value));
   }
-  const defaultTreeEntries = [...packageJsonByPath.keys()].map((path) => ({ path, kind: "file" as const }));
+  const defaultTreeEntries = [...new Set([
+    ...packageJsonByPath.keys(),
+    ...[...files].filter((path) => path === "Cargo.toml" || path.endsWith("/Cargo.toml"))
+  ])].map((path) => ({ path, kind: "file" as const }));
   const workspace = {
     readFile: async (_workspaceId: string, path: string) => {
       options.onRead?.(path);
@@ -300,6 +303,93 @@ describe("safe verification recipes", () => {
       );
       expect(recipe).toMatchObject({ allowed: false, blockedReason: reason });
     }
+  });
+
+  it("discovers target-scoped Cargo per-crate recipes from the existing semantic tree", async () => {
+    const scopes: Array<"literal" | "semantic" | undefined> = [];
+    const capability = service({
+      files: ["Cargo.toml"],
+      treeEntries: [
+        { path: "Cargo.toml", kind: "file" },
+        { path: "crates/runtime/Cargo.toml", kind: "file" },
+        { path: "crates/sandbox/Cargo.toml", kind: "file" }
+      ],
+      onTree: (scope) => scopes.push(scope)
+    });
+
+    const result = await capability.listVerifications({
+      workspaceId: "ws_cargo_target",
+      target: "crates/runtime/src/process.rs"
+    });
+
+    expect(scopes).toEqual(["semantic"]);
+    expect(result.recipes.map(({ id }) => id)).toEqual([
+      "cargo:crates/runtime:test",
+      "cargo:crates/runtime:check",
+      "cargo:test",
+      "cargo:check",
+      "cargo:fmt-check"
+    ]);
+    expect(result.recipes.find(({ id }) => id === "cargo:crates/runtime:test")).toMatchObject({
+      logicalExecutable: "cargo",
+      argv: ["test", "--manifest-path", "Cargo.toml"],
+      cwd: "crates/runtime",
+      source: "cargo",
+      allowed: true
+    });
+    expect(result.recipes.some(({ id }) => id.includes("crates/sandbox"))).toBe(false);
+  });
+
+  it("scopes mixed Node and Cargo verification to the nearest project ecosystem", async () => {
+    const capability = service({
+      packageJson: {
+        ...packageFixture("pnpm@10"),
+        scripts: { test: "root-test", build: "root-build" }
+      },
+      packageJsonByPath: {
+        "packages/core/package.json": {
+          name: "core",
+          scripts: { test: "core-test", typecheck: "core-typecheck" }
+        },
+        "packages/other/package.json": {
+          name: "other",
+          scripts: { test: "other-test" }
+        }
+      },
+      files: ["pnpm-lock.yaml", "Cargo.toml"],
+      treeEntries: [
+        { path: "package.json", kind: "file" },
+        { path: "packages/core/package.json", kind: "file" },
+        { path: "packages/other/package.json", kind: "file" },
+        { path: "Cargo.toml", kind: "file" },
+        { path: "crates/runtime/Cargo.toml", kind: "file" }
+      ]
+    });
+
+    const node = await capability.listVerifications({
+      workspaceId: "ws_mixed",
+      target: "packages/core/src/index.ts"
+    });
+    expect(node.recipes.map(({ id }) => id)).toEqual([
+      "package:packages/core:test",
+      "package:packages/core:typecheck",
+      "package:test",
+      "package:build"
+    ]);
+    expect(node.recipes.some(({ id }) => id.startsWith("cargo:"))).toBe(false);
+
+    const rust = await capability.listVerifications({
+      workspaceId: "ws_mixed",
+      target: "crates/runtime/src/process.rs"
+    });
+    expect(rust.recipes.map(({ id }) => id)).toEqual([
+      "cargo:crates/runtime:test",
+      "cargo:crates/runtime:check",
+      "cargo:test",
+      "cargo:check",
+      "cargo:fmt-check"
+    ]);
+    expect(rust.recipes.some(({ id }) => id.startsWith("package:"))).toBe(false);
   });
 
   it("discovers fixed Cargo recipes through exact manifest evidence and availability", async () => {
