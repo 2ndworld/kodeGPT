@@ -51,6 +51,13 @@ async function tempRoot(prefix: string): Promise<string> {
   return root;
 }
 
+async function canonicalTempRoot(prefix: string): Promise<string> {
+  await mkdir(TARGET, { recursive: true });
+  const root = await mkdtemp(join(TARGET, prefix));
+  temporaryRoots.push(root);
+  return root;
+}
+
 function runGit(cwd: string, args: string[]): void {
   const result = spawnSync("git", args, {
     cwd,
@@ -133,6 +140,12 @@ function textJson(result: Record<string, any>): any {
   const content = result.content as Array<Record<string, unknown>>;
   expect(content?.[0]).toMatchObject({ type: "text" });
   return JSON.parse(String(content[0]?.text ?? "null"));
+}
+
+function textContent(result: Record<string, any>): string {
+  const content = result.content as Array<Record<string, unknown>>;
+  expect(content?.[0]).toMatchObject({ type: "text" });
+  return String(content[0]?.text ?? "");
 }
 
 beforeAll(() => buildRuntime(), 60_000);
@@ -750,6 +763,277 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(port, credential.token, "workspace.list", {}, "req_full_list_after_close")
       );
       expect(remaining).toEqual([]);
+    } finally {
+      await started.close();
+    }
+  }, 45_000);
+
+  it("creates, uses, and removes a bounded linked worktree without host repair or canonical-path exposure", async () => {
+    const stateRoot = await tempRoot("kodegpt-worktree-state-");
+    const repository = await canonicalTempRoot("kodegpt-worktree-repo-");
+    await writeFile(join(repository, "tracked.txt"), "baseline\n");
+    runGit(repository, ["init", "-q", "-b", "main"]);
+    runGit(repository, ["config", "user.name", "KodeGPT Fixture"]);
+    runGit(repository, ["config", "user.email", "kodegpt@example.invalid"]);
+    await writeFile(join(repository, ".git/info/exclude"), "/.worktrees/\n");
+    runGit(repository, ["add", "tracked.txt"]);
+    runGit(repository, ["commit", "-qm", "baseline"]);
+
+    const trust = new WorkspaceTrustStore(stateRoot);
+    const inspector = await KernelClient.start({ runtimePath: RUNTIME, stateRoot });
+    try {
+      const inspected = await inspector.request<InspectRootResult>("system.inspect_root", { path: repository });
+      await trust.trust({
+        canonicalRoot: inspected.canonicalRoot,
+        identity: inspected.identity,
+        profileCeiling: "trusted"
+      });
+    } finally {
+      await inspector.stop();
+    }
+
+    const credential = await new ConnectorCredentialStore(stateRoot).rotate();
+    const started = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: 43_130 });
+    try {
+      const port = started.status.port;
+      const parent = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: repository }, "req_worktree_open_parent")
+      );
+
+      const canonicalIsolation = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.run",
+          {
+            workspaceId: parent.id,
+            logicalExecutable: "bash",
+            argv: ["--noprofile", "--norc", "-c", `test ! -e ${JSON.stringify(join(repository, "tracked.txt"))}`],
+            background: false
+          },
+          "req_worktree_canonical_isolation"
+        )
+      );
+      expect(canonicalIsolation.state).toBe("completed");
+      expect(canonicalIsolation.exitCode).toBe(0);
+
+      const branch = "feat/worktree-e2e";
+      const name = "worktree-e2e";
+      const branchCreated = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "git.branchCreate",
+          { workspaceId: parent.id, name: branch },
+          "req_worktree_branch_create"
+        )
+      );
+      expect(branchCreated).toMatchObject({ operation: "branch_create", exitCode: 0 });
+
+      const invalidName = await callTool(
+        port,
+        credential.token,
+        "git.worktreeCreate",
+        { workspaceId: parent.id, name: "../escape", branch },
+        "req_worktree_invalid_name"
+      );
+      expect(invalidName.isError).toBe(true);
+      expect(textContent(invalidName)).toContain("Git worktree name is invalid");
+
+      const missingBranch = await callTool(
+        port,
+        credential.token,
+        "git.worktreeCreate",
+        { workspaceId: parent.id, name: "missing-branch", branch: "feat/missing" },
+        "req_worktree_missing_branch"
+      );
+      expect(missingBranch.isError).toBe(true);
+      expect(textContent(missingBranch)).toContain("GIT_WORKTREE_BRANCH_MISSING");
+
+      const branchInUse = await callTool(
+        port,
+        credential.token,
+        "git.worktreeCreate",
+        { workspaceId: parent.id, name: "branch-in-use", branch: "main" },
+        "req_worktree_branch_in_use"
+      );
+      expect(branchInUse.isError).toBe(true);
+      expect(textContent(branchInUse)).toContain("GIT_WORKTREE_BRANCH_IN_USE");
+
+      const existingTarget = join(repository, ".worktrees", "preexisting");
+      await mkdir(existingTarget, { recursive: true });
+      const targetExists = await callTool(
+        port,
+        credential.token,
+        "git.worktreeCreate",
+        { workspaceId: parent.id, name: "preexisting", branch },
+        "req_worktree_target_exists"
+      );
+      expect(targetExists.isError).toBe(true);
+      expect(textContent(targetExists)).toContain("GIT_WORKTREE_TARGET_EXISTS");
+      await rm(existingTarget, { recursive: true, force: true });
+
+      const created = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "git.worktreeCreate",
+          { workspaceId: parent.id, name, branch },
+          "req_worktree_create"
+        )
+      );
+      expect(created).toMatchObject({
+        schemaVersion: 1,
+        operation: "create",
+        name,
+        relativePath: `.worktrees/${name}`,
+        branch
+      });
+      expect(created.headOid).toMatch(/^[0-9a-f]{40}$/);
+      expect(JSON.stringify(created)).not.toContain(repository);
+
+      const childRoot = join(repository, ".worktrees", name);
+      const childDotGit = await readFile(join(childRoot, ".git"), "utf8");
+      expect(childDotGit).not.toContain("/workspace/");
+      const adminDir = childDotGit.trim().replace(/^gitdir:\s*/, "");
+      const backlink = await readFile(join(adminDir, "gitdir"), "utf8");
+      expect(backlink).not.toContain("/workspace/");
+
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: parent.id },
+        "req_worktree_close_parent"
+      );
+
+      const trustedChild = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "workspace.trust",
+          { rootPath: childRoot, profile: "trusted" },
+          "req_worktree_trust_child"
+        )
+      );
+      expect(trustedChild.canonicalRoot).toBe(childRoot);
+
+      const child = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: childRoot }, "req_worktree_open_child")
+      );
+      const childStatus = textJson(
+        await callTool(port, credential.token, "git.status", { workspaceId: child.id }, "req_worktree_child_status")
+      );
+      expect(childStatus.exitCode).toBe(0);
+
+      await callTool(
+        port,
+        credential.token,
+        "file.write",
+        { workspaceId: child.id, path: "tracked.txt", content: "child-change\n" },
+        "req_worktree_child_edit"
+      );
+      const childDiff = textJson(
+        await callTool(port, credential.token, "git.diff", { workspaceId: child.id }, "req_worktree_child_diff")
+      );
+      expect(childDiff.stdoutPreview).toContain("child-change");
+
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: child.id },
+        "req_worktree_close_dirty_child"
+      );
+      const parentForDirtyRemove = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: repository }, "req_worktree_open_parent_dirty")
+      );
+      const dirtyRemove = await callTool(
+        port,
+        credential.token,
+        "git.worktreeRemove",
+        { workspaceId: parentForDirtyRemove.id, name },
+        "req_worktree_dirty_remove"
+      );
+      expect(dirtyRemove.isError).toBe(true);
+      expect(textContent(dirtyRemove)).toContain("GIT_WORKTREE_DIRTY");
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: parentForDirtyRemove.id },
+        "req_worktree_close_parent_dirty"
+      );
+
+      const childForRevert = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: childRoot }, "req_worktree_reopen_child")
+      );
+      await callTool(
+        port,
+        credential.token,
+        "file.write",
+        { workspaceId: childForRevert.id, path: "tracked.txt", content: "baseline\n" },
+        "req_worktree_child_revert"
+      );
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: childForRevert.id },
+        "req_worktree_close_clean_child"
+      );
+
+      const reopenedParent = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: repository }, "req_worktree_reopen_parent")
+      );
+      await writeFile(join(adminDir, "locked"), "fixture lock\n");
+      const lockedRemove = await callTool(
+        port,
+        credential.token,
+        "git.worktreeRemove",
+        { workspaceId: reopenedParent.id, name },
+        "req_worktree_locked_remove"
+      );
+      expect(lockedRemove.isError).toBe(true);
+      expect(textContent(lockedRemove)).toContain("GIT_WORKTREE_LOCKED");
+      await rm(join(adminDir, "locked"), { force: true });
+
+      const removed = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "git.worktreeRemove",
+          { workspaceId: reopenedParent.id, name },
+          "req_worktree_remove"
+        )
+      );
+      expect(removed).toEqual({
+        schemaVersion: 1,
+        operation: "remove",
+        name,
+        relativePath: `.worktrees/${name}`,
+        removed: true
+      });
+
+      const branchDeleted = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "git.branchDelete",
+          { workspaceId: reopenedParent.id, name: branch },
+          "req_worktree_branch_delete"
+        )
+      );
+      expect(branchDeleted).toMatchObject({ operation: "branch_delete", exitCode: 0 });
+      await expect(readFile(childRoot, "utf8")).rejects.toThrow();
+
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: reopenedParent.id },
+        "req_worktree_final_close"
+      );
     } finally {
       await started.close();
     }

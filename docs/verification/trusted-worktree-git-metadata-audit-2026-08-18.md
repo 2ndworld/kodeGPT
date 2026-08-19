@@ -90,6 +90,14 @@ P0: **DONE** — Trusted Linked-Worktree Git Metadata implemented and live-dogfo
 
 P0.5: **DONE** — bounded operational residue cleaned without a new subsystem.
 
-P1: **DONE AS AUDIT/DECISION** — no new typed worktree tools added; one lifecycle behavior is recorded for a separate spec only if future dogfood proves it frequent enough.
+P1: **DONE AS AUDIT/DECISION** — no new typed worktree tools were added in that phase; one lifecycle behavior was recorded for a separate spec only if future dogfood proved it frequent enough.
 
 Next roadmap selection should remain dogfood-driven rather than feature-count-driven.
+
+## Superseding Phase 7 implementation evidence — 2026-08-19
+
+Repeated application-development dogfood subsequently justified the separate bounded lifecycle design. Phase 7 implements exactly `git.worktreeCreate` and `git.worktreeRemove`, fixed to `.worktrees/<name>` with an existing local branch, clean-only removal, no force semantics, and no scheduler/agent lifecycle.
+
+The new private sandbox path authority is narrower than generic process execution: only the fixed typed worktree lifecycle command may bind the already-retained workspace FD at its validated canonical display path. A full-stack regression proves ordinary trusted `process.run` still cannot observe the canonical source path, while typed worktree creation writes reciprocal host-valid Git metadata without `/workspace/` and without any `git worktree repair` step.
+
+Focused full-stack acceptance also proves fail-closed public behavior for invalid worktree names, missing branches, branches already checked out, pre-existing targets, dirty worktrees, and locked worktrees. The happy path completes `git.branchCreate -> git.worktreeCreate -> child workspace open/status/edit/diff -> child close -> parent reopen -> git.worktreeRemove -> git.branchDelete` and returns only repository-relative `.worktrees/<name>` evidence.
