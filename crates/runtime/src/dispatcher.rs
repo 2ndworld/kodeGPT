@@ -1206,33 +1206,39 @@ async fn dispatch_one(
                     return error_response(Some(request.id), -32602, "INVALID_PARAMS");
                 }
             };
-            let (capability_id, mutation, action) = match params {
+            let (capability_id, mutation, action, credential) = match params {
                 GitRemoteMutationParams::Fetch {
                     capability_id,
                     remote,
                     r#ref,
+                    credential,
                 } => (
                     capability_id,
                     GitRemoteMutation::Fetch { remote, r#ref },
                     AuditAction::GitFetch,
+                    credential,
                 ),
                 GitRemoteMutationParams::Pull {
                     capability_id,
                     remote,
                     r#ref,
+                    credential,
                 } => (
                     capability_id,
                     GitRemoteMutation::Pull { remote, r#ref },
                     AuditAction::GitPull,
+                    credential,
                 ),
                 GitRemoteMutationParams::Push {
                     capability_id,
                     remote,
                     r#ref,
+                    credential,
                 } => (
                     capability_id,
                     GitRemoteMutation::Push { remote, r#ref },
                     AuditAction::GitPush,
+                    credential,
                 ),
             };
             if capability_id.is_empty() {
@@ -1247,6 +1253,7 @@ async fn dispatch_one(
                 capability_id,
                 mutation,
                 action,
+                credential,
             )
             .await
         }
@@ -2067,6 +2074,7 @@ async fn dispatch_git_remote_mutation(
     capability_id: String,
     mutation: GitRemoteMutation,
     action: AuditAction,
+    credential: Option<kodegpt_protocol::GitRemoteCredential>,
 ) -> Value {
     let policy = match registry.lock() {
         Ok(registry) => match registry.clone_ready_policy(&capability_id) {
@@ -2164,6 +2172,7 @@ async fn dispatch_git_remote_mutation(
             &request_for_run,
             &operation_for_run,
             mutation,
+            credential,
             &raw_spool,
             &executions,
         )

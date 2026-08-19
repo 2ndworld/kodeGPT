@@ -364,9 +364,12 @@ export async function createProductionServiceStack(
           }
         },
         mutation: {
-          fetch: (workspaceId, remote, ref) => managers.workspaceManager.gitFetch(workspaceId, remote, ref),
-          pull: (workspaceId, remote, ref) => managers.workspaceManager.gitPull(workspaceId, remote, ref),
-          push: (workspaceId, remote, ref) => managers.workspaceManager.gitPush(workspaceId, remote, ref)
+          fetch: (workspaceId, remote, ref, credential) =>
+            managers.workspaceManager.gitFetch(workspaceId, remote, ref, credential),
+          pull: (workspaceId, remote, ref, credential) =>
+            managers.workspaceManager.gitPull(workspaceId, remote, ref, credential),
+          push: (workspaceId, remote, ref, credential) =>
+            managers.workspaceManager.gitPush(workspaceId, remote, ref, credential)
         },
         credentials: {
           async acquire(operation) {

@@ -295,6 +295,11 @@ export interface WorkspaceGitMutationResult extends WorkspaceGitInspectionResult
 
 export type WorkspaceGitRemoteMutationOperation = "fetch" | "pull" | "push";
 
+export interface WorkspaceGitRemoteCredential {
+  readonly kind: "github_token";
+  readonly token: string;
+}
+
 export interface WorkspaceGitRemoteMutationResult extends WorkspaceGitInspectionResult {
   operation: WorkspaceGitRemoteMutationOperation;
 }
@@ -1042,25 +1047,28 @@ export class WorkspaceManager {
   async gitFetch(
     workspaceId: string,
     remote: string,
-    ref: string
+    ref: string,
+    credential?: WorkspaceGitRemoteCredential | null
   ): Promise<WorkspaceGitRemoteMutationResult> {
-    return this.#gitRemoteMutation(workspaceId, "fetch", remote, ref);
+    return this.#gitRemoteMutation(workspaceId, "fetch", remote, ref, credential);
   }
 
   async gitPull(
     workspaceId: string,
     remote: string,
-    ref: string
+    ref: string,
+    credential?: WorkspaceGitRemoteCredential | null
   ): Promise<WorkspaceGitRemoteMutationResult> {
-    return this.#gitRemoteMutation(workspaceId, "pull", remote, ref);
+    return this.#gitRemoteMutation(workspaceId, "pull", remote, ref, credential);
   }
 
   async gitPush(
     workspaceId: string,
     remote: string,
-    ref: string
+    ref: string,
+    credential?: WorkspaceGitRemoteCredential | null
   ): Promise<WorkspaceGitRemoteMutationResult> {
-    return this.#gitRemoteMutation(workspaceId, "push", remote, ref);
+    return this.#gitRemoteMutation(workspaceId, "push", remote, ref, credential);
   }
 
   async runProcess(input: WorkspaceProcessRunInput): Promise<WorkspaceProcessOperationResult> {
@@ -1354,7 +1362,8 @@ export class WorkspaceManager {
     workspaceId: string,
     operation: WorkspaceGitRemoteMutationOperation,
     remote: string,
-    ref: string
+    ref: string,
+    credential?: WorkspaceGitRemoteCredential | null
   ): Promise<WorkspaceGitRemoteMutationResult> {
     const state = this.#requireReadyState(workspaceId);
     let result: unknown;
@@ -1363,7 +1372,8 @@ export class WorkspaceManager {
         capabilityId: state.capabilityId,
         operation,
         remote,
-        ref
+        ref,
+        ...(credential === undefined || credential === null ? {} : { credential })
       });
     } catch (error) {
       if (error instanceof KernelRpcError && GIT_REMOTE_MUTATION_ERROR_CODES.has(error.message)) {

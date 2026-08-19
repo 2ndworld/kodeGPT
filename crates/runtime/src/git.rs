@@ -8,6 +8,7 @@ use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use kodegpt_protocol::GitRemoteCredential;
 use kodegpt_sandbox::{
     BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
     TrustedExecutable, WorkspaceAccess, resolve_trusted_executable,
@@ -510,6 +511,7 @@ pub fn run_git_remote_mutation(
     request_id: &str,
     operation_id: &str,
     mutation: GitRemoteMutation,
+    _credential: Option<GitRemoteCredential>,
     spool: &RawSpoolStore,
     executions: &Mutex<ExecutionRegistry>,
 ) -> Result<GitLocalMutationResult, GitInspectionError> {
@@ -2790,6 +2792,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "feature".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2807,6 +2810,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "main".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2830,6 +2834,7 @@ mod tests {
                 remote: "origin".to_owned(),
                 r#ref: "main".to_owned(),
             },
+            None,
             &spool,
             &executions,
         )
@@ -2860,6 +2865,7 @@ mod tests {
                     "req_git_remote_invalid",
                     "op_git_remote_invalid",
                     mutation,
+                    None,
                     &spool,
                     &executions,
                 ),
