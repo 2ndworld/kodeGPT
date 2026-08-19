@@ -21,6 +21,8 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
+  { name: "deploy.preview.create", required: ["workspaceId"] },
+  { name: "deploy.preview.inspect", required: ["workspaceId", "deploymentId"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",

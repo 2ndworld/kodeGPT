@@ -174,13 +174,14 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships only the intended typed trust, Git, bounded GitHub, preview, browser, and visual surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.13");
+    expect(MCP_SURFACE_VERSION).toBe("0.14");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(74);
+    expect(names).toHaveLength(76);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
-      "github.write.v1"
+      "github.write.v1",
+      "netlify.deploy.v1"
     ]);
     expect(PROVIDER_CREDENTIAL_TIMEOUT_MS).toBe(5_000);
     expect(PROVIDER_NETWORK_ATTEMPT_TIMEOUT_MS).toBe(10_000);
@@ -210,6 +211,8 @@ describe("full security acceptance invariants", () => {
       "github.pr.merge",
       "github.issue.inspect",
       "github.issue.list",
+      "deploy.preview.create",
+      "deploy.preview.inspect",
       "preview.start",
       "preview.inspect",
       "preview.stop",
@@ -260,6 +263,8 @@ describe("full security acceptance invariants", () => {
       "provider.tools",
       "provider.invoke",
       "http.request",
+      "deploy.preview.logs",
+      "deploy.production.create",
       "browser.open",
       "browser.navigate",
       "visual.open",

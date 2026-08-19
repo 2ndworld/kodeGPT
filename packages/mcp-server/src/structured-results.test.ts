@@ -1162,6 +1162,82 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
   });
 
+  it("keeps typed preview deployment schemas closed, bounded, and structured", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const createResult = {
+      deploymentId: "deploy_123",
+      branch: "feat/typed-preview",
+      sourceOid: "a".repeat(40),
+      createdAt: "2026-08-19T00:00:00Z"
+    };
+    const inspectResult = {
+      ...createResult,
+      state: "ready" as const,
+      previewUrl: "https://deploy-123--example.netlify.app",
+      updatedAt: "2026-08-19T00:01:00Z"
+    };
+    context.deploy.previewCreate = async () => createResult;
+    context.deploy.previewInspect = async () => inspectResult;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const createDefinition = definitions.get("deploy.preview.create");
+    const inspectDefinition = definitions.get("deploy.preview.inspect");
+    expect(createDefinition).toBeDefined();
+    expect(inspectDefinition).toBeDefined();
+    expect(createDefinition?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true
+    });
+    expect(inspectDefinition?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true
+    });
+
+    const createInput = createDefinition?.inputSchema as z.ZodTypeAny;
+    const inspectInput = inspectDefinition?.inputSchema as z.ZodTypeAny;
+    const createBase = { workspaceId: "ws_ready" };
+    expect(createInput.safeParse(createBase).success).toBe(true);
+    for (const forbidden of [
+      { siteId: "site_123" },
+      { providerInstanceId: "prv_test" },
+      { branch: "feat/other" },
+      { sha: "b".repeat(40) },
+      { token: "secret" },
+      { url: "https://example.invalid" }
+    ]) {
+      expect(createInput.safeParse({ ...createBase, ...forbidden }).success).toBe(false);
+    }
+
+    const inspectBase = { workspaceId: "ws_ready", deploymentId: "deploy_123" };
+    expect(inspectInput.safeParse(inspectBase).success).toBe(true);
+    expect(inspectInput.safeParse({ ...inspectBase, url: "https://example.invalid" }).success).toBe(false);
+    expect(inspectInput.safeParse({ ...inspectBase, siteId: "site_123" }).success).toBe(false);
+    expect(inspectInput.safeParse({ ...inspectBase, deploymentId: "https://example.invalid/deploy" }).success).toBe(false);
+
+    const createOutput = createDefinition?.outputSchema as z.ZodTypeAny;
+    const inspectOutput = inspectDefinition?.outputSchema as z.ZodTypeAny;
+    expect(createOutput.safeParse(createResult).success).toBe(true);
+    expect(inspectOutput.safeParse(inspectResult).success).toBe(true);
+    expect(inspectOutput.safeParse({ ...inspectResult, raw: { token: "secret" } }).success).toBe(false);
+
+    const createResponse = (await handlers.get("deploy.preview.create")!(createBase as never)) as { structuredContent?: unknown };
+    const inspectResponse = (await handlers.get("deploy.preview.inspect")!(inspectBase as never)) as { structuredContent?: unknown };
+    expect(createResponse.structuredContent).toEqual(createResult);
+    expect(inspectResponse.structuredContent).toEqual(inspectResult);
+  });
+
   it("keeps visual verification schemas bounded, closed, and structured", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
