@@ -5,6 +5,7 @@ import type {
   GitLocalAuthorityAdapter,
   GitLocalMutationAdapter,
   GitRemoteAuthorityAdapter,
+  GitRemoteCredentialSource,
   GitRemoteMutationAdapter,
   PatchCommitAdapter,
   PatchWorkspaceAdapter,
@@ -92,6 +93,7 @@ export interface NativeCapabilityDependencies {
   gitRemote: {
     authority: GitRemoteAuthorityAdapter;
     mutation: GitRemoteMutationAdapter;
+    credentials?: GitRemoteCredentialSource;
   };
   gitHistory: GitHistoryAdapter;
   patch: {
@@ -167,15 +169,30 @@ export class NativeCapabilityService {
   }
 
   async gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
-    return gitFetch(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
+    return gitFetch(
+      this.#dependencies.gitRemote.authority,
+      this.#dependencies.gitRemote.mutation,
+      input,
+      this.#dependencies.gitRemote.credentials
+    );
   }
 
   async gitPull(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
-    return gitPull(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
+    return gitPull(
+      this.#dependencies.gitRemote.authority,
+      this.#dependencies.gitRemote.mutation,
+      input,
+      this.#dependencies.gitRemote.credentials
+    );
   }
 
   async gitPush(input: GitRemoteInput): Promise<GitRemoteMutationResult> {
-    return gitPush(this.#dependencies.gitRemote.authority, this.#dependencies.gitRemote.mutation, input);
+    return gitPush(
+      this.#dependencies.gitRemote.authority,
+      this.#dependencies.gitRemote.mutation,
+      input,
+      this.#dependencies.gitRemote.credentials
+    );
   }
 
   async gitLog(input: GitLogInput): Promise<GitLogResult> {

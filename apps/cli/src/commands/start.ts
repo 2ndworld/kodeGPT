@@ -367,6 +367,15 @@ export async function createProductionServiceStack(
           fetch: (workspaceId, remote, ref) => managers.workspaceManager.gitFetch(workspaceId, remote, ref),
           pull: (workspaceId, remote, ref) => managers.workspaceManager.gitPull(workspaceId, remote, ref),
           push: (workspaceId, remote, ref) => managers.workspaceManager.gitPush(workspaceId, remote, ref)
+        },
+        credentials: {
+          async acquire(operation) {
+            const adapterId = operation === "push" ? "github.write.v1" : "github.read.v1";
+            const credential = await providerRuntime!.acquireCredentialForEnabledAdapter(adapterId);
+            if (credential === null) return null;
+            if (credential.kind !== "bearer") throw new Error("GitHub credential kind is invalid");
+            return { kind: "github_token", token: credential.value };
+          }
         }
       },
       gitHistory: {
