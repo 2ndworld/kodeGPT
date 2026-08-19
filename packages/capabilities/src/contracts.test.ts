@@ -126,6 +126,8 @@ describe("capability contracts", () => {
       "git.branchCreate",
       "git.branchSwitch",
       "git.branchDelete",
+      "git.worktreeCreate",
+      "git.worktreeRemove",
       "git.fetch",
       "git.pull",
       "git.push",

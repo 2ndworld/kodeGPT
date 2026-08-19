@@ -725,6 +725,43 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "git.worktree_mutation" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "name", "branch"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "create" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "branch": { "type": "string", "minLength": 1, "maxLength": 255 }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "operation", "name"],
+              "properties": {
+                "capabilityId": { "type": "string", "minLength": 1 },
+                "operation": { "const": "remove" },
+                "name": { "type": "string", "minLength": 1, "maxLength": 64 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
         "method": { "const": "git.remote_mutation" },
         "params": {
           "type": "object",

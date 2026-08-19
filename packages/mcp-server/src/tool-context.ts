@@ -33,6 +33,10 @@ import type {
   GitCommitInput,
   GitBranchInput,
   GitLocalMutationResult,
+  GitWorktreeCreateInput,
+  GitWorktreeCreateResult,
+  GitWorktreeRemoveInput,
+  GitWorktreeRemoveResult,
   GitRemoteInput,
   GitRemoteMutationResult,
   GitLogInput,
@@ -151,6 +155,8 @@ export interface GitToolContext {
   branchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
   branchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
   branchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  worktreeCreate(input: GitWorktreeCreateInput): Promise<GitWorktreeCreateResult>;
+  worktreeRemove(input: GitWorktreeRemoveInput): Promise<GitWorktreeRemoveResult>;
   fetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   pull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   push(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
@@ -330,6 +336,8 @@ export interface NativeCapabilityToolAdapter {
   gitBranchCreate(input: GitBranchInput): Promise<GitLocalMutationResult>;
   gitBranchSwitch(input: GitBranchInput): Promise<GitLocalMutationResult>;
   gitBranchDelete(input: GitBranchInput): Promise<GitLocalMutationResult>;
+  gitWorktreeCreate(input: GitWorktreeCreateInput): Promise<GitWorktreeCreateResult>;
+  gitWorktreeRemove(input: GitWorktreeRemoveInput): Promise<GitWorktreeRemoveResult>;
   gitFetch(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   gitPull(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
   gitPush(input: GitRemoteInput): Promise<GitRemoteMutationResult>;
@@ -426,6 +434,8 @@ export function createKodegptToolContext(options: {
       branchCreate: (input) => native.gitBranchCreate(input),
       branchSwitch: (input) => native.gitBranchSwitch(input),
       branchDelete: (input) => native.gitBranchDelete(input),
+      worktreeCreate: (input) => native.gitWorktreeCreate(input),
+      worktreeRemove: (input) => native.gitWorktreeRemove(input),
       fetch: (input) => native.gitFetch(input),
       pull: (input) => native.gitPull(input),
       push: (input) => native.gitPush(input),
@@ -633,6 +643,8 @@ function unavailableNativeCapabilities(): NativeCapabilityToolAdapter {
     gitBranchCreate: () => unavailable("git.branchCreate"),
     gitBranchSwitch: () => unavailable("git.branchSwitch"),
     gitBranchDelete: () => unavailable("git.branchDelete"),
+    gitWorktreeCreate: () => unavailable("git.worktreeCreate"),
+    gitWorktreeRemove: () => unavailable("git.worktreeRemove"),
     gitFetch: () => unavailable("git.fetch"),
     gitPull: () => unavailable("git.pull"),
     gitPush: () => unavailable("git.push"),

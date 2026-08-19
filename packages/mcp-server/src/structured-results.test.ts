@@ -42,6 +42,10 @@ import {
   GitCommitInputSchema,
   GitBranchInputSchema,
   GitLocalMutationResultSchema,
+  GitWorktreeCreateInputSchema,
+  GitWorktreeCreateResultSchema,
+  GitWorktreeRemoveInputSchema,
+  GitWorktreeRemoveResultSchema,
   GitRemoteInputSchema,
   GitRemoteMutationResultSchema,
   GitLogInputSchema,
@@ -332,6 +336,21 @@ function makeContext(): KodegptToolContext {
       branchCreate: async () => ({ ...typedGitMutationResult, operation: "branch_create" as const }),
       branchSwitch: async () => ({ ...typedGitMutationResult, operation: "branch_switch" as const }),
       branchDelete: async () => ({ ...typedGitMutationResult, operation: "branch_delete" as const }),
+      worktreeCreate: async () => ({
+        schemaVersion: 1 as const,
+        operation: "create" as const,
+        name: "phase7",
+        relativePath: ".worktrees/phase7" as const,
+        branch: "feat/phase7",
+        headOid: "a".repeat(40)
+      }),
+      worktreeRemove: async () => ({
+        schemaVersion: 1 as const,
+        operation: "remove" as const,
+        name: "phase7",
+        relativePath: ".worktrees/phase7" as const,
+        removed: true as const
+      }),
       fetch: async () => typedGitRemoteMutationResult,
       pull: async () => ({ ...typedGitRemoteMutationResult, operation: "pull" as const }),
       push: async () => ({ ...typedGitRemoteMutationResult, operation: "push" as const }),
@@ -785,6 +804,63 @@ describe("structured MCP tool results", () => {
       expect(result.structuredContent).toMatchObject({ schemaVersion: 1, operation });
       expect(JSON.stringify(result.structuredContent)).not.toContain("capabilityId");
     }
+  });
+
+  it("registers bounded linked-worktree lifecycle with strict relative-only structured results", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+
+    expect(definitions.get("git.worktreeCreate")?.inputSchema).toBe(GitWorktreeCreateInputSchema);
+    expect(definitions.get("git.worktreeCreate")?.outputSchema).toBe(GitWorktreeCreateResultSchema);
+    expect(definitions.get("git.worktreeRemove")?.inputSchema).toBe(GitWorktreeRemoveInputSchema);
+    expect(definitions.get("git.worktreeRemove")?.outputSchema).toBe(GitWorktreeRemoveResultSchema);
+    expect(definitions.get("git.worktreeCreate")?.annotations).toEqual(LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS);
+    expect(definitions.get("git.worktreeRemove")?.annotations).toEqual(LOCAL_GIT_MUTATION_TOOL_ANNOTATIONS);
+
+    const created = (await handlers.get("git.worktreeCreate")!({
+      workspaceId: "ws_1",
+      name: "phase7",
+      branch: "feat/phase7"
+    } as never)) as { structuredContent?: unknown };
+    expect(created.structuredContent).toEqual({
+      schemaVersion: 1,
+      operation: "create",
+      name: "phase7",
+      relativePath: ".worktrees/phase7",
+      branch: "feat/phase7",
+      headOid: "a".repeat(40)
+    });
+    expect(JSON.stringify(created.structuredContent)).not.toContain("canonicalPath");
+
+    const original = context.git.worktreeCreate;
+    context.git.worktreeCreate = async () => ({
+      ...(await original({ workspaceId: "ws_1", name: "phase7", branch: "feat/phase7" })),
+      canonicalPath: "/host/repo/.worktrees/phase7"
+    } as never);
+    await expect(
+      handlers.get("git.worktreeCreate")!({ workspaceId: "ws_1", name: "phase7", branch: "feat/phase7" } as never)
+    ).rejects.toThrow();
+
+    const removed = (await handlers.get("git.worktreeRemove")!({
+      workspaceId: "ws_1",
+      name: "phase7"
+    } as never)) as { structuredContent?: unknown };
+    expect(removed.structuredContent).toEqual({
+      schemaVersion: 1,
+      operation: "remove",
+      name: "phase7",
+      relativePath: ".worktrees/phase7",
+      removed: true
+    });
   });
 
   it("registers trusted remote Git with bounded schemas, network annotations, and structured results", async () => {
