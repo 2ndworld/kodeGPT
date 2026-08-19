@@ -265,20 +265,22 @@ fn ci_audit_params_are_closed_and_typed() {
 #[test]
 fn ci_audit_params_accept_bounded_mutation_capabilities() {
     for capability in ["ci.rerun", "ci.cancel", "ci.dispatch"] {
-        let params = json!({
-            "capabilityId": "kc_ci_mutation_audit",
-            "operationId": "op_ci_mutation_audit",
-            "ciCapability": capability,
-            "phase": "failed",
-            "provider": "github",
-            "repository": "2ndworld/kodeGPT",
-            "credentialSource": "gh",
-            "runId": "32024673099",
-            "errorCode": "CI_MUTATION_OUTCOME_UNKNOWN"
-        });
-        serde_json::from_value::<CiAuditParams>(params).unwrap_or_else(|error| {
-            panic!("{capability} must be accepted by the Rust CI audit contract: {error}")
-        });
+        for error_code in ["CI_MUTATION_OUTCOME_UNKNOWN", "CI_MUTATION_STATE_CONFLICT"] {
+            let params = json!({
+                "capabilityId": "kc_ci_mutation_audit",
+                "operationId": "op_ci_mutation_audit",
+                "ciCapability": capability,
+                "phase": "failed",
+                "provider": "github",
+                "repository": "2ndworld/kodeGPT",
+                "credentialSource": "gh",
+                "runId": "32024673099",
+                "errorCode": error_code
+            });
+            serde_json::from_value::<CiAuditParams>(params).unwrap_or_else(|error| {
+                panic!("{capability} with {error_code} must be accepted by the Rust CI audit contract: {error}")
+            });
+        }
     }
 }
 

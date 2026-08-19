@@ -225,6 +225,75 @@ describe("GitHubHttp", () => {
     expect(new Headers(calls[0]?.init.headers).get("authorization")).toBe(`Bearer ${FAKE_CREDENTIAL}`);
   });
 
+  it("classifies the allowlisted GitHub Actions already-running 403 as a mutation state conflict without retrying", async () => {
+    const providerBody = JSON.stringify({
+      message: "This workflow is already running",
+      documentation_url: "https://docs.github.com/rest/actions/workflow-runs#re-run-a-workflow",
+      status: "403"
+    });
+    const fake = fakeFetch([new Response(providerBody, { status: 403 })]);
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl });
+
+    await expect(
+      http.postMutation("/repos/owner/repository/actions/runs/123/rerun", 201)
+    ).rejects.toMatchObject({
+      code: "CI_MUTATION_STATE_CONFLICT",
+      message: "GitHub mutation state changed; refresh current CI state before retrying",
+      details: {
+        reason: "STALE_EXPECTED_STATE",
+        retryable: false,
+        suggestedAction: "refresh-state"
+      }
+    });
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("keeps mutation rate-limit 403 classification unchanged and single-attempt", async () => {
+    const fake = fakeFetch([
+      new Response(JSON.stringify({ message: "rate limit detail must not leak" }), {
+        status: 403,
+        headers: {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": "1786856400"
+        }
+      })
+    ]);
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl });
+
+    await expect(
+      http.postMutation("/repos/owner/repository/actions/runs/123/rerun", 201)
+    ).rejects.toMatchObject({
+      code: "CI_RATE_LIMITED",
+      message: "GitHub rate limit was reached",
+      details: {
+        reason: "RATE_LIMITED",
+        retryable: true,
+        suggestedAction: "retry"
+      }
+    });
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("keeps unknown, malformed, and oversized mutation 403 bodies permission-denied and sanitized", async () => {
+    const providerSecret = "provider-secret-must-not-leak";
+    const fake = fakeFetch([
+      new Response(JSON.stringify({ message: providerSecret }), { status: 403 }),
+      new Response("{not-json", { status: 403 }),
+      new Response(JSON.stringify({ message: "x".repeat(5000), secret: providerSecret }), { status: 403 })
+    ]);
+    const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl });
+
+    for (let index = 0; index < 3; index += 1) {
+      const promise = http.postMutation("/repos/owner/repository/actions/runs/123/rerun", 201);
+      await expect(promise).rejects.toMatchObject({
+        code: "CI_PERMISSION_DENIED",
+        message: "GitHub permission was denied"
+      });
+      await expect(promise).rejects.not.toMatchObject({ message: expect.stringContaining(providerSecret) });
+    }
+    expect(fake.calls).toHaveLength(3);
+  });
+
   it("accepts only the expected definitive mutation status and sends bounded JSON when present", async () => {
     const fake = fakeFetch([new Response(JSON.stringify({ workflow_run_id: 1 }), { status: 200 })]);
     const http = new GitHubHttp({ credential: FAKE_CREDENTIAL, fetchImpl: fake.fetchImpl }) as GitHubHttp & {

@@ -211,6 +211,9 @@ describe("SkillCatalog live discovery", () => {
       "CI failure evidence",
       "never busy-poll",
       "ci.rerun",
+      "accepted: true",
+      "refresh with `ci.run` or `ci.status`",
+      "terminal rerunnable state",
       "Netlify"
     ]) {
       expect(instructions).toContain(behavior);

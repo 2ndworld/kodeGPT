@@ -5,6 +5,8 @@ const GITHUB_API_ORIGIN = "https://api.github.com";
 const GITHUB_API_VERSION = "2026-03-10";
 const GITHUB_ACCEPT = "application/vnd.github+json";
 const GITHUB_USER_AGENT = "KodeGPT/0.1 Remote-CI";
+const MAX_GITHUB_MUTATION_ERROR_BYTES = 4 * 1024;
+const GITHUB_MUTATION_STATE_CONFLICT_MESSAGES = new Set(["This workflow is already running"]);
 
 export interface GitHubLogRead {
   bytes: Uint8Array;
@@ -78,7 +80,7 @@ export class GitHubHttp {
       throw new CapabilityError("CI_RESPONSE_INVALID", "GitHub returned an unexpected mutation redirect");
     }
     if (response.status === expectedStatus) return;
-    this.#throwForProviderStatus(response);
+    await this.#throwForMutationStatus(response);
     throw new CapabilityError("CI_RESPONSE_INVALID", "GitHub returned an unexpected mutation response");
   }
 
@@ -120,6 +122,24 @@ export class GitHubHttp {
     } catch {
       throw new CapabilityError("CI_PROVIDER_UNAVAILABLE", "GitHub provider is unavailable");
     }
+  }
+
+  async #throwForMutationStatus(response: Response): Promise<void> {
+    if (response.status === 403 && !isRateLimited403(response)) {
+      const message = await readBoundedMutationErrorMessage(response);
+      if (message !== undefined && GITHUB_MUTATION_STATE_CONFLICT_MESSAGES.has(message)) {
+        throw new CapabilityError(
+          "CI_MUTATION_STATE_CONFLICT",
+          "GitHub mutation state changed; refresh current CI state before retrying",
+          {
+            reason: "STALE_EXPECTED_STATE",
+            retryable: false,
+            suggestedAction: "refresh-state"
+          }
+        );
+      }
+    }
+    this.#throwForProviderStatus(response);
   }
 
   #throwForProviderStatus(response: Response): void {
@@ -228,6 +248,39 @@ function safeEpochToIso(epochSeconds: number): string | undefined {
   if (!Number.isSafeInteger(milliseconds)) return undefined;
   const value = new Date(milliseconds);
   return Number.isFinite(value.getTime()) ? value.toISOString() : undefined;
+}
+
+async function readBoundedMutationErrorMessage(response: Response): Promise<string | undefined> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const length = parseSafeNonNegativeInteger(contentLength);
+    if (length !== undefined && length > MAX_GITHUB_MUTATION_ERROR_BYTES) return undefined;
+  }
+  const body = response.body;
+  if (body === null) return undefined;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > MAX_GITHUB_MUTATION_ERROR_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(concatenate(chunks, total));
+    const parsed: unknown = JSON.parse(decoded);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const message = (parsed as Record<string, unknown>).message;
+    return typeof message === "string" && message.length <= 128 ? message : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readBoundedBody(

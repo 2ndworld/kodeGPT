@@ -264,7 +264,8 @@ export type WorkspaceRemoteCiErrorCode =
   | "CI_RESPONSE_LIMIT_EXCEEDED"
   | "CI_LOG_UNAVAILABLE"
   | "CI_LOG_LIMIT_EXCEEDED"
-  | "CI_MUTATION_OUTCOME_UNKNOWN";
+  | "CI_MUTATION_OUTCOME_UNKNOWN"
+  | "CI_MUTATION_STATE_CONFLICT";
 
 export interface WorkspaceRemoteCiAuditInput {
   workspaceId: string;
