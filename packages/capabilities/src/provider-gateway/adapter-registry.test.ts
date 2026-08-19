@@ -77,10 +77,11 @@ function mutationManifest(overrides: Partial<ProviderAdapterManifest> = {}): Pro
 }
 
 describe("ProviderAdapterRegistry", () => {
-  it("ships separate reviewed GitHub read and write adapters in production", () => {
+  it("ships separate reviewed GitHub and Netlify adapters in production", () => {
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
-      "github.write.v1"
+      "github.write.v1",
+      "netlify.deploy.v1"
     ]);
     expect(Object.isFrozen(PRODUCTION_PROVIDER_MANIFESTS)).toBe(true);
     const registry = new ProviderAdapterRegistry(PRODUCTION_PROVIDER_MANIFESTS);
@@ -94,6 +95,10 @@ describe("ProviderAdapterRegistry", () => {
     expect(registry.require("github.write.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.pr.create",
       "github.pr.merge"
+    ]);
+    expect(registry.require("netlify.deploy.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "netlify.deploy.preview.create",
+      "netlify.deploy.preview.inspect"
     ]);
     expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
     expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
