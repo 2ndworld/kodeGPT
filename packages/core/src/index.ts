@@ -5,6 +5,20 @@ export {
 } from "./kernel-client.js";
 export type { KernelHello } from "./kernel-client.js";
 
+export {
+  DEVELOPER_ENVIRONMENT_SCHEMA_VERSION,
+  MAX_DEVELOPER_ENVIRONMENTS,
+  MAX_DEVELOPER_EXECUTABLE_DIRS,
+  MAX_DEVELOPER_ENVIRONMENT_LABEL_BYTES,
+  DeveloperEnvironmentError,
+  DeveloperEnvironmentStore
+} from "./developer-environment-store.js";
+export type {
+  DeveloperEnvironmentEntry,
+  DeveloperEnvironmentErrorCode,
+  DeveloperEnvironmentSource
+} from "./developer-environment-store.js";
+
 export { ExecutionManager } from "./execution-manager.js";
 export type { ProcessRunInput } from "./execution-manager.js";
 
