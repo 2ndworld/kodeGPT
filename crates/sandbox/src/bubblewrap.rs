@@ -751,7 +751,7 @@ mod tests {
         BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
         WorkspaceAccess, WorkspaceAlias, cwd_is_beneath_workspace,
     };
-    use crate::executable::SANDBOX_MARKER_ENV;
+    use crate::executable::{SANDBOX_MARKER_ENV, resolve_explicit_root_executable};
     use crate::resolve_trusted_executable;
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -1036,7 +1036,7 @@ mod tests {
                 "--exact",
                 "bubblewrap::tests::explicit_node_root_sandbox_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_NODE_ROOT", &tool_root)
+            .env("KODEGPT_TEST_TOOL_ROOT", &tool_root)
             .env(
                 "KODEGPT_HOST_COREPACK_HOME",
                 tool_root.join("missing-corepack"),
@@ -1062,7 +1062,11 @@ mod tests {
             std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
         );
         let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
-        let program = resolve_trusted_executable("node").expect("explicit node root resolves");
+        let tool_root = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_TOOL_ROOT").expect("tool root fixture env"),
+        );
+        let program = resolve_explicit_root_executable(&tool_root, "bin/node", "node")
+            .expect("explicit node root resolves");
         let spec = SandboxLaunchSpec::new(program);
         let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
         let output = provider
@@ -1107,7 +1111,7 @@ mod tests {
                 "--exact",
                 "bubblewrap::tests::explicit_pnpm_sandbox_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_NODE_ROOT", &tool_root)
+            .env("KODEGPT_TEST_TOOL_ROOT", &tool_root)
             .env("KODEGPT_TEST_WORKSPACE", &workspace)
             .output()
             .expect("nested pnpm sandbox test runs");
@@ -1129,7 +1133,11 @@ mod tests {
             std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
         );
         let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
-        let program = resolve_trusted_executable("pnpm").expect("explicit pnpm root resolves");
+        let tool_root = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_TOOL_ROOT").expect("tool root fixture env"),
+        );
+        let program = resolve_explicit_root_executable(&tool_root, "bin/pnpm", "pnpm")
+            .expect("explicit pnpm root resolves");
         let spec = SandboxLaunchSpec::new(program);
         let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
         let output = provider
@@ -1164,7 +1172,7 @@ mod tests {
                 "--exact",
                 "bubblewrap::tests::explicit_cargo_sandbox_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &tool_root)
+            .env("KODEGPT_TEST_TOOL_ROOT", &tool_root)
             .env("KODEGPT_TEST_WORKSPACE", &workspace)
             .output()
             .expect("nested cargo sandbox test runs");
@@ -1186,7 +1194,11 @@ mod tests {
             std::env::var_os("KODEGPT_TEST_WORKSPACE").expect("workspace fixture env"),
         );
         let workspace_fd = OwnedFd::from(File::open(&workspace).expect("workspace root fd"));
-        let program = resolve_trusted_executable("cargo").expect("explicit cargo root resolves");
+        let tool_root = PathBuf::from(
+            std::env::var_os("KODEGPT_TEST_TOOL_ROOT").expect("tool root fixture env"),
+        );
+        let program = resolve_explicit_root_executable(&tool_root, "bin/cargo", "cargo")
+            .expect("explicit cargo root resolves");
         let spec = SandboxLaunchSpec::new(program);
         let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
         let output = provider

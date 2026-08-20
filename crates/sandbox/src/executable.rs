@@ -52,18 +52,19 @@ enum ExecutableTrust {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplicitToolchain {
+    Generic,
     Node,
     Rust,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ExecutableRootIdentity {
-    canonical_path: PathBuf,
-    device: u64,
-    inode: u64,
-    mode: u32,
-    uid: u32,
-    gid: u32,
+pub(crate) struct ExecutableRootIdentity {
+    pub(crate) canonical_path: PathBuf,
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) mode: u32,
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
 }
 
 pub(crate) struct ExplicitExecutableMount {
@@ -299,36 +300,19 @@ pub fn resolve_trusted_executable(name: &str) -> Result<TrustedExecutable, Trust
         });
     }
 
-    if matches!(name, "node" | "npm" | "npx" | "pnpm")
-        && let Some(root) = std::env::var_os("KODEGPT_HOST_NODE_ROOT")
-    {
-        let relative_executable = format!("bin/{name}");
-        return resolve_explicit_root_executable(
-            Path::new(&root),
-            &relative_executable,
-            ExplicitToolchain::Node,
-        );
-    }
-
-    if matches!(name, "cargo" | "rustc")
-        && let Some(root) = std::env::var_os("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT")
-    {
-        let relative_executable = format!("bin/{name}");
-        return resolve_explicit_root_executable(
-            Path::new(&root),
-            &relative_executable,
-            ExplicitToolchain::Rust,
-        );
-    }
-
     Err(last_error)
 }
 
-fn resolve_explicit_root_executable(
+pub(crate) fn resolve_explicit_root_executable(
     root: &Path,
     relative_executable: &str,
-    toolchain: ExplicitToolchain,
+    logical_name: &str,
 ) -> Result<TrustedExecutable, TrustedExecutableError> {
+    let toolchain = match logical_name {
+        "node" | "npm" | "npx" | "pnpm" => ExplicitToolchain::Node,
+        "cargo" | "rustc" => ExplicitToolchain::Rust,
+        _ => ExplicitToolchain::Generic,
+    };
     let root_identity = inspect_explicit_root(root)?;
     let candidate = root_identity.canonical_path.join(relative_executable);
     let canonical = fs::canonicalize(&candidate).map_err(|error| {
@@ -430,7 +414,9 @@ fn inspect_trusted_path(path: &Path) -> Result<ExecutableIdentity, TrustedExecut
     })
 }
 
-fn inspect_explicit_root(path: &Path) -> Result<ExecutableRootIdentity, TrustedExecutableError> {
+pub(crate) fn inspect_explicit_root(
+    path: &Path,
+) -> Result<ExecutableRootIdentity, TrustedExecutableError> {
     let canonical_path = fs::canonicalize(path)?;
     let metadata = fs::metadata(&canonical_path)?;
     if !metadata.is_dir() {
@@ -518,11 +504,10 @@ fn parse_bubblewrap_version(value: &str) -> Option<ExecutableVersion> {
 mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        BUBBLEWRAP_MINIMUM_VERSION, ExecutableVersion, ExplicitToolchain, TrustedExecutableError,
+        BUBBLEWRAP_MINIMUM_VERSION, ExecutableVersion, TrustedExecutableError,
         parse_bubblewrap_version, read_version, resolve_bubblewrap,
         resolve_explicit_root_executable, resolve_trusted_executable,
     };
@@ -608,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_node_root_resolves_one_user_managed_toolchain_without_inheriting_path() {
+    fn explicit_node_root_resolves_without_environment_inheritance() {
         let root = temporary_root("node-root");
         let bin = root.join("bin");
         fs::create_dir_all(&bin).expect("node bin");
@@ -618,38 +603,17 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&node, permissions).expect("node executable mode");
 
-        let output = Command::new(std::env::current_exe().expect("current test executable"))
-            .args([
-                "--ignored",
-                "--exact",
-                "executable::tests::explicit_node_root_subprocess_helper",
-            ])
-            .env("KODEGPT_HOST_NODE_ROOT", &root)
-            .output()
-            .expect("nested resolver test runs");
-
-        assert!(
-            output.status.success(),
-            "nested resolver failed:\nstdout={}\nstderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        fs::remove_dir_all(root).expect("temporary root cleanup");
-    }
-
-    #[test]
-    #[ignore = "invoked by explicit_node_root_resolves_one_user_managed_toolchain_without_inheriting_path"]
-    fn explicit_node_root_subprocess_helper() {
-        let root = std::env::var_os("KODEGPT_HOST_NODE_ROOT").expect("explicit node root env");
-        let node = std::path::PathBuf::from(root).join("bin/node");
-        let executable = resolve_trusted_executable("node").expect("explicit node root resolves");
+        let executable = resolve_explicit_root_executable(&root, "bin/node", "node")
+            .expect("explicit node root resolves");
         assert_eq!(
             executable.canonical_path(),
             fs::canonicalize(&node).expect("canonical node").as_path()
         );
+        assert!(executable.uses_node_toolchain());
         executable
             .revalidate()
             .expect("explicit node identity remains stable");
+        fs::remove_dir_all(root).expect("temporary root cleanup");
     }
 
     #[test]
@@ -667,7 +631,7 @@ mod tests {
         fs::set_permissions(&root, root_permissions).expect("world-writable root mode");
 
         assert!(matches!(
-            resolve_explicit_root_executable(&root, "bin/node", ExplicitToolchain::Node),
+            resolve_explicit_root_executable(&root, "bin/node", "node"),
             Err(TrustedExecutableError::WritableByGroupOrWorld)
         ));
         fs::remove_dir_all(root).expect("temporary root cleanup");
@@ -687,7 +651,7 @@ mod tests {
         std::os::unix::fs::symlink(&node, bin.join("node")).expect("escaping node symlink");
 
         assert!(matches!(
-            resolve_explicit_root_executable(&root, "bin/node", ExplicitToolchain::Node),
+            resolve_explicit_root_executable(&root, "bin/node", "node"),
             Err(TrustedExecutableError::UntrustedLocation)
         ));
         fs::remove_dir_all(root).expect("temporary root cleanup");
