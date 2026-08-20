@@ -20,6 +20,7 @@
         "name",
         "allowWrite",
         "allowProcess",
+        "allowDynamicExecutables",
         "network",
         "allowedExecutableNames",
         "inheritEnv",
@@ -29,6 +30,7 @@
         "name": { "enum": ["observe", "develop", "trusted"] },
         "allowWrite": { "type": "boolean" },
         "allowProcess": { "type": "boolean" },
+        "allowDynamicExecutables": { "type": "boolean" },
         "network": { "enum": ["deny", "localhost", "allowlist", "unrestricted"] },
         "allowedExecutableNames": {
           "type": "array",

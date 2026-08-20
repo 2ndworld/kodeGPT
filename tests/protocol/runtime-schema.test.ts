@@ -63,6 +63,8 @@ describe("canonical runtime JSON Schemas", () => {
     const identity = request.$defs.persistentFilesystemIdentity as JsonSchema;
 
     expect(policy.additionalProperties).toBe(false);
+    expect(policy.required).toContain("allowDynamicExecutables");
+    expect(policy.properties.allowDynamicExecutables).toEqual({ type: "boolean" });
     expect(policy.properties.inheritEnv).toEqual({ const: false });
     expect(identity.additionalProperties).toBe(false);
   });

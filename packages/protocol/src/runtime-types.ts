@@ -60,6 +60,7 @@ export const runtimePolicySchema = z
     name: z.enum(["observe", "develop", "trusted"]),
     allowWrite: z.boolean(),
     allowProcess: z.boolean(),
+    allowDynamicExecutables: z.boolean(),
     network: z.enum(["deny", "localhost", "allowlist", "unrestricted"]),
     allowedExecutableNames: z.array(z.string().min(1)),
     inheritEnv: z.literal(false),

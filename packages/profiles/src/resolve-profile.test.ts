@@ -20,12 +20,36 @@ describe("monotonic project profile resolution", () => {
     }
   });
 
+  it("enables dynamic executables only in the built-in trusted preset", () => {
+    expect(getProfilePreset("observe").allowDynamicExecutables).toBe(false);
+    expect(getProfilePreset("develop").allowDynamicExecutables).toBe(false);
+    expect(getProfilePreset("trusted").allowDynamicExecutables).toBe(true);
+  });
+
+  it("allows dynamic executable authority to narrow but never widen", () => {
+    const trusted = getProfilePreset("trusted");
+    const narrowed = resolveProfile(trusted, {
+      ...trusted,
+      allowDynamicExecutables: false
+    });
+    expect(narrowed.allowDynamicExecutables).toBe(false);
+
+    const develop = getProfilePreset("develop");
+    expect(() =>
+      resolveProfile(develop, {
+        ...develop,
+        allowDynamicExecutables: true
+      })
+    ).toThrowError(ProfileEscalationError);
+  });
+
   it("rejects a trusted/write/process request above an observe ceiling", () => {
     const ceiling = getProfilePreset("observe");
     const requested = profilePolicySchema.parse({
       name: "trusted",
       allowWrite: true,
       allowProcess: true,
+      allowDynamicExecutables: true,
       network: "unrestricted",
       allowedExecutableNames: ["python3"],
       inheritEnv: false,

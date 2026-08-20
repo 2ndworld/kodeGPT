@@ -55,6 +55,7 @@ describe("bridge command unit tests", () => {
       name: "observe" as const,
       allowWrite: false,
       allowProcess: false,
+      allowDynamicExecutables: false,
       network: "deny" as const,
       allowedExecutableNames: [],
       inheritEnv: false as const,

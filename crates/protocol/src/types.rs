@@ -65,6 +65,7 @@ pub struct RuntimePolicy {
     pub name: ProfileName,
     pub allow_write: bool,
     pub allow_process: bool,
+    pub allow_dynamic_executables: bool,
     pub network: NetworkMode,
     pub allowed_executable_names: Vec<String>,
     pub inherit_env: InheritEnvDisabled,

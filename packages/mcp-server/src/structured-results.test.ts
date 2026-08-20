@@ -108,6 +108,7 @@ const typedWorkspaceListResult: OpenWorkspace[] = [
       name: "observe",
       allowWrite: false,
       allowProcess: false,
+      allowDynamicExecutables: false,
       network: "deny",
       allowedExecutableNames: [],
       inheritEnv: false,

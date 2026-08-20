@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use kodegpt_protocol::{
     CiAuditParams, FileWriteParams, FileWritePrecondition, GitRepositoryIdentityParams,
-    MAX_FRAME_BYTES, ProviderAuditParams, RuntimeRequest, read_frame, write_frame,
+    MAX_FRAME_BYTES, ProviderAuditParams, RuntimePolicy, RuntimeRequest, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 
@@ -58,6 +58,24 @@ fn rejects_truncated_body_and_malformed_json() {
 
     let mut malformed = Cursor::new(b"Content-Length: 1\r\n\r\n{".as_slice());
     assert!(read_frame(&mut malformed).is_err());
+}
+
+#[test]
+fn runtime_policy_accepts_explicit_dynamic_executable_authority() {
+    let policy = serde_json::from_value::<RuntimePolicy>(json!({
+        "name": "trusted",
+        "allowWrite": true,
+        "allowProcess": true,
+        "allowDynamicExecutables": true,
+        "network": "unrestricted",
+        "allowedExecutableNames": ["bash", "sh"],
+        "inheritEnv": false,
+        "envAllowlist": ["LANG"]
+    }));
+    assert!(
+        policy.is_ok(),
+        "dynamic executable authority is part of the closed policy contract"
+    );
 }
 
 #[test]
