@@ -34,10 +34,14 @@ import { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprin
 import { SkillDocumentParseError, parseSkillDocument } from "./parser.js";
 import { SkillPinStore } from "./pin-store.js";
 
+type SkillCatalogSource = Pick<PersistedSkillSource, "sourceId" | "label" | "kind">;
+
 interface SkillCatalogSourceManager {
-  listSources(): Promise<PersistedSkillSource[]>;
-  tree(input: { sourceId: string; path: string }): Promise<SkillSourceTreeResult>;
+  listSources(workspaceId?: string): Promise<SkillCatalogSource[]>;
+  listReadyWorkspaceIds?(): Promise<string[]>;
+  tree(input: { workspaceId?: string; sourceId: string; path: string }): Promise<SkillSourceTreeResult>;
   readBytes(input: {
+    workspaceId?: string;
     sourceId: string;
     path: string;
     offset: number;
@@ -91,15 +95,18 @@ export class SkillCatalog {
     this.#pins = options.pins;
   }
 
-  async list(): Promise<SkillCatalogListResult> {
-    const discovery = await this.#discover({ tolerateUnavailableSources: true });
+  async list(input: { workspaceId?: string } = {}): Promise<SkillCatalogListResult> {
+    const discovery = await this.#discover({
+      tolerateUnavailableSources: true,
+      workspaceId: input.workspaceId
+    });
     const truncationReasons = new Set(discovery.truncationReasons);
     const entries = new Map<string, SkillCatalogEntry>();
 
     for (const skill of discovery.skills) {
       let bundle: BuiltBundle;
       try {
-        bundle = await this.#buildBundle(skill);
+        bundle = await this.#buildBundle(skill, input.workspaceId);
       } catch (error) {
         if (isUnavailableSourceError(error)) {
           truncationReasons.add("SOURCE_UNAVAILABLE");
@@ -147,14 +154,21 @@ export class SkillCatalog {
     };
   }
 
-  async inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillCatalogInspection> {
-    const discovery = await this.#discover({ tolerateUnavailableSources: true });
+  async inspect(input: {
+    skillId: string;
+    fingerprint?: string;
+    workspaceId?: string;
+  }): Promise<SkillCatalogInspection> {
+    const discovery = await this.#discover({
+      tolerateUnavailableSources: true,
+      workspaceId: input.workspaceId
+    });
     const liveSkill = discovery.skills.find((candidate) => candidate.descriptor.skillId === input.skillId);
     let liveUnavailable = discovery.truncationReasons.includes("SOURCE_UNAVAILABLE");
 
     if (liveSkill !== undefined) {
       try {
-        const bundle = await this.#buildBundle(liveSkill);
+        const bundle = await this.#buildBundle(liveSkill, input.workspaceId);
         if (input.fingerprint === undefined || input.fingerprint === bundle.inspection.bundleFingerprint) {
           const pinned = await this.#hasPinned(input.skillId, bundle.inspection.bundleFingerprint);
           return inspectionFromBundle(bundle, pinned);
@@ -172,6 +186,8 @@ export class SkillCatalog {
     if (liveSkill !== undefined && input.fingerprint !== undefined) {
       throw fingerprintMismatch();
     }
+    const scopeError = await this.#workspaceScopeError(input.skillId, input.workspaceId);
+    if (scopeError !== undefined) throw scopeError;
     if (liveUnavailable) {
       throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source operation failed");
     }
@@ -208,13 +224,17 @@ export class SkillCatalog {
     skillId: string;
     fingerprint?: string;
     resources?: string[];
+    workspaceId?: string;
   }): Promise<SkillCatalogRawLoad> {
-    const discovery = await this.#discover({ tolerateUnavailableSources: true });
+    const discovery = await this.#discover({
+      tolerateUnavailableSources: true,
+      workspaceId: input.workspaceId
+    });
     const liveSkill = discovery.skills.find((candidate) => candidate.descriptor.skillId === input.skillId);
     let liveUnavailable = discovery.truncationReasons.includes("SOURCE_UNAVAILABLE");
     if (liveSkill !== undefined) {
       try {
-        const bundle = await this.#buildBundle(liveSkill);
+        const bundle = await this.#buildBundle(liveSkill, input.workspaceId);
         if (input.fingerprint === undefined || input.fingerprint === bundle.inspection.bundleFingerprint) {
           const pinned = await this.#hasPinned(input.skillId, bundle.inspection.bundleFingerprint);
           const raw = rawLoadFromBundle(bundle, input.resources);
@@ -237,6 +257,8 @@ export class SkillCatalog {
     if (liveSkill !== undefined && input.fingerprint !== undefined) {
       throw fingerprintMismatch();
     }
+    const scopeError = await this.#workspaceScopeError(input.skillId, input.workspaceId);
+    if (scopeError !== undefined) throw scopeError;
     if (liveUnavailable) {
       throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source operation failed");
     }
@@ -281,18 +303,24 @@ export class SkillCatalog {
     return rawLoadFromBundle(bundle, input.resources);
   }
 
-  async #discover(options: { tolerateUnavailableSources?: boolean } = {}): Promise<DiscoveryResult> {
+  async #discover(
+    options: { tolerateUnavailableSources?: boolean; workspaceId?: string } = {}
+  ): Promise<DiscoveryResult> {
     const truncationReasons = new Set<SkillDiscoveryTruncationReason>();
     const discovered: DiscoveredSkill[] = [];
-    const sources = (await this.#sourceCall(() => this.#sources.listSources())).sort((left, right) =>
-      compareUtf8(left.sourceId, right.sourceId)
+    const sources = (await this.#sourceCall(() => this.#sources.listSources(options.workspaceId))).sort(
+      (left, right) => compareUtf8(left.sourceId, right.sourceId)
     );
 
     sourceLoop: for (const source of sources) {
       let tree: SkillSourceTreeResult;
       try {
         tree = await this.#sourceCall(() =>
-          this.#sources.tree({ sourceId: source.sourceId, path: "." })
+          this.#sources.tree({
+            workspaceId: options.workspaceId,
+            sourceId: source.sourceId,
+            path: "."
+          })
         );
       } catch (error) {
         if (options.tolerateUnavailableSources && isUnavailableSourceError(error)) {
@@ -327,6 +355,7 @@ export class SkillCatalog {
         try {
           read = await this.#sourceCall(() =>
             this.#sources.readBytes({
+              workspaceId: options.workspaceId,
               sourceId: source.sourceId,
               path: `${relativeDirectory}/SKILL.md`,
               offset: 0,
@@ -394,6 +423,27 @@ export class SkillCatalog {
     };
   }
 
+  async #workspaceScopeError(
+    skillId: string,
+    requestedWorkspaceId: string | undefined
+  ): Promise<SkillError | undefined> {
+    const listReady = this.#sources.listReadyWorkspaceIds;
+    if (listReady === undefined) return undefined;
+    const workspaceIds = await this.#sourceCall(() => listReady.call(this.#sources));
+    for (const workspaceId of workspaceIds) {
+      if (workspaceId === requestedWorkspaceId) continue;
+      const discovery = await this.#discover({
+        workspaceId,
+        tolerateUnavailableSources: true
+      });
+      if (!discovery.skills.some((candidate) => candidate.descriptor.skillId === skillId)) continue;
+      return requestedWorkspaceId === undefined
+        ? new SkillError("SKILL_WORKSPACE_REQUIRED", "Skill requires its READY workspace scope")
+        : new SkillError("SKILL_WORKSPACE_MISMATCH", "Skill belongs to a different READY workspace");
+    }
+    return undefined;
+  }
+
   async #findLiveSkill(skillId: string): Promise<DiscoveredSkill> {
     const discovery = await this.#discover();
     const skill = discovery.skills.find((candidate) => candidate.descriptor.skillId === skillId);
@@ -403,9 +453,9 @@ export class SkillCatalog {
     return skill;
   }
 
-  async #buildBundle(skill: DiscoveredSkill): Promise<BuiltBundle> {
+  async #buildBundle(skill: DiscoveredSkill, workspaceId?: string): Promise<BuiltBundle> {
     const tree = await this.#sourceCall(() =>
-      this.#sources.tree({ sourceId: skill.sourceId, path: skill.relativeDirectory })
+      this.#sources.tree({ workspaceId, sourceId: skill.sourceId, path: skill.relativeDirectory })
     );
     if (tree.truncated) {
       throw loadLimit();
@@ -457,6 +507,7 @@ export class SkillCatalog {
     for (const { entry, relativePath } of regularFiles) {
       const read = await this.#sourceCall(() =>
         this.#sources.readBytes({
+          workspaceId,
           sourceId: skill.sourceId,
           path: entry.path,
           offset: 0,

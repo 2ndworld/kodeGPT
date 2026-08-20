@@ -8,20 +8,28 @@ import {
   type SkillSourceReadBytesResult,
   type SkillSourceReadResult,
   type SkillSourceRuntimeAdapter,
-  type SkillSourceTreeResult
+  type SkillSourceTreeResult,
+  type WorkspaceSkillSourceDescriptor
 } from "./contracts.js";
+import type { WorkspaceSkillSourceProvider } from "./workspace-source.js";
 import { SkillError } from "./errors.js";
 import { SkillSourceStore } from "./source-store.js";
 
 export class SkillSourceManager {
   readonly #store: SkillSourceStore;
   readonly #runtime: SkillSourceRuntimeAdapter;
+  readonly #workspaceSources: WorkspaceSkillSourceProvider | undefined;
   readonly #activeCapabilities = new Map<string, string>();
   readonly #registrationInFlight = new Map<string, Promise<void>>();
 
-  constructor(store: SkillSourceStore, runtime: SkillSourceRuntimeAdapter) {
+  constructor(
+    store: SkillSourceStore,
+    runtime: SkillSourceRuntimeAdapter,
+    workspaceSources?: WorkspaceSkillSourceProvider
+  ) {
     this.#store = store;
     this.#runtime = runtime;
+    this.#workspaceSources = workspaceSources;
   }
 
   async addSource(path: string, label: string): Promise<SkillSourceAdmissionResult> {
@@ -39,8 +47,23 @@ export class SkillSourceManager {
     };
   }
 
-  async listSources(): Promise<PersistedSkillSource[]> {
-    return this.#store.list();
+  async listSources(): Promise<PersistedSkillSource[]>;
+  async listSources(workspaceId: string): Promise<Array<PersistedSkillSource | WorkspaceSkillSourceDescriptor>>;
+  async listSources(
+    workspaceId?: string
+  ): Promise<Array<PersistedSkillSource | WorkspaceSkillSourceDescriptor>> {
+    const global = await this.#store.list();
+    if (workspaceId === undefined || this.#workspaceSources === undefined) return global;
+    const workspace = await this.#workspaceSources.listSources(workspaceId);
+    const globalIds = new Set(global.map((source) => source.sourceId));
+    if (workspace.some((source) => globalIds.has(source.sourceId))) {
+      throw new SkillError("SKILL_SOURCE_INVALID", "Workspace skill source collides with a persisted source");
+    }
+    return [...global, ...workspace];
+  }
+
+  async listReadyWorkspaceIds(): Promise<string[]> {
+    return this.#workspaceSources?.listReadyWorkspaceIds() ?? [];
   }
 
   async ensureRegistered(sourceId: string): Promise<void> {
@@ -63,9 +86,20 @@ export class SkillSourceManager {
     }
   }
 
-  async tree(input: { sourceId: string; path: string }): Promise<SkillSourceTreeResult> {
+  async tree(input: {
+    workspaceId?: string;
+    sourceId: string;
+    path: string;
+  }): Promise<SkillSourceTreeResult> {
     if (!isCanonicalRelativePath(input.path, true)) {
       throw boundaryViolation();
+    }
+    if (await this.#isWorkspaceSource(input.workspaceId, input.sourceId)) {
+      return this.#workspaceSources!.tree({
+        workspaceId: input.workspaceId!,
+        sourceId: input.sourceId,
+        path: input.path
+      });
     }
     const sourceCapabilityId = await this.#capabilityFor(input.sourceId);
     return this.#runtime.tree({
@@ -76,12 +110,32 @@ export class SkillSourceManager {
   }
 
   async read(input: {
+    workspaceId?: string;
     sourceId: string;
     path: string;
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadResult> {
     validateReadInput(input.path, input.offset, input.maxBytes);
+    if (await this.#isWorkspaceSource(input.workspaceId, input.sourceId)) {
+      const read = await this.#workspaceSources!.readBytes({
+        workspaceId: input.workspaceId!,
+        sourceId: input.sourceId,
+        path: input.path,
+        offset: input.offset,
+        maxBytes: input.maxBytes
+      });
+      let contents: string;
+      try {
+        contents = new TextDecoder("utf-8", { fatal: true }).decode(read.bytes);
+      } catch {
+        throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Workspace skill source text read was invalid UTF-8");
+      }
+      if (Buffer.byteLength(contents, "utf8") !== read.bytesRead) {
+        throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Workspace skill source text read was inconsistent");
+      }
+      return { contents, bytesRead: read.bytesRead, eof: read.eof };
+    }
     const sourceCapabilityId = await this.#capabilityFor(input.sourceId);
     return this.#runtime.read({
       sourceCapabilityId,
@@ -92,12 +146,22 @@ export class SkillSourceManager {
   }
 
   async readBytes(input: {
+    workspaceId?: string;
     sourceId: string;
     path: string;
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadBytesResult> {
     validateReadInput(input.path, input.offset, input.maxBytes);
+    if (await this.#isWorkspaceSource(input.workspaceId, input.sourceId)) {
+      return this.#workspaceSources!.readBytes({
+        workspaceId: input.workspaceId!,
+        sourceId: input.sourceId,
+        path: input.path,
+        offset: input.offset,
+        maxBytes: input.maxBytes
+      });
+    }
     const sourceCapabilityId = await this.#capabilityFor(input.sourceId);
     return this.#runtime.readBytes({
       sourceCapabilityId,
@@ -132,6 +196,12 @@ export class SkillSourceManager {
       }
       throw new SkillError("SKILL_SOURCE_UNAVAILABLE", "Skill source runtime request failed");
     }
+  }
+
+  async #isWorkspaceSource(workspaceId: string | undefined, sourceId: string): Promise<boolean> {
+    if (workspaceId === undefined || this.#workspaceSources === undefined) return false;
+    const sources = await this.#workspaceSources.listSources(workspaceId);
+    return sources.some((source) => source.sourceId === sourceId);
   }
 
   async #registerSource(sourceId: string): Promise<void> {

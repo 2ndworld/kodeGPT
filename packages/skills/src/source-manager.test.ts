@@ -5,8 +5,10 @@ import {
   SkillError,
   SkillSourceManager,
   SkillSourceStore,
+  WorkspaceSkillSourceProvider,
   type PersistedSkillSourceIdentity,
-  type SkillSourceRuntimeAdapter
+  type SkillSourceRuntimeAdapter,
+  type WorkspaceSkillSourceAuthority
 } from "./index.js";
 import {
   createSkillTestStateRoot,
@@ -89,12 +91,49 @@ const roots: string[] = [];
 
 async function managerFixture(
   label: string,
-  runtime: SkillSourceRuntimeAdapter
+  runtime: SkillSourceRuntimeAdapter,
+  workspaceAuthority?: WorkspaceSkillSourceAuthority
 ): Promise<{ store: SkillSourceStore; manager: SkillSourceManager }> {
   const root = await createSkillTestStateRoot(label);
   roots.push(root);
   const store = new SkillSourceStore(root);
-  return { store, manager: new SkillSourceManager(store, runtime) };
+  return {
+    store,
+    manager: new SkillSourceManager(
+      store,
+      runtime,
+      workspaceAuthority === undefined ? undefined : new WorkspaceSkillSourceProvider(workspaceAuthority)
+    )
+  };
+}
+
+function fakeWorkspaceAuthority(): WorkspaceSkillSourceAuthority & {
+  trees: string[];
+  reads: string[];
+} {
+  const trees: string[] = [];
+  const reads: string[] = [];
+  return {
+    trees,
+    reads,
+    listReady: async () => [{ workspaceId: "ws_local", trustId: "trust_local" }],
+    pathIdentity: async (_workspaceId, path) =>
+      path === "skills" ? { exists: true, kind: "directory" } : { exists: false },
+    tree: async (workspaceId, path, maxEntries) => {
+      trees.push(`${workspaceId}:${path}:${maxEntries}`);
+      return {
+        entries: [
+          { path: "skills/local", kind: "directory", sizeBytes: 0 },
+          { path: "skills/local/SKILL.md", kind: "file", sizeBytes: 4 }
+        ],
+        truncated: false
+      };
+    },
+    readBytes: async (workspaceId, path, offset, maxBytes) => {
+      reads.push(`${workspaceId}:${path}:${offset}:${maxBytes}`);
+      return { bytes: Buffer.from("test", "utf8"), bytesRead: 4, eof: true };
+    }
+  };
 }
 
 afterEach(async () => {
@@ -245,6 +284,56 @@ describe("SkillSourceManager", () => {
     expect([...result.bytes]).toEqual([0, 255, 1, 128]);
     expect({ bytesRead: result.bytesRead, eof: result.eof }).toEqual({ bytesRead: 4, eof: true });
     expect(result).not.toHaveProperty("sourceCapabilityId");
+  });
+
+  it("merges workspace sources only with an explicit workspace scope and routes their reads without runtime registration", async () => {
+    const { runtime, calls } = fakeRuntime();
+    const workspaceAuthority = fakeWorkspaceAuthority();
+    const { manager } = await managerFixture("workspace-routing", runtime, workspaceAuthority);
+    const global = await manager.addSource("/global", "Global");
+
+    const globalSources = await manager.listSources();
+    expect(globalSources.map((source) => source.sourceId)).toEqual([global.sourceId]);
+
+    const scopedSources = await manager.listSources("ws_local");
+    expect(scopedSources.map((source) => source.label)).toEqual([
+      "Global",
+      "Workspace skills: skills"
+    ]);
+    const local = scopedSources.find((source) => source.label === "Workspace skills: skills")!;
+
+    await expect(manager.tree({ workspaceId: "ws_local", sourceId: local.sourceId, path: "." }))
+      .resolves.toMatchObject({ truncated: false });
+    await expect(
+      manager.readBytes({
+        workspaceId: "ws_local",
+        sourceId: local.sourceId,
+        path: "local/SKILL.md",
+        offset: 0,
+        maxBytes: 64
+      })
+    ).resolves.toMatchObject({ bytesRead: 4, eof: true });
+    await expect(
+      manager.read({
+        workspaceId: "ws_local",
+        sourceId: local.sourceId,
+        path: "local/SKILL.md",
+        offset: 0,
+        maxBytes: 64
+      })
+    ).resolves.toEqual({ contents: "test", bytesRead: 4, eof: true });
+
+    expect(calls.register).toEqual([]);
+    expect(workspaceAuthority.trees).toEqual([`ws_local:skills:${MAX_SOURCE_ENTRIES}`]);
+    expect(workspaceAuthority.reads).toEqual([
+      "ws_local:skills/local/SKILL.md:0:64",
+      "ws_local:skills/local/SKILL.md:0:64"
+    ]);
+    await expect(manager.listReadyWorkspaceIds()).resolves.toEqual(["ws_local"]);
+
+    await expect(
+      manager.readBytes({ sourceId: local.sourceId, path: "local/SKILL.md", offset: 0, maxBytes: 64 })
+    ).rejects.toMatchObject({ code: "SKILL_SOURCE_NOT_FOUND" });
   });
 
   it("unregisters before removing local admission and close attempts every active capability", async () => {
