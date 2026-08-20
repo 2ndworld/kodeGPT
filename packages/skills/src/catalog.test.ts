@@ -206,6 +206,11 @@ describe("SkillCatalog live discovery", () => {
     }
     for (const behavior of [
       "Host owns orchestration",
+      "Resume / continuation",
+      ".ai-bridge/current-plan.md",
+      ".ai-bridge/agent-status.md",
+      "do not invent a new phase",
+      "before `context.build`",
       "never blind retry",
       "final diff review",
       "CI failure evidence",

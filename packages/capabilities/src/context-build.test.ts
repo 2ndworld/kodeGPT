@@ -470,6 +470,63 @@ describe("context.build", () => {
     expect(fixture.readCalls.filter((path) => path === explicitTarget)).toHaveLength(1);
   });
 
+  it("reserves target-scoped budget for later high-priority evidence", async () => {
+    const relatedTest = "packages/core/src/workspace-manager.test.ts";
+    const dependency = "packages/core/src/helper.ts";
+    const fixture = sources(
+      {
+        [TARGET]: "t".repeat(40),
+        [relatedTest]: "r".repeat(40),
+        [dependency]: "d".repeat(40),
+        "package.json": "manifest",
+        "packages/core/package.json": "core"
+      },
+      {
+        relationships: [
+          { from: relatedTest, to: TARGET, kind: "tests" },
+          { from: TARGET, to: dependency, kind: "imports" }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "implement",
+      target: TARGET,
+      maxBytes: 24
+    });
+
+    expect(result.selectedFiles.map(({ path }) => path)).toEqual([
+      TARGET,
+      relatedTest,
+      dependency
+    ]);
+    expect(result.selectedFiles.map(({ content }) => content?.length)).toEqual([12, 6, 6]);
+    expect(result.totalBytes).toBe(24);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("preserves whole-remaining-budget reads when no target is supplied", async () => {
+    const fixture = sources({
+      "packages/core/src/helper.ts": "h".repeat(40),
+      "packages/other/src/unrelated.ts": "u".repeat(40),
+      "package.json": "manifest"
+    });
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "review",
+      maxBytes: 20
+    });
+
+    expect(result.selectedFiles[0]).toMatchObject({
+      path: "packages/core/src/helper.ts",
+      content: "h".repeat(20),
+      truncated: true
+    });
+    expect(result.totalBytes).toBe(20);
+  });
+
   it("never exceeds the byte budget and omits later candidates deterministically", async () => {
     const fixture = sources({
       [TARGET]: "1234567890",
@@ -487,13 +544,15 @@ describe("context.build", () => {
       maxBytes: 20
     });
 
-    expect(result.totalBytes).toBeLessThanOrEqual(20);
+    expect(result.totalBytes).toBe(20);
     expect(result.selectedFiles.map((file) => file.path)).toEqual([
       TARGET,
-      "packages/core/src/helper.ts"
+      "packages/core/src/helper.ts",
+      "package.json"
     ]);
+    expect(result.selectedFiles.map((file) => file.content?.length)).toEqual([10, 5, 5]);
     expect(result.truncated).toBe(true);
-    expect(fixture.readCalls).toEqual([TARGET, "packages/core/src/helper.ts"]);
+    expect(fixture.readCalls).toEqual([TARGET, "packages/core/src/helper.ts", "package.json"]);
   });
 
   it("returns partial context when Git evidence is unavailable without fabricating clean Git", async () => {

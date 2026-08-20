@@ -49,6 +49,19 @@ describe("analyzeSkillCompatibility", () => {
     expect(report.analysisBasis).toBe("static");
   });
 
+  it("does not treat inline prose or template examples as external CLIs", () => {
+    const report = analyzeSkillCompatibility(
+      skill({
+        instructions:
+          "Finish with `Lean already. Ship.` and render `Total users: ${users.length}` in the example."
+      })
+    );
+
+    expect(report.classification).toBe("NATIVE");
+    expect(report.missingCapabilities).toEqual([]);
+    expect(report.reasons).toEqual(["NATIVE_REQUIREMENTS_SATISFIED"]);
+  });
+
   it("classifies declared provider requirements as PROVIDER_REQUIRED", () => {
     const report = analyzeSkillCompatibility(
       skill({
@@ -141,6 +154,16 @@ describe("analyzeSkillCompatibility", () => {
     expect(report.missingCapabilities).toContain("external-cli:terraform");
     expect(report.reasons).toContain("EXTERNAL_CLI_REQUIRED:terraform");
     expect(report.analysisBasis).toBe("static");
+  });
+
+  it("keeps explicit Codex commands in shell code fences unsupported", () => {
+    const report = analyzeSkillCompatibility(
+      skill({ instructions: "Use this review command:\n```bash\ncodex review\n```" })
+    );
+
+    expect(report.classification).toBe("UNSUPPORTED");
+    expect(report.missingCapabilities).toContain("codex.runtime");
+    expect(report.reasons).toContain("CODEX_RUNTIME_UNSUPPORTED");
   });
 
   it("does not reinterpret unlabeled generic code fences as shell commands", () => {

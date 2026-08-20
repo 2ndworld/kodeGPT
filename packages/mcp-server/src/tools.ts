@@ -1266,7 +1266,7 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.list",
     {
-      description: "List bounded live and pinned skill metadata without exposing host source paths.",
+      description: "List bounded live and pinned skill metadata with static/source compatibility; use skill.inspect with workspaceId for workspace-aware effective CLI readiness.",
       inputSchema: {
         limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
         sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
@@ -1282,7 +1282,7 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.inspect",
     {
-      description: "Inspect bounded skill metadata, compatibility, resource inventory, and an advisory plan for relevant native capabilities; actual operations require separate normal KodeGPT tool calls.",
+      description: "Inspect bounded skill metadata/resources and an advisory capability plan; with workspaceId, resolve workspace-aware external-CLI readiness against effective policy/executable/sandbox state without executing commands.",
       inputSchema: {
         skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -1313,7 +1313,7 @@ export function registerKodegptTools(
   server.registerTool(
     "system.capabilities",
     {
-      description: "Report KodeGPT capability availability without mutating host state.",
+      description: "Report KodeGPT runtime/boundary state and derived public MCP tool-family inventory; operator-only CLI and private internals are not enumerated.",
       inputSchema: {},
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },

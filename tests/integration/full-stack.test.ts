@@ -14,7 +14,7 @@ import {
   type RemoteCiAdapter
 } from "../../packages/capabilities/src/index.js";
 import { KernelClient } from "../../packages/core/src/kernel-client.js";
-import { MCP_SURFACE_VERSION } from "../../packages/mcp-server/src/index.js";
+import { MCP_SURFACE_VERSION, listSurfaceTools } from "../../packages/mcp-server/src/index.js";
 import { WorkspaceTrustStore } from "../../packages/trust/src/index.js";
 import { defaultStartDependencies, startKodegpt } from "../../apps/cli/src/commands/start.js";
 
@@ -249,6 +249,22 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         mcpSurfaceVersion: MCP_SURFACE_VERSION,
         filesystemBoundaryAvailable: true
       });
+      const publicTools = capabilities.publicTools as {
+        count: number;
+        families: Record<string, string[]>;
+      };
+      const expectedToolNames = listSurfaceTools()
+        .map(({ name }) => name)
+        .sort();
+
+      expect(publicTools.count).toBe(expectedToolNames.length);
+      expect(Object.values(publicTools.families).flat().sort()).toEqual(expectedToolNames);
+      expect(publicTools.families.skill).toEqual(["skill.inspect", "skill.list", "skill.load"]);
+      expect(publicTools.families.process).toEqual([
+        "process.cancel",
+        "process.run",
+        "process.status"
+      ]);
 
       const openedA = textJson(
         await callTool(

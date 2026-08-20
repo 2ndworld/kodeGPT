@@ -11,6 +11,10 @@ description: Use when developing or fixing an application with KodeGPT from repo
 
 When isolated branch work materially helps, the host may explicitly compose `git.branchCreate` followed by `git.worktreeCreate`, then trust/open the returned `.worktrees/<name>` child through the normal workspace control plane. Isolation is optional, never automatic. Close the child before returning to the parent for `git.worktreeRemove`; delete the branch separately only when normal Git lifecycle evidence says that is safe. Do not treat these tools as an agent/worktree scheduler.
 
+## Resume / continuation
+
+When the user asks to continue, resume, or lanjutkan prior work, recover coordination state before rebuilding repository context. Inspect current Git state first. If `.ai-bridge/current-plan.md` exists, read it; consult `.ai-bridge/agent-status.md`, `decisions.md`, or `open-questions.md` only when they are relevant to the active plan. Treat an explicit `CLOSED`, `RECONCILED`, `CLEAN`, or equivalent terminal state as terminal and do not invent a new phase merely to keep working. Resolve the active objective and target before `context.build`; `.ai-bridge` remains host coordination state and is not automatically part of semantic context.
+
 ## Adaptive flow
 
 Use this order, skipping conditional stages that do not add relevant evidence:
