@@ -28,6 +28,7 @@ function service(options: {
   treeEntries?: CapabilityTreeEntry[];
   treeTruncated?: boolean;
   allowProcess?: boolean;
+  allowDynamicExecutables?: boolean;
   allowedExecutables?: readonly string[];
   availability?: Partial<Record<string, { executableAvailable: boolean; sandboxAvailable: boolean }>>;
   run?: VerificationExecutionAdapter["run"];
@@ -69,6 +70,7 @@ function service(options: {
     },
     effectivePolicy: () => ({
       allowProcess: options.allowProcess ?? true,
+      allowDynamicExecutables: options.allowDynamicExecutables ?? false,
       allowedExecutableNames: [...(options.allowedExecutables ?? ["pnpm", "npm", "yarn", "bun", "cargo"])]
     })
   };
@@ -262,6 +264,34 @@ describe("safe verification recipes", () => {
     await expect(tooMany.listVerifications({ workspaceId: "ws_too_many" })).rejects.toMatchObject({
       code: "VERIFICATION_DISCOVERY_INVALID"
     });
+  });
+
+  it("allows an unlisted verification executable only through dynamic executable authority", async () => {
+    const dynamic = service({
+      packageJson: packageFixture("pnpm@10"),
+      files: ["pnpm-lock.yaml"],
+      allowedExecutables: [],
+      allowDynamicExecutables: true,
+      availability: { pnpm: { executableAvailable: true, sandboxAvailable: true } }
+    });
+    expect(
+      (await dynamic.listVerifications({ workspaceId: "ws_dynamic_verify" })).recipes.find(
+        (recipe) => recipe.id === "package:test"
+      )
+    ).toMatchObject({ allowed: true, logicalExecutable: "pnpm" });
+
+    const fixedOnly = service({
+      packageJson: packageFixture("pnpm@10"),
+      files: ["pnpm-lock.yaml"],
+      allowedExecutables: [],
+      allowDynamicExecutables: false,
+      availability: { pnpm: { executableAvailable: true, sandboxAvailable: true } }
+    });
+    expect(
+      (await fixedOnly.listVerifications({ workspaceId: "ws_fixed_verify" })).recipes.find(
+        (recipe) => recipe.id === "package:test"
+      )
+    ).toMatchObject({ allowed: false, blockedReason: "EXECUTABLE_NOT_ALLOWED" });
   });
 
   it("applies policy and static availability in fail-closed precedence", async () => {

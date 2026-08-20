@@ -419,6 +419,7 @@ export interface VerificationWorkspaceAdapter {
   pathIdentity(workspaceId: string, path: string): Promise<CapabilityPathIdentityResult>;
   effectivePolicy(workspaceId: string): {
     allowProcess: boolean;
+    allowDynamicExecutables: boolean;
     allowedExecutableNames: string[];
   };
 }

@@ -90,6 +90,7 @@ type RecipeLaunchDefinition = Omit<VerificationRecipe, "allowed" | "blockedReaso
 };
 type PolicySnapshot = {
   allowProcess: boolean;
+  allowDynamicExecutables: boolean;
   allowedExecutableNames: ReadonlySet<string>;
 };
 type ManagerResolution =
@@ -131,6 +132,7 @@ export async function listVerifications(
   const effectivePolicy = workspace.effectivePolicy(input.workspaceId);
   const policy: PolicySnapshot = {
     allowProcess: effectivePolicy.allowProcess,
+    allowDynamicExecutables: effectivePolicy.allowDynamicExecutables,
     allowedExecutableNames: new Set(effectivePolicy.allowedExecutableNames)
   };
   const recipes: VerificationRecipe[] = [];
@@ -498,7 +500,10 @@ async function withStaticAvailability(
   if (!policy.allowProcess) {
     return { ...recipe, allowed: false, blockedReason: "PROCESS_NOT_ALLOWED" };
   }
-  if (!policy.allowedExecutableNames.has(recipe.logicalExecutable)) {
+  if (
+    !policy.allowedExecutableNames.has(recipe.logicalExecutable) &&
+    !policy.allowDynamicExecutables
+  ) {
     return { ...recipe, allowed: false, blockedReason: "EXECUTABLE_NOT_ALLOWED" };
   }
 

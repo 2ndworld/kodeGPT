@@ -443,6 +443,7 @@ export async function createProductionServiceStack(
             const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
             return {
               allowProcess: policy.allowProcess,
+              allowDynamicExecutables: policy.allowDynamicExecutables,
               allowedExecutableNames: [...policy.allowedExecutableNames]
             };
           }
