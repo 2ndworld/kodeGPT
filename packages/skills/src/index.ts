@@ -77,6 +77,11 @@ export {
   type KodegptDeclaredStage
 } from "./declared-requirements.js";
 export { buildSkillRequirementGraph } from "./requirement-graph.js";
+export {
+  rankSkillsForQuery,
+  type SkillSearchMatch,
+  type SkillSearchOptions
+} from "./skill-search.js";
 export { SKILL_ERROR_CODES, SkillError, type SkillErrorCode } from "./errors.js";
 export { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 export { parseSkillDocument } from "./parser.js";

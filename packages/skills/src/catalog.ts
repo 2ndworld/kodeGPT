@@ -64,6 +64,7 @@ interface DiscoveredSkill {
 
 interface DiscoveryResult {
   skills: DiscoveredSkill[];
+  sourceIds: string[];
   truncationReasons: SkillDiscoveryTruncationReason[];
 }
 
@@ -148,8 +149,16 @@ export class SkillCatalog {
     const orderedTruncationReasons = TRUNCATION_REASON_ORDER.filter((reason) =>
       truncationReasons.has(reason)
     );
+    let workspaceSourceIds: string[] | undefined;
+    if (input.workspaceId !== undefined) {
+      const globalSourceIds = new Set(
+        (await this.#sourceCall(() => this.#sources.listSources())).map((source) => source.sourceId)
+      );
+      workspaceSourceIds = discovery.sourceIds.filter((sourceId) => !globalSourceIds.has(sourceId));
+    }
     return {
       skills: [...entries.values()].sort(compareCatalogEntries),
+      ...(workspaceSourceIds === undefined ? {} : { workspaceSourceIds }),
       truncated: orderedTruncationReasons.length > 0,
       truncationReasons: orderedTruncationReasons
     };
@@ -420,6 +429,7 @@ export class SkillCatalog {
 
     return {
       skills: discovered,
+      sourceIds: sources.map((source) => source.sourceId),
       truncationReasons: TRUNCATION_REASON_ORDER.filter((reason) => truncationReasons.has(reason))
     };
   }

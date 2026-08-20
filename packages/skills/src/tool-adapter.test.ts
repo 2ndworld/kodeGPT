@@ -115,6 +115,40 @@ describe("SkillCatalogToolAdapter", () => {
     expect(capped.truncationReasons).toContain("RESULT_LIMIT");
   });
 
+  it("preserves no-query order and relevance-ranks filtered skills when query is present", async () => {
+    const workflow = entry({
+      skillId: OTHER_SKILL_ID,
+      name: "kodegpt-application-development-workflow",
+      description: "Application development workflow",
+      sourceId: OTHER_SOURCE_ID,
+      fingerprint: "1".repeat(64),
+      pinned: false,
+      availability: "live"
+    });
+    const portable = entry();
+    const adapter = createSkillCatalogToolAdapter({
+      list: async () => ({
+        skills: [portable, workflow],
+        workspaceSourceIds: [OTHER_SOURCE_ID],
+        truncated: false,
+        truncationReasons: []
+      })
+    } as never);
+
+    expect((await adapter.list({ limit: 20 })).skills.map((skill) => skill.skillId)).toEqual([
+      portable.skillId,
+      workflow.skillId
+    ]);
+    expect(
+      (await adapter.list({ query: "application development", workspaceId: "ws_1", limit: 20 } as never))
+        .skills[0]?.skillId
+    ).toBe(workflow.skillId);
+    expect(
+      (await adapter.list({ query: "application development", sourceId: SOURCE_ID, limit: 20 } as never))
+        .skills
+    ).toEqual([]);
+  });
+
   it("filters compatibility before applying the public result limit", async () => {
     const classifications = ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"] as const;
     const skills = classifications.map((classification, index) =>

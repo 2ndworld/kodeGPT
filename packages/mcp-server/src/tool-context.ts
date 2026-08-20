@@ -251,6 +251,7 @@ export interface SkillToolContext {
     compatibility?: SkillCompatibility;
     pinned?: boolean;
     workspaceId?: string;
+    query?: string;
   }): Promise<SkillListResult>;
   inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {

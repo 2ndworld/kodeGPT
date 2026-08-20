@@ -73,6 +73,19 @@ function inspectResult(): SkillInspectResult {
       truncated: false,
       truncationReasons: []
     },
+    requirementGraph: {
+      schemaVersion: 1,
+      core: {
+        classification: "NATIVE",
+        actions: [{ id: "git.status", known: true, source: "static" }],
+        inferredActions: ["git.status"],
+        missingActions: []
+      },
+      stages: [],
+      analysisBasis: "static",
+      truncated: false,
+      truncationReasons: []
+    },
     frontmatter: { unknownMetadataKeys: [] },
     resources: [{ path: "references/guide.md", bytes: 6, sha256: "e".repeat(64), kind: "text", textInlineEligible: true }],
     instructionBytes: 24,
@@ -170,6 +183,9 @@ describe("MCP skill surface", () => {
     expect(list.config.inputSchema?.sourceId?.safeParse(SOURCE_ID).success).toBe(true);
     expect(list.config.inputSchema?.sourceId?.safeParse("/private/source").success).toBe(false);
     expect(list.config.inputSchema?.workspaceId?.safeParse(WORKSPACE_ID).success).toBe(true);
+    expect(list.config.inputSchema?.query?.safeParse("application development").success).toBe(true);
+    expect(list.config.inputSchema?.query?.safeParse("").success).toBe(false);
+    expect(list.config.inputSchema?.query?.safeParse("x".repeat(513)).success).toBe(false);
     for (const classification of ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"] as const) {
       expect(list.config.inputSchema?.compatibility?.safeParse(classification).success).toBe(true);
     }
@@ -179,7 +195,8 @@ describe("MCP skill surface", () => {
       sourceId: SOURCE_ID,
       compatibility: "NATIVE",
       pinned: true,
-      workspaceId: WORKSPACE_ID
+      workspaceId: WORKSPACE_ID,
+      query: "application development"
     });
 
     const inspect = required(tools, "skill.inspect");
@@ -206,7 +223,8 @@ describe("MCP skill surface", () => {
       sourceId: SOURCE_ID,
       compatibility: "NATIVE",
       pinned: true,
-      workspaceId: WORKSPACE_ID
+      workspaceId: WORKSPACE_ID,
+      query: "application development"
     });
     expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, workspaceId: WORKSPACE_ID });
     expect(seen).toContainEqual({

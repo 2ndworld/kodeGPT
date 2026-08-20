@@ -1359,19 +1359,20 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.list",
     {
-      description: "List bounded registered/pinned skill metadata with static/source compatibility; with workspaceId, additionally discover conventional Agent Skills beneath that READY workspace.",
+      description: "List bounded registered/pinned skill metadata with static/source compatibility; with workspaceId, additionally discover conventional Agent Skills beneath that READY workspace; query applies deterministic local relevance ranking without executing skills.",
       inputSchema: {
         limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
         sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
         compatibility: z.enum(["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"]).optional(),
         pinned: z.boolean().optional(),
-        workspaceId: z.string().min(1).optional()
+        workspaceId: z.string().min(1).optional(),
+        query: z.string().min(1).max(512).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ limit, sourceId, compatibility, pinned, workspaceId }) =>
+    async ({ limit, sourceId, compatibility, pinned, workspaceId, query }) =>
       skillToolResult(() =>
-        context.skill.list({ limit, sourceId, compatibility, pinned, workspaceId })
+        context.skill.list({ limit, sourceId, compatibility, pinned, workspaceId, query })
       )
   );
 
