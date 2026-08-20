@@ -19,10 +19,6 @@ import {
   CodeSearchResultSchema,
   ContextBuildInputSchema,
   ContextBuildResultSchema,
-  DeployPreviewCreateInputSchema,
-  DeployPreviewCreateResultSchema,
-  DeployPreviewInspectInputSchema,
-  DeployPreviewInspectResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,
@@ -91,8 +87,6 @@ import {
   REMOTE_CI_CANCEL_TOOL_ANNOTATIONS,
   REMOTE_CI_MUTATION_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
-  REMOTE_DEPLOY_CREATE_TOOL_ANNOTATIONS,
-  REMOTE_DEPLOY_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
@@ -193,8 +187,6 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
-  { name: "deploy.preview.create", required: ["workspaceId"] },
-  { name: "deploy.preview.inspect", required: ["workspaceId", "deploymentId"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",
@@ -202,7 +194,6 @@ const SURFACE_TOOLS = Object.freeze([
   },
   { name: "file.read", required: ["workspaceId", "path"] },
   { name: "file.patch", required: ["workspaceId", "patch"] },
-  { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
   { name: "git.branchCreate", required: ["workspaceId", "name"] },
@@ -561,34 +552,6 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
-    "deploy.preview.create",
-    {
-      description: "Create one Netlify branch preview from the exact clean trusted workspace HEAD.",
-      inputSchema: DeployPreviewCreateInputSchema,
-      outputSchema: DeployPreviewCreateResultSchema,
-      annotations: REMOTE_DEPLOY_CREATE_TOOL_ANNOTATIONS
-    },
-    async (input) =>
-      nativeCapabilityResult(async () =>
-        DeployPreviewCreateResultSchema.parse(await context.deploy.previewCreate(input))
-      )
-  );
-
-  server.registerTool(
-    "deploy.preview.inspect",
-    {
-      description: "Inspect one bounded normalized Netlify preview deployment.",
-      inputSchema: DeployPreviewInspectInputSchema,
-      outputSchema: DeployPreviewInspectResultSchema,
-      annotations: REMOTE_DEPLOY_READ_ONLY_TOOL_ANNOTATIONS
-    },
-    async (input) =>
-      nativeCapabilityResult(async () =>
-        DeployPreviewInspectResultSchema.parse(await context.deploy.previewInspect(input))
-      )
-  );
-
-  server.registerTool(
     "github.repository.inspect",
     {
       description: "Inspect one bounded normalized GitHub repository through the admitted read-only provider.",
@@ -878,21 +841,6 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
-    "file.search",
-    {
-      description: "Run bounded lexical UTF-8 search beneath a READY workspace retained root.",
-      inputSchema: {
-        workspaceId: z.string().min(1),
-        query: z.string().min(1),
-        path: z.string().min(1).optional()
-      },
-      annotations: READ_ONLY_TOOL_ANNOTATIONS
-    },
-    async ({ workspaceId, query, path }) =>
-      structuredToolResult(await context.workspace.search({ workspaceId, query, path }))
-  );
-
-  server.registerTool(
     "file.tree",
     {
       description: "List the deterministic bounded tree beneath a READY workspace retained root.",
@@ -1143,9 +1091,11 @@ export function registerKodegptTools(
       outputSchema: VerifyListResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) =>
+    async ({ workspaceId, target }) =>
       nativeCapabilityResult(async () =>
-        VerifyListResultSchema.parse(await context.verify.list({ workspaceId }))
+        VerifyListResultSchema.parse(
+          await context.verify.list({ workspaceId, ...(target === undefined ? {} : { target }) })
+        )
       )
   );
 
@@ -1198,15 +1148,16 @@ export function registerKodegptTools(
   server.registerTool(
     "process.status",
     {
-      description: "Inspect a process operation by its opaque operation ID.",
+      description: "Inspect a process operation by its opaque operation ID, optionally waiting for a bounded state update.",
       inputSchema: {
         workspaceId: z.string().min(1),
-        operationId: z.string().startsWith("op_")
+        operationId: z.string().startsWith("op_"),
+        waitMs: z.number().int().min(0).max(30_000).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, operationId }) => {
-      const value = await context.process.status({ workspaceId, operationId });
+    async ({ workspaceId, operationId, waitMs }) => {
+      const value = await context.process.status({ workspaceId, operationId, waitMs });
       consoleState.recordProcessOperation(value);
       return structuredToolResult(value);
     }

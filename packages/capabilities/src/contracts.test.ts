@@ -284,13 +284,12 @@ describe("capability contracts", () => {
         schemaVersion: 1 as const,
         workspaceId: "ws_1",
         root: ".",
+        scope: { kind: "workspace" as const },
         projectTypes: [],
         languages: [],
         entrypoints: [],
         areas: [],
         manifests: [],
-        symbols: [],
-        relationships: [],
         warnings: [],
         truncated: false
       },
@@ -408,6 +407,9 @@ describe("capability contracts", () => {
 
   it("validates verify.list and verify.run contracts at runtime", () => {
     expect(VerifyListInputSchema.parse({ workspaceId: "ws_1" })).toEqual({ workspaceId: "ws_1" });
+    expect(
+      VerifyListInputSchema.parse({ workspaceId: "ws_1", target: "crates/runtime/src/process.rs" })
+    ).toEqual({ workspaceId: "ws_1", target: "crates/runtime/src/process.rs" });
     expect(VerifyRunInputSchema.parse({ workspaceId: "ws_1", recipeId: "package:test", background: true })).toEqual({
       workspaceId: "ws_1",
       recipeId: "package:test",

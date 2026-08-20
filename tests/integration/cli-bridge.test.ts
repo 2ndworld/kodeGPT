@@ -245,7 +245,71 @@ describe("CLI stdio bridge integration flow", () => {
       const readData2 = JSON.parse(readAfterEdit.result.content[0].text);
       expect(readData2.contents).toBe("updated content\n");
 
-      // 8. Untrusted workspace rejection
+      // 8. Background process progress is live and process.status can bounded-wait for completion.
+      const processRunPromise = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "req_process_run",
+        method: "tools/call",
+        params: {
+          name: "process.run",
+          arguments: {
+            workspaceId: wsId,
+            logicalExecutable: "python3",
+            argv: [
+              "-c",
+              "import time; print('first', flush=True); time.sleep(2); print('second', flush=True)"
+            ],
+            background: true
+          },
+          _meta: meta()
+        }
+      });
+      const processRunRes = await processRunPromise;
+      expect(processRunRes.error).toBeUndefined();
+      const processRunData = JSON.parse(processRunRes.result.content[0].text);
+      expect(processRunData.state).toBe("running");
+      expect(processRunData.operationId).toMatch(/^op_/);
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const liveStatusPromise = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "req_process_live_status",
+        method: "tools/call",
+        params: {
+          name: "process.status",
+          arguments: { workspaceId: wsId, operationId: processRunData.operationId, waitMs: 0 },
+          _meta: meta()
+        }
+      });
+      const liveStatusRes = await liveStatusPromise;
+      expect(liveStatusRes.error).toBeUndefined();
+      const liveStatus = JSON.parse(liveStatusRes.result.content[0].text);
+      expect(liveStatus.state).toBe("running");
+      expect(liveStatus.stdoutPreview).toContain("first");
+      expect(liveStatus.bytesSpooled).toBeGreaterThan(0);
+
+      const waitedStatusPromise = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "req_process_waited_status",
+        method: "tools/call",
+        params: {
+          name: "process.status",
+          arguments: { workspaceId: wsId, operationId: processRunData.operationId, waitMs: 30_000 },
+          _meta: meta()
+        }
+      });
+      const waitedStatusRes = await waitedStatusPromise;
+      expect(waitedStatusRes.error).toBeUndefined();
+      const waitedStatus = JSON.parse(waitedStatusRes.result.content[0].text);
+      expect(waitedStatus.state).toBe("completed");
+      expect(waitedStatus.exitCode).toBe(0);
+      expect(waitedStatus.stdoutPreview).toContain("first");
+      expect(waitedStatus.stdoutPreview).toContain("second");
+
+      // 9. Untrusted workspace rejection
       const openUntrustedPromise = nextMessage(stdout);
       writeMessage(stdin, {
         jsonrpc: "2.0",

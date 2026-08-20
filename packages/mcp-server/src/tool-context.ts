@@ -16,11 +16,6 @@ import type {
   CiStatusResult,
   CodeImpactInput,
   CodeImpactResult,
-  DeployPreviewCreateInput,
-  DeployPreviewCreateResult,
-  DeployPreviewInspectInput,
-  DeployPreviewInspectResult,
-  DeployPreviewToolAdapter,
   CodeSearchInput,
   CodeSearchResult,
   ContextBuildInput,
@@ -68,7 +63,6 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
-  WorkspaceSearchMatch,
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
 import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
@@ -133,11 +127,6 @@ export interface WorkspaceToolContext {
     newText: string;
     expectedReplacements: number;
   }): MaybePromise<WorkspaceFileEditResult>;
-  search(input: {
-    workspaceId: string;
-    query: string;
-    path?: string;
-  }): MaybePromise<WorkspaceSearchMatch[]>;
   tree(input: { workspaceId: string; path?: string }): MaybePromise<WorkspaceTreeEntry[]>;
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
 }
@@ -178,6 +167,7 @@ export interface ProcessToolContext {
   status(input: {
     workspaceId: string;
     operationId: string;
+    waitMs?: number;
   }): MaybePromise<WorkspaceProcessOperationResult>;
   cancel(input: {
     workspaceId: string;
@@ -255,11 +245,6 @@ export interface CiToolContext {
 
 export interface GitHubToolContext extends GitHubReadToolAdapter, GitHubWriteToolAdapter {}
 
-export interface DeployToolContext {
-  previewCreate(input: DeployPreviewCreateInput): Promise<DeployPreviewCreateResult>;
-  previewInspect(input: DeployPreviewInspectInput): Promise<DeployPreviewInspectResult>;
-}
-
 export interface SkillToolContext {
   list(input: {
     limit?: number;
@@ -294,7 +279,6 @@ export interface KodegptToolContext {
   context: ContextToolContext;
   ci: CiToolContext;
   github: GitHubToolContext;
-  deploy: DeployToolContext;
   skill: SkillToolContext;
 }
 
@@ -318,7 +302,6 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "gitBranchSwitch"
   | "gitBranchDelete"
   | "inspectExecutable"
-  | "search"
   | "tree"
 >;
 
@@ -374,7 +357,6 @@ export function createKodegptToolContext(options: {
   remoteCi?: CiToolContext;
   githubRead?: GitHubReadToolAdapter;
   githubWrite?: GitHubWriteToolAdapter;
-  deployPreview?: DeployPreviewToolAdapter;
   skillCatalog?: SkillCatalogToolAdapter;
   inspectProfile(name: "observe" | "develop" | "trusted"): unknown;
   capabilities(): MaybePromise<unknown>;
@@ -384,7 +366,6 @@ export function createKodegptToolContext(options: {
   const remoteCi = options.remoteCi ?? unavailableRemoteCi();
   const githubRead = options.githubRead ?? unavailableGitHubRead();
   const githubWrite = options.githubWrite ?? unavailableGitHubWrite();
-  const deployPreview = options.deployPreview ?? unavailableDeployPreview();
   const preview = options.preview ?? unavailablePreview();
   const browser = options.browser ?? unavailableBrowser();
   const visual = options.visual ?? unavailableVisual();
@@ -417,8 +398,6 @@ export function createKodegptToolContext(options: {
           newText,
           expectedReplacements
         ),
-      search: ({ workspaceId, query, path }) =>
-        options.workspaceManager.search(workspaceId, query, path),
       tree: ({ workspaceId, path }) => options.workspaceManager.tree(workspaceId, path),
       inspect: (input) => native.inspectWorkspace(input)
     },
@@ -446,8 +425,8 @@ export function createKodegptToolContext(options: {
     },
     process: {
       run: (input) => options.executionManager.run(input),
-      status: ({ workspaceId, operationId }) =>
-        options.executionManager.status(workspaceId, operationId),
+      status: ({ workspaceId, operationId, waitMs }) =>
+        options.executionManager.status(workspaceId, operationId, waitMs),
       cancel: ({ workspaceId, operationId }) =>
         options.executionManager.cancel(workspaceId, operationId)
     },
@@ -519,10 +498,6 @@ export function createKodegptToolContext(options: {
       ...githubRead,
       ...githubWrite
     },
-    deploy: {
-      previewCreate: (input) => deployPreview.create(input),
-      previewInspect: (input) => deployPreview.inspect(input)
-    },
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
@@ -581,13 +556,6 @@ function unavailableVisual(): VisualToolContext {
   return {
     captureMatrix: () => unavailable("visual.captureMatrix"),
     compare: () => unavailable("visual.compare")
-  };
-}
-
-function unavailableDeployPreview(): DeployPreviewToolAdapter {
-  return {
-    create: () => unavailable("deploy.preview.create"),
-    inspect: () => unavailable("deploy.preview.inspect")
   };
 }
 

@@ -299,12 +299,12 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(
           port,
           credential.token,
-          "file.search",
-          { workspaceId: openedA.id, query: "hello" },
+          "code.search",
+          { workspaceId: openedA.id, query: "hello", mode: "text" },
           "req_full_search"
         )
       );
-      expect(JSON.stringify(search)).toContain("tracked.txt");
+      expect(search.matches).toContainEqual(expect.objectContaining({ path: "tracked.txt", kind: "text" }));
 
       const tree = textJson(
         await callTool(
@@ -321,12 +321,14 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(
           port,
           credential.token,
-          "file.search",
-          { workspaceId: openedA.id, query: "dependency-marker", path: "node_modules" },
+          "code.search",
+          { workspaceId: openedA.id, query: "dependency-marker", mode: "text", path: "node_modules" },
           "req_full_literal_dependency_search"
         )
       );
-      expect(JSON.stringify(literalDependencySearch)).toContain("node_modules/pkg/package.json");
+      expect(literalDependencySearch.matches).toContainEqual(
+        expect.objectContaining({ path: "node_modules/pkg/package.json", kind: "text" })
+      );
 
       const inspectResult = await callTool(
         port,
@@ -693,6 +695,59 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(artifact.uri).toBe(foreground.artifact.uri);
       expect(artifact.bytesRead).toBeGreaterThan(0);
 
+      const progressive = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.run",
+          {
+            workspaceId: openedA.id,
+            logicalExecutable: "python3",
+            argv: [
+              "-c",
+              "import time; print('first', flush=True); time.sleep(1); print('second', flush=True)"
+            ],
+            background: true
+          },
+          "req_full_process_progress"
+        )
+      );
+      expect(progressive.operationId).toMatch(/^op_/);
+      expect(progressive.state).toBe("running");
+
+      const liveStatus = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.status",
+          { workspaceId: openedA.id, operationId: progressive.operationId, waitMs: 200 },
+          "req_full_process_progress_live"
+        )
+      );
+      expect(liveStatus).toMatchObject({
+        operationId: progressive.operationId,
+        state: "running"
+      });
+      expect(liveStatus.stdoutPreview).toContain("first");
+      expect(liveStatus.bytesSpooled).toBeGreaterThan(0);
+
+      const completedStatus = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.status",
+          { workspaceId: openedA.id, operationId: progressive.operationId, waitMs: 30_000 },
+          "req_full_process_progress_complete"
+        )
+      );
+      expect(completedStatus).toMatchObject({
+        operationId: progressive.operationId,
+        state: "completed",
+        exitCode: 0
+      });
+      expect(completedStatus.stdoutPreview).toContain("first");
+      expect(completedStatus.stdoutPreview).toContain("second");
+
       const background = textJson(
         await callTool(
           port,
@@ -709,17 +764,6 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       );
       expect(background.operationId).toMatch(/^op_/);
       expect(background.state).toBe("running");
-
-      const processStatus = textJson(
-        await callTool(
-          port,
-          credential.token,
-          "process.status",
-          { workspaceId: openedA.id, operationId: background.operationId },
-          "req_full_process_status"
-        )
-      );
-      expect(processStatus.operationId).toBe(background.operationId);
 
       const cancelled = textJson(
         await callTool(

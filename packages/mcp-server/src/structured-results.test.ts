@@ -286,7 +286,22 @@ const typedContextBuildResult: ContextBuildResult = {
     search: "available",
     verification: "available"
   },
-  workspace: typedWorkspaceInspectResult,
+  workspace: {
+    schemaVersion: 1,
+    workspaceId: "ws_1",
+    root: ".",
+    scope: { kind: "target", area: "src" },
+    projectTypes: ["node-pnpm", "rust-cargo"],
+    languages: [
+      { name: "Rust", fileCount: 1 },
+      { name: "TypeScript", fileCount: 2 }
+    ],
+    entrypoints: [{ path: "package.json", kind: "node-manifest" }],
+    areas: [],
+    manifests: [{ path: "package.json", kind: "node-package" }],
+    warnings: [],
+    truncated: false
+  },
   git: typedGitChangesResult,
   selectedFiles: [
     {
@@ -321,7 +336,6 @@ function makeContext(): KodegptToolContext {
       readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
       writeFile: async () => ({ bytesWritten: 0, created: true }),
       editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
-      search: async () => [],
       tree: async () => []
     },
     trust: {
@@ -434,10 +448,6 @@ function makeContext(): KodegptToolContext {
       prMerge: async () => ({} as never),
       issueInspect: async () => ({} as never),
       issueList: async () => ({} as never)
-    },
-    deploy: {
-      previewCreate: async () => ({} as never),
-      previewInspect: async () => ({} as never)
     },
     skill: {
       list: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
@@ -1129,7 +1139,13 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const context = makeContext();
+    let listInput: unknown;
+    context.verify.list = async (input) => {
+      listInput = input;
+      return typedVerifyListResult;
+    };
+    registerKodegptTools(server, context);
     const handler = handlers.get("verify.list");
     const definition = definitions.get("verify.list");
     expect(handler).toBeDefined();
@@ -1137,10 +1153,14 @@ describe("structured MCP tool results", () => {
     expect(definition?.outputSchema).toBe(VerifyListResultSchema);
     expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
 
-    const result = (await handler!({ workspaceId: "ws_1" } as never)) as {
+    const result = (await handler!({
+      workspaceId: "ws_1",
+      target: "crates/runtime/src/process.rs"
+    } as never)) as {
       content: Array<{ type: string; text: string }>;
       structuredContent?: unknown;
     };
+    expect(listInput).toEqual({ workspaceId: "ws_1", target: "crates/runtime/src/process.rs" });
     expect(result.structuredContent).toEqual(typedVerifyListResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
@@ -1174,6 +1194,48 @@ describe("structured MCP tool results", () => {
       consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).processes
         .operations
     ).toContainEqual(typedVerifyRunResult.operation);
+  });
+
+  it("keeps process.status wait bounded and forwards the optional wait", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    let statusInput: unknown;
+    context.process.status = async (input) => {
+      statusInput = input;
+      return typedVerifyRunResult.operation;
+    };
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const definition = definitions.get("process.status");
+    const handler = handlers.get("process.status");
+    expect(definition).toBeDefined();
+    expect(handler).toBeDefined();
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    const schema = z.object(definition?.inputSchema as z.ZodRawShape).strict();
+    const valid = {
+      workspaceId: "ws_1",
+      operationId: "op_verify",
+      waitMs: 30_000
+    };
+    expect(schema.safeParse(valid).success).toBe(true);
+    for (const waitMs of [-1, 1.5, 30_001]) {
+      expect(schema.safeParse({ ...valid, waitMs }).success).toBe(false);
+    }
+
+    const result = (await handler!(valid as never)) as {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    };
+    expect(statusInput).toEqual(valid);
+    expect(result.structuredContent).toEqual(typedVerifyRunResult.operation);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
   it("keeps preview schemas closed to caller-selected network targets", async () => {
@@ -1236,82 +1298,6 @@ describe("structured MCP tool results", () => {
     };
     expect(result.structuredContent).toEqual(previewResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
-  });
-
-  it("keeps typed preview deployment schemas closed, bounded, and structured", async () => {
-    const handlers = new Map<string, CapturedHandler>();
-    const definitions = new Map<string, Record<string, unknown>>();
-    const context = makeContext();
-    const createResult = {
-      deploymentId: "deploy_123",
-      branch: "feat/typed-preview",
-      sourceOid: "a".repeat(40),
-      createdAt: "2026-08-19T00:00:00Z"
-    };
-    const inspectResult = {
-      ...createResult,
-      state: "ready" as const,
-      previewUrl: "https://deploy-123--example.netlify.app",
-      updatedAt: "2026-08-19T00:01:00Z"
-    };
-    context.deploy.previewCreate = async () => createResult;
-    context.deploy.previewInspect = async () => inspectResult;
-    const server = {
-      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
-        definitions.set(name, definition);
-        handlers.set(name, handler);
-      }
-    } as unknown as McpServer;
-
-    registerKodegptTools(server, context);
-    const createDefinition = definitions.get("deploy.preview.create");
-    const inspectDefinition = definitions.get("deploy.preview.inspect");
-    expect(createDefinition).toBeDefined();
-    expect(inspectDefinition).toBeDefined();
-    expect(createDefinition?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true
-    });
-    expect(inspectDefinition?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true
-    });
-
-    const createInput = createDefinition?.inputSchema as z.ZodTypeAny;
-    const inspectInput = inspectDefinition?.inputSchema as z.ZodTypeAny;
-    const createBase = { workspaceId: "ws_ready" };
-    expect(createInput.safeParse(createBase).success).toBe(true);
-    for (const forbidden of [
-      { siteId: "site_123" },
-      { providerInstanceId: "prv_test" },
-      { branch: "feat/other" },
-      { sha: "b".repeat(40) },
-      { token: "secret" },
-      { url: "https://example.invalid" }
-    ]) {
-      expect(createInput.safeParse({ ...createBase, ...forbidden }).success).toBe(false);
-    }
-
-    const inspectBase = { workspaceId: "ws_ready", deploymentId: "deploy_123" };
-    expect(inspectInput.safeParse(inspectBase).success).toBe(true);
-    expect(inspectInput.safeParse({ ...inspectBase, url: "https://example.invalid" }).success).toBe(false);
-    expect(inspectInput.safeParse({ ...inspectBase, siteId: "site_123" }).success).toBe(false);
-    expect(inspectInput.safeParse({ ...inspectBase, deploymentId: "https://example.invalid/deploy" }).success).toBe(false);
-
-    const createOutput = createDefinition?.outputSchema as z.ZodTypeAny;
-    const inspectOutput = inspectDefinition?.outputSchema as z.ZodTypeAny;
-    expect(createOutput.safeParse(createResult).success).toBe(true);
-    expect(inspectOutput.safeParse(inspectResult).success).toBe(true);
-    expect(inspectOutput.safeParse({ ...inspectResult, raw: { token: "secret" } }).success).toBe(false);
-
-    const createResponse = (await handlers.get("deploy.preview.create")!(createBase as never)) as { structuredContent?: unknown };
-    const inspectResponse = (await handlers.get("deploy.preview.inspect")!(inspectBase as never)) as { structuredContent?: unknown };
-    expect(createResponse.structuredContent).toEqual(createResult);
-    expect(inspectResponse.structuredContent).toEqual(inspectResult);
   });
 
   it("keeps visual verification schemas bounded, closed, and structured", async () => {
