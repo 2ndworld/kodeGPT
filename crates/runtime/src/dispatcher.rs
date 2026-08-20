@@ -6627,6 +6627,7 @@ mod tests {
                 "name": "observe",
                 "allowWrite": true,
                 "allowProcess": false,
+                "allowDynamicExecutables": false,
                 "network": "deny",
                 "allowedExecutableNames": [],
                 "inheritEnv": false,
