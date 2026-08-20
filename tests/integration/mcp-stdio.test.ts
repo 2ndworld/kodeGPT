@@ -263,6 +263,7 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         if (
           tool.name === "workspace.open" ||
           tool.name === "workspace.close" ||
+          tool.name === "workspace.checkpoint" ||
           tool.name === "workspace.trust" ||
           tool.name === "workspace.untrust"
         ) {

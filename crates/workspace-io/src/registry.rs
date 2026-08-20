@@ -15,7 +15,7 @@ use crate::path_identity::{PathIdentityError, PathIdentityResult, path_identity_
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
     ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult, WorkspaceReadError,
-    read_file_beneath, search_utf8_beneath_scoped, tree_beneath_scoped,
+    read_file_beneath, search_utf8_beneath_scoped, tree_beneath_scoped_with_metadata,
 };
 use crate::semantic_scope::TraversalScope;
 use crate::write::{
@@ -306,7 +306,7 @@ impl<P> WorkspaceRegistry<P> {
         scope: TraversalScope,
     ) -> Result<TreeResult, WorkspaceRegistryError> {
         let context = self.ready_context(capability_id)?;
-        tree_beneath_scoped(&context.root_fd, relative_path, max_entries, scope)
+        tree_beneath_scoped_with_metadata(&context.root_fd, relative_path, max_entries, scope)
             .map_err(map_workspace_read_error)
     }
 
@@ -654,6 +654,7 @@ mod tests {
     use super::{WorkspaceRegistry, WorkspaceRegistryError, roots_overlap};
     use crate::identity::{FilesystemIdentity, filesystem_identity, inspect_root};
     use crate::mountinfo::{BackingTreeIdentity, MountInfoError, parse_mountinfo};
+    use crate::semantic_scope::TraversalScope;
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -802,6 +803,35 @@ mod tests {
         ));
         assert_eq!(malformed.len(), 0);
 
+        fs::remove_dir_all(root).expect("root removed");
+    }
+
+    #[test]
+    fn ready_registry_tree_includes_metadata_for_every_entry() {
+        let root = temporary_root("tree-metadata");
+        fs::create_dir_all(root.join("nested")).expect("nested directory created");
+        fs::write(root.join("nested/file.txt"), "abc").expect("fixture file written");
+        let identity = inspect_root(&root).expect("root inspected").identity;
+        let mountinfo = mount_line(249, &identity, "/srv/tree-metadata", &root);
+        let mut registry = registry_with_mountinfo(mountinfo);
+        let registration = registry
+            .register(&root, &identity, ())
+            .expect("root registers");
+        registry
+            .activate(&registration.capability_id)
+            .expect("workspace activates");
+
+        let tree = registry
+            .tree(
+                &registration.capability_id,
+                Path::new("."),
+                100,
+                TraversalScope::Literal,
+            )
+            .expect("tree succeeds");
+
+        assert!(!tree.entries.is_empty());
+        assert!(tree.entries.iter().all(|entry| entry.size_bytes.is_some()));
         fs::remove_dir_all(root).expect("root removed");
     }
 

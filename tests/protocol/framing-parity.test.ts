@@ -58,6 +58,7 @@ const EXPECTED_METHODS = [
   "runtime.hello",
   "system.inspect_root",
   "trust.audit",
+  "workspace.checkpoint_audit",
   "ci.audit",
   "provider.audit",
   "workspace.register",
