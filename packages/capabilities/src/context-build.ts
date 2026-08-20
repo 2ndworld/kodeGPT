@@ -8,9 +8,9 @@ import {
   type ContextEvidenceState,
   type ContextIntent,
   type ContextSelectedFile,
+  type ContextWorkspaceSummary,
   type GitChangesInput,
   type GitChangesResult,
-  type VerificationRecipe,
   type VerifyListInput,
   type VerifyListResult,
   type WorkspaceInspectInput,
@@ -87,28 +87,27 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
-  const contextArea = input.target === undefined ? undefined : resolveContextArea(workspace, input.target);
+  const targetArea =
+    input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
-  const searchEvidence = await collectSearchEvidence(adapter, input, contextArea);
-  const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId);
+  const searchEvidence = await collectSearchEvidence(adapter, input, targetArea);
+  const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId, input.target);
   const git = gitEvidence.state === "unavailable" ? undefined : gitEvidence.value;
-  const search = searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value;
+  const search = scopeSearchEvidence(
+    searchEvidence.state === "unavailable" ? emptySearchResult() : searchEvidence.value,
+    input.target,
+    targetArea
+  );
   const verifications =
     verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes;
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
-  const publicWorkspace =
-    input.target === undefined || contextArea === undefined
-      ? workspace
-      : compactWorkspaceEvidence(workspace, input.target, contextArea, candidates);
   const relevantMatches = sortedMatches(
     search.matches.filter(
-      (match) =>
-        (match.path === input.target || isSemanticDiscoveryPath(match.path)) &&
-        (contextArea === undefined || sameArea(match.path, contextArea))
+      (match) => match.path === input.target || isSemanticDiscoveryPath(match.path)
     )
   );
-  const publicVerifications = filterVerifications(verifications, input.target, contextArea);
+  const workspaceSummary = summarizeWorkspace(workspace, input.target, targetArea);
   const warnings = [...workspace.warnings];
   if (gitEvidence.state === "unavailable") warnings.push("git-evidence-unavailable");
   else if (gitEvidence.value.truncated) warnings.push("git-change-evidence-truncated");
@@ -179,11 +178,11 @@ export async function buildContext(
       search: searchEvidence.state,
       verification: verificationEvidence.state
     },
-    workspace: publicWorkspace,
+    workspace: workspaceSummary,
     ...(git === undefined ? {} : { git }),
     selectedFiles,
     relevantMatches,
-    verifications: sortedVerifications(publicVerifications),
+    verifications,
     warnings: [...new Set(warnings)],
     totalBytes,
     truncated
@@ -214,7 +213,7 @@ async function collectSearchEvidence(
       workspaceId: input.workspaceId,
       query: targetQuery(input.target),
       mode: "path",
-      ...(targetArea === undefined ? {} : { path: targetArea }),
+      ...(targetArea === undefined || targetArea === "." ? {} : { path: targetArea }),
       maxResults: 100
     });
     return { state: value.truncated ? "incomplete" : "available", value };
@@ -228,10 +227,11 @@ async function collectSearchEvidence(
 
 async function collectVerificationEvidence(
   adapter: ContextBuildAdapter,
-  workspaceId: string
+  workspaceId: string,
+  target: string | undefined
 ): Promise<EvidenceResult<VerifyListResult>> {
   try {
-    const value = await adapter.verify({ workspaceId });
+    const value = await adapter.verify({ workspaceId, ...(target === undefined ? {} : { target }) });
     return { state: "available", value };
   } catch (error) {
     if (isKnownSourceFailure(error, VERIFICATION_EVIDENCE_UNAVAILABLE_CODES)) {
@@ -243,6 +243,64 @@ async function collectVerificationEvidence(
 
 function isKnownSourceFailure(error: unknown, codes: ReadonlySet<string>): boolean {
   return error instanceof CapabilityError && codes.has(error.code);
+}
+
+function scopeSearchEvidence(
+  search: CodeSearchResult,
+  target: string | undefined,
+  targetArea: string | undefined
+): CodeSearchResult {
+  if (target === undefined || targetArea === undefined || targetArea === ".") return search;
+  return {
+    ...search,
+    matches: search.matches.filter(
+      (match) => match.path === target || sameArea(match.path, targetArea)
+    )
+  };
+}
+
+function summarizeWorkspace(
+  workspace: WorkspaceInspectResult,
+  target: string | undefined,
+  targetArea: string | undefined
+): ContextWorkspaceSummary {
+  if (target === undefined) {
+    return {
+      schemaVersion: 1,
+      workspaceId: workspace.workspaceId,
+      root: workspace.root,
+      scope: { kind: "workspace" },
+      projectTypes: [...workspace.projectTypes],
+      languages: [...workspace.languages],
+      entrypoints: [...workspace.entrypoints],
+      areas: [...workspace.areas],
+      manifests: [...workspace.manifests],
+      warnings: [...workspace.warnings],
+      truncated: workspace.truncated
+    };
+  }
+
+  const area = targetArea ?? dirname(target);
+  return {
+    schemaVersion: 1,
+    workspaceId: workspace.workspaceId,
+    root: workspace.root,
+    scope: { kind: "target", area },
+    projectTypes: [...workspace.projectTypes],
+    languages: [...workspace.languages],
+    entrypoints: workspace.entrypoints.filter(
+      (entrypoint) => sameArea(entrypoint.path, area) || governsTarget(entrypoint.path, target)
+    ),
+    areas: workspace.areas.filter(
+      (candidate) =>
+        candidate.path === area ||
+        (candidate.kind === "config" &&
+          (sameArea(candidate.path, area) || governsTarget(candidate.path, target)))
+    ),
+    manifests: workspace.manifests.filter((manifest) => governsTarget(manifest.path, target)),
+    warnings: [...workspace.warnings],
+    truncated: workspace.truncated
+  };
 }
 
 function selectCandidates(
@@ -308,48 +366,6 @@ function selectCandidates(
   );
 }
 
-function compactWorkspaceEvidence(
-  workspace: WorkspaceInspectResult,
-  target: string,
-  targetArea: string,
-  candidates: Candidate[]
-): WorkspaceInspectResult {
-  const relevantPaths = new Set(candidates.map((candidate) => candidate.path));
-  relevantPaths.add(target);
-  const governingManifestPaths = new Set(
-    workspace.manifests.filter((manifest) => governsTarget(manifest.path, target)).map((manifest) => manifest.path)
-  );
-
-  return {
-    ...workspace,
-    entrypoints: workspace.entrypoints.filter(
-      (entrypoint) => sameArea(entrypoint.path, targetArea) || governingManifestPaths.has(entrypoint.path)
-    ),
-    areas: workspace.areas
-      .filter((area) => target === area.path || target.startsWith(`${area.path}/`))
-      .sort((left, right) => left.path.length - right.path.length || compareLexical(left.path, right.path)),
-    manifests: workspace.manifests.filter((manifest) => governsTarget(manifest.path, target)),
-    symbols: workspace.symbols.filter(
-      (symbol) => relevantPaths.has(symbol.path) && sameArea(symbol.path, targetArea)
-    ),
-    relationships: workspace.relationships.filter(
-      (relationship) => relevantPaths.has(relationship.from) && relevantPaths.has(relationship.to)
-    )
-  };
-}
-
-function filterVerifications(
-  recipes: VerificationRecipe[],
-  target: string | undefined,
-  targetArea: string | undefined
-): VerificationRecipe[] {
-  if (target === undefined || targetArea === undefined || targetArea === ".") return recipes;
-  return recipes.filter((recipe) => {
-    const cwd = recipe.cwd ?? ".";
-    return cwd === "." || target === cwd || target.startsWith(`${cwd}/`);
-  });
-}
-
 function relationshipCandidates(
   workspace: WorkspaceInspectResult,
   target: string
@@ -381,15 +397,6 @@ function intentWeight(intent: ContextIntent, kind: CandidateKind): number {
     default:
       return INTENT_WEIGHTS[intent][kind];
   }
-}
-
-function resolveContextArea(workspace: WorkspaceInspectResult, target: string): string {
-  const matches = workspace.areas
-    .filter((area) => area.kind !== "config")
-    .map((area) => area.path)
-    .filter((area) => target === area || target.startsWith(`${area}/`))
-    .sort((left, right) => right.length - left.length || compareLexical(left, right));
-  return matches[0] ?? dirname(target);
 }
 
 function resolveTargetArea(workspace: WorkspaceInspectResult, target: string): string {
@@ -433,10 +440,6 @@ function sortedMatches(matches: CodeSearchResult["matches"]): CodeSearchResult["
       (left.column ?? 0) - (right.column ?? 0) ||
       compareLexical(left.kind, right.kind)
   );
-}
-
-function sortedVerifications(recipes: VerificationRecipe[]): VerificationRecipe[] {
-  return [...recipes].sort((left, right) => compareLexical(left.id, right.id));
 }
 
 function emptySearchResult(): CodeSearchResult {

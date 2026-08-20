@@ -8,12 +8,10 @@ import {
 } from "./contracts.js";
 import { GITHUB_READ_PROVIDER_MANIFEST } from "./github.js";
 import { GITHUB_WRITE_PROVIDER_MANIFEST } from "./github-write.js";
-import { NETLIFY_DEPLOY_PROVIDER_MANIFEST } from "./netlify-deploy.js";
 
 export const PRODUCTION_PROVIDER_MANIFESTS: readonly ProviderAdapterManifest[] = Object.freeze([
   GITHUB_READ_PROVIDER_MANIFEST,
-  GITHUB_WRITE_PROVIDER_MANIFEST,
-  NETLIFY_DEPLOY_PROVIDER_MANIFEST
+  GITHUB_WRITE_PROVIDER_MANIFEST
 ]);
 
 export class ProviderAdapterRegistry {

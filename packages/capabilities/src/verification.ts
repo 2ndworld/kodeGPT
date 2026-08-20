@@ -16,6 +16,7 @@ import { CapabilityError } from "./errors.js";
 import { isSemanticDiscoveryPath } from "./semantic-scope.js";
 
 const PACKAGE_JSON = "package.json";
+const CARGO_TOML = "Cargo.toml";
 const MANIFEST_READ_MAX_BYTES = 64 * 1024;
 const MAX_VERIFICATION_PROJECT_MANIFESTS = 128;
 const VERIFICATION_TREE_MAX_ENTRIES = 10_000;
@@ -71,6 +72,16 @@ const CARGO_RECIPES = [
   }
 ] as const satisfies ReadonlyArray<RecipeLaunchDefinition>;
 
+const CARGO_PROJECT_RECIPES = [
+  { suffix: "test", label: "Cargo test", category: "test", argv: ["test", "--manifest-path", CARGO_TOML] },
+  { suffix: "check", label: "Cargo check", category: "typecheck", argv: ["check", "--manifest-path", CARGO_TOML] }
+] as const satisfies ReadonlyArray<{
+  suffix: "test" | "check";
+  label: string;
+  category: VerificationCategory;
+  argv: readonly string[];
+}>;
+
 type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
 type RecipeLaunchDefinition = Omit<VerificationRecipe, "allowed" | "blockedReason"> & {
   logicalExecutable: string;
@@ -85,6 +96,11 @@ type ManagerResolution =
   | { kind: "resolved"; manager: PackageManager }
   | { kind: "unknown" }
   | { kind: "conflict" };
+type ProjectKind = "package" | "cargo";
+type ProjectManifests = {
+  packagePaths: string[];
+  cargoPaths: string[];
+};
 
 export async function listVerifications(
   workspace: VerificationWorkspaceAdapter,
@@ -103,25 +119,35 @@ export async function listVerifications(
     throw discoveryError();
   }
 
-  const packageManifestPaths = await discoverPackageManifestPaths(workspace, input.workspaceId);
+  const manifests = await discoverProjectManifests(workspace, input.workspaceId);
   if (
-    (evidence.get("package.json") === true) !== packageManifestPaths.includes(PACKAGE_JSON)
+    (evidence.get(PACKAGE_JSON) === true) !== manifests.packagePaths.includes(PACKAGE_JSON) ||
+    (evidence.get(CARGO_TOML) === true) !== manifests.cargoPaths.includes(CARGO_TOML)
   ) {
     throw discoveryError();
   }
 
+  const activeKinds = activeProjectKinds(input.target, manifests);
   const effectivePolicy = workspace.effectivePolicy(input.workspaceId);
   const policy: PolicySnapshot = {
     allowProcess: effectivePolicy.allowProcess,
     allowedExecutableNames: new Set(effectivePolicy.allowedExecutableNames)
   };
   const recipes: VerificationRecipe[] = [];
-  const rootPackageJson = packageManifestPaths.includes(PACKAGE_JSON)
+  const packagePaths = scopedManifestPaths(
+    "package",
+    manifests.packagePaths,
+    input.target,
+    activeKinds
+  );
+  const cargoPaths = scopedManifestPaths("cargo", manifests.cargoPaths, input.target, activeKinds);
+  const rootPackageJson = packagePaths.includes(PACKAGE_JSON)
     ? await readPackageManifest(workspace, input.workspaceId, PACKAGE_JSON)
     : undefined;
   const rootManager = resolvePackageManager(rootPackageJson ?? {}, evidence);
 
-  for (const manifestPath of packageManifestPaths) {
+  for (const manifestPath of packagePaths) {
+    const projectDir = manifestDirectory(manifestPath);
     const packageJson =
       manifestPath === PACKAGE_JSON
         ? rootPackageJson!
@@ -131,7 +157,6 @@ export async function listVerifications(
         ? rootManager
         : resolveNestedPackageManager(packageJson, evidence, rootManager);
     const scripts = packageScripts(packageJson);
-    const projectDir = manifestDirectory(manifestPath);
     recipes.push(
       ...(await packageRecipes(
         input.workspaceId,
@@ -144,19 +169,24 @@ export async function listVerifications(
     );
   }
 
-  if (evidence.get("Cargo.toml") === true) {
-    recipes.push(
-      ...(await Promise.all(
-        CARGO_RECIPES.map((recipe) =>
-          withStaticAvailability(
-            input.workspaceId,
-            { ...recipe, argv: [...recipe.argv] },
-            policy,
-            availability
+  for (const manifestPath of cargoPaths) {
+    if (manifestPath === CARGO_TOML) {
+      recipes.push(
+        ...(await Promise.all(
+          CARGO_RECIPES.map((recipe) =>
+            withStaticAvailability(
+              input.workspaceId,
+              { ...recipe, argv: [...recipe.argv] },
+              policy,
+              availability
+            )
           )
-        )
-      ))
-    );
+        ))
+      );
+      continue;
+    }
+    const projectDir = manifestDirectory(manifestPath);
+    recipes.push(...(await cargoProjectRecipes(input.workspaceId, projectDir, policy, availability)));
   }
 
   return {
@@ -206,10 +236,10 @@ export async function runVerification(
   };
 }
 
-async function discoverPackageManifestPaths(
+async function discoverProjectManifests(
   workspace: VerificationWorkspaceAdapter,
   workspaceId: string
-): Promise<string[]> {
+): Promise<ProjectManifests> {
   let tree;
   try {
     tree = await workspace.tree(workspaceId, ".", VERIFICATION_TREE_MAX_ENTRIES, "semantic");
@@ -218,20 +248,23 @@ async function discoverPackageManifestPaths(
   }
   if (tree.truncated) throw discoveryError();
 
-  const manifests = [...new Set(
+  const manifestPaths = [...new Set(
     tree.entries
-      .filter((entry) => entry.kind === "file" && basename(entry.path) === PACKAGE_JSON)
+      .filter(
+        (entry) =>
+          entry.kind === "file" &&
+          (basename(entry.path) === PACKAGE_JSON || basename(entry.path) === CARGO_TOML)
+      )
       .map((entry) => entry.path)
       .filter(isSemanticDiscoveryPath)
   )].sort(compareText);
-  if (manifests.length > MAX_VERIFICATION_PROJECT_MANIFESTS) throw discoveryError();
+  if (manifestPaths.length > MAX_VERIFICATION_PROJECT_MANIFESTS) throw discoveryError();
 
-  const rootIndex = manifests.indexOf(PACKAGE_JSON);
-  if (rootIndex > 0) {
-    manifests.splice(rootIndex, 1);
-    manifests.unshift(PACKAGE_JSON);
-  }
-  return manifests;
+  const packagePaths = manifestPaths.filter((path) => basename(path) === PACKAGE_JSON);
+  const cargoPaths = manifestPaths.filter((path) => basename(path) === CARGO_TOML);
+  moveRootFirst(packagePaths, PACKAGE_JSON);
+  moveRootFirst(cargoPaths, CARGO_TOML);
+  return { packagePaths, cargoPaths };
 }
 
 async function readPackageManifest(
@@ -314,6 +347,78 @@ async function packageRecipes(
       )
     )
   );
+}
+
+async function cargoProjectRecipes(
+  workspaceId: string,
+  projectDir: string,
+  policy: PolicySnapshot,
+  availability: VerificationAvailabilityAdapter
+): Promise<VerificationRecipe[]> {
+  return Promise.all(
+    CARGO_PROJECT_RECIPES.map((definition) =>
+      withStaticAvailability(
+        workspaceId,
+        {
+          id: `cargo:${projectDir}:${definition.suffix}`,
+          label: `${definition.label} (${projectDir})`,
+          category: definition.category,
+          logicalExecutable: "cargo",
+          argv: [...definition.argv],
+          cwd: projectDir,
+          source: "cargo"
+        },
+        policy,
+        availability
+      )
+    )
+  );
+}
+
+function activeProjectKinds(
+  target: string | undefined,
+  manifests: ProjectManifests
+): ReadonlySet<ProjectKind> | undefined {
+  if (target === undefined) return undefined;
+  const candidates = [
+    ...manifests.packagePaths.map((path) => ({ kind: "package" as const, dir: manifestDirectory(path) })),
+    ...manifests.cargoPaths.map((path) => ({ kind: "cargo" as const, dir: manifestDirectory(path) }))
+  ].filter(({ dir }) => projectContainsTarget(dir, target));
+  if (candidates.length === 0) return new Set<ProjectKind>();
+  const maxDepth = Math.max(...candidates.map(({ dir }) => projectDepth(dir)));
+  return new Set(candidates.filter(({ dir }) => projectDepth(dir) === maxDepth).map(({ kind }) => kind));
+}
+
+function scopedManifestPaths(
+  kind: ProjectKind,
+  paths: readonly string[],
+  target: string | undefined,
+  activeKinds: ReadonlySet<ProjectKind> | undefined
+): string[] {
+  if (target === undefined) return [...paths];
+  if (activeKinds?.has(kind) !== true) return [];
+  return paths
+    .filter((path) => projectContainsTarget(manifestDirectory(path), target))
+    .sort((left, right) => {
+      const depth = projectDepth(manifestDirectory(right)) - projectDepth(manifestDirectory(left));
+      return depth === 0 ? compareText(left, right) : depth;
+    });
+}
+
+function projectContainsTarget(projectDir: string, target: string): boolean {
+  return projectDir === "." || target === projectDir || target.startsWith(`${projectDir}/`);
+}
+
+function projectDepth(projectDir: string): number {
+  return projectDir === "." ? 0 : projectDir.split("/").length;
+}
+
+function moveRootFirst(paths: string[], rootManifest: string): void {
+  const rootIndex = paths.indexOf(rootManifest);
+  if (rootIndex > 0) {
+    paths.splice(rootIndex, 1);
+    paths.unshift(rootManifest);
+  }
 }
 
 function resolvePackageManager(
@@ -413,9 +518,20 @@ async function withStaticAvailability(
 }
 
 function validateListInput(input: VerifyListInput): void {
-  if (input.workspaceId.length === 0) {
+  if (
+    input.workspaceId.length === 0 ||
+    (input.target !== undefined && !isSafeRelativeTarget(input.target))
+  ) {
     throw new CapabilityError("CAPABILITY_INPUT_INVALID", "verify.list input is invalid");
   }
+}
+
+function isSafeRelativeTarget(target: string): boolean {
+  return (
+    target.length > 0 &&
+    !target.startsWith("/") &&
+    target.split("/").every((component) => component.length > 0 && component !== "." && component !== "..")
+  );
 }
 
 function validateRunInput(input: VerifyRunInput): void {

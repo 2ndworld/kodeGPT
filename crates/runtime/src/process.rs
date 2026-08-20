@@ -379,7 +379,12 @@ pub fn run_process(
     let operations_for_worker = Arc::clone(&operations);
     let executions_for_worker = Arc::clone(&executions);
     let worker = move || {
-        let captured = capture_child(&mut child, &mut writer);
+        let captured = capture_child(
+            &mut child,
+            &mut writer,
+            &operations_for_worker,
+            &operation_for_worker,
+        );
         let finished = match captured {
             Ok(capture) => writer.finish().map(|artifact| (capture, artifact)),
             Err(error) => Err(match error {
@@ -534,6 +539,8 @@ enum StreamMessage {
 fn capture_child(
     child: &mut kodegpt_sandbox::SandboxChild,
     writer: &mut RawSpoolWriter,
+    operations: &ProcessOperationRegistry,
+    operation_id: &str,
 ) -> Result<CaptureResult, ProcessError> {
     let stdout = child
         .child_mut()
@@ -560,6 +567,13 @@ fn capture_child(
         match receiver.recv() {
             Ok(StreamMessage::Data(kind, bytes)) => {
                 writer.write_source(&bytes)?;
+                update_operation_progress(
+                    operations,
+                    operation_id,
+                    kind,
+                    &bytes,
+                    writer.metadata(),
+                );
                 match kind {
                     StreamKind::Stdout => {
                         append_preview(&mut stdout_preview, &mut stdout_truncated, &bytes)
@@ -593,6 +607,44 @@ fn capture_child(
         stdout_truncated,
         stderr_truncated,
     })
+}
+
+fn append_live_preview(target: &mut String, truncated: &mut bool, source: &[u8]) {
+    let remaining = PREVIEW_MAX_BYTES.saturating_sub(target.as_bytes().len());
+    let accepted = remaining.min(source.len());
+    target.push_str(&String::from_utf8_lossy(&source[..accepted]));
+    if accepted < source.len() {
+        *truncated = true;
+    }
+}
+
+fn update_operation_progress(
+    operations: &ProcessOperationRegistry,
+    operation_id: &str,
+    kind: StreamKind,
+    bytes: &[u8],
+    artifact: RawSpoolMetadata,
+) {
+    if let Ok(mut records) = operations.records.lock()
+        && let Some(record) = records.get_mut(operation_id)
+        && record.state == ProcessState::Running
+    {
+        match kind {
+            StreamKind::Stdout => append_live_preview(
+                &mut record.stdout_preview,
+                &mut record.stdout_truncated,
+                bytes,
+            ),
+            StreamKind::Stderr => append_live_preview(
+                &mut record.stderr_preview,
+                &mut record.stderr_truncated,
+                bytes,
+            ),
+        }
+        record.bytes_spooled = artifact.bytes_written;
+        record.source_truncated = artifact.source_truncated;
+        record.artifact = artifact;
+    }
 }
 
 fn spawn_reader<R: Read + Send + 'static>(
@@ -1361,6 +1413,142 @@ mod tests {
         fs::remove_dir_all(workspace).expect("workspace cleanup");
         fs::remove_dir_all(state).expect("state cleanup");
         fs::remove_dir_all(other).expect("other cleanup");
+    }
+
+    #[test]
+    fn background_operation_exposes_stdout_progress_before_completion() {
+        let workspace = temporary_root("background-progress-workspace");
+        let state = temporary_root("background-progress-state");
+        let (operations, view) = run_python(
+            &workspace,
+            &state,
+            policy(true),
+            vec![
+                "-c".to_owned(),
+                "import sys,time; print('first', flush=True); time.sleep(1); print('second', flush=True)".to_owned(),
+            ],
+            true,
+        );
+        assert_eq!(view.state, ProcessState::Running);
+
+        let mut status = operations
+            .status("kc_process_fixture", &view.operation_id)
+            .expect("background status");
+        for _ in 0..20 {
+            if status.stdout_preview.contains("first") || status.state != ProcessState::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+            status = operations
+                .status("kc_process_fixture", &view.operation_id)
+                .expect("background status");
+        }
+
+        assert_eq!(status.state, ProcessState::Running, "{status:?}");
+        assert!(status.stdout_preview.contains("first"), "{status:?}");
+        assert!(status.bytes_spooled > 0, "{status:?}");
+        let cancelled = operations
+            .cancel("kc_process_fixture", &view.operation_id)
+            .expect("background operation cancels");
+        assert_eq!(cancelled.state, ProcessState::Cancelled);
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn background_operation_exposes_stderr_progress_and_preserves_final_output() {
+        let workspace = temporary_root("background-stderr-progress-workspace");
+        let state = temporary_root("background-stderr-progress-state");
+        let (operations, view) = run_python(
+            &workspace,
+            &state,
+            policy(true),
+            vec![
+                "-c".to_owned(),
+                "import sys,time; print('early-error', file=sys.stderr, flush=True); time.sleep(0.3); print('done', flush=True)".to_owned(),
+            ],
+            true,
+        );
+        assert_eq!(view.state, ProcessState::Running);
+
+        let mut status = operations
+            .status("kc_process_fixture", &view.operation_id)
+            .expect("background status");
+        for _ in 0..20 {
+            if status.stderr_preview.contains("early-error")
+                || status.state != ProcessState::Running
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+            status = operations
+                .status("kc_process_fixture", &view.operation_id)
+                .expect("background status");
+        }
+        assert_eq!(status.state, ProcessState::Running, "{status:?}");
+        assert!(status.stderr_preview.contains("early-error"), "{status:?}");
+        assert!(status.bytes_spooled > 0, "{status:?}");
+
+        for _ in 0..50 {
+            if status.state != ProcessState::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+            status = operations
+                .status("kc_process_fixture", &view.operation_id)
+                .expect("background status");
+        }
+        assert_eq!(status.state, ProcessState::Completed, "{status:?}");
+        assert_eq!(status.exit_code, Some(0));
+        assert_eq!(status.stdout_preview, "done\n");
+        assert_eq!(status.stderr_preview, "early-error\n");
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
+    }
+
+    #[test]
+    fn background_operation_live_preview_keeps_existing_byte_limit() {
+        let workspace = temporary_root("background-preview-limit-workspace");
+        let state = temporary_root("background-preview-limit-state");
+        let (operations, view) = run_python(
+            &workspace,
+            &state,
+            policy(true),
+            vec![
+                "-c".to_owned(),
+                format!(
+                    "import sys,time; sys.stdout.write('x'*{}); sys.stdout.flush(); time.sleep(1)",
+                    super::PREVIEW_MAX_BYTES + 4096
+                ),
+            ],
+            true,
+        );
+        assert_eq!(view.state, ProcessState::Running);
+
+        let mut status = operations
+            .status("kc_process_fixture", &view.operation_id)
+            .expect("background status");
+        for _ in 0..40 {
+            if status.stdout_truncated || status.state != ProcessState::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+            status = operations
+                .status("kc_process_fixture", &view.operation_id)
+                .expect("background status");
+        }
+        assert_eq!(status.state, ProcessState::Running, "{status:?}");
+        assert!(status.stdout_truncated, "{status:?}");
+        assert_eq!(
+            status.stdout_preview.as_bytes().len(),
+            super::PREVIEW_MAX_BYTES
+        );
+        let cancelled = operations
+            .cancel("kc_process_fixture", &view.operation_id)
+            .expect("background operation cancels");
+        assert_eq!(cancelled.state, ProcessState::Cancelled);
+        fs::remove_dir_all(workspace).expect("workspace cleanup");
+        fs::remove_dir_all(state).expect("state cleanup");
     }
 
     #[test]

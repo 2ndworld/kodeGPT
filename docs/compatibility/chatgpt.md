@@ -1,6 +1,6 @@
 # ChatGPT Compatibility Claim Gate
 
-Status date: 2026-08-14.
+Status date: 2026-08-20.
 
 KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compatibility. Passing KodeGPT's local protocol, security, Apps, and packaging suites is necessary but is not evidence that a specific ChatGPT plan/workspace can connect to or invoke every KodeGPT capability.
 
@@ -33,6 +33,8 @@ The compatibility claim is therefore scoped to observed evidence:
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
 - After the MCP tool inventory or tool input definitions change, the ChatGPT app/connector actions must be refreshed/rescanned before new host evidence is collected. ChatGPT may retain an approved/frozen tool snapshot; a running server with a newer surface version does not by itself prove the host is using that newer inventory.
 
+The Development Efficiency v2 candidate advances the semantic surface to `0.16` with exactly 75 public tools by removing `file.search`, `deploy.preview.create`, and `deploy.preview.inspect`. Public lexical repository search remains available through `code.search(mode:"text")`, backed by retained private search authority. Background process status gains bounded live progress and optional `waitMs` without a new tool; target-aware `context.build` and `verify.list` reduce irrelevant repository/test evidence. Provider-specific Netlify deployment is no longer an MCP action. Historical host evidence for older surfaces remains historical and must not be treated as `0.16` evidence.
+
 For the reconciled `0.3` candidate, begin host acceptance by calling `system.capabilities` and require `mcpProtocolVersion:"2026-07-28"` plus `mcpSurfaceVersion:"0.3"`. A still-running `0.2` connector is a stale deployment and must not be used as evidence that the `0.3` candidate passed or failed host behavior; restart/reinstall the exact candidate first.
 
 When the `0.3` host action inventory is refreshed, inspect the actual host-visible `skill.list` input schema rather than inferring it from server tests. It must expose optional `compatibility` with exactly `NATIVE`, `PARTIAL`, `PROVIDER_REQUIRED`, and `UNSUPPORTED`. Also inspect the action names themselves: the host must not expose `skill.run`, source/pin mutation, workspace-trust mutation, or provider invocation authority.
@@ -43,13 +45,14 @@ KodeGPT's released native capability + read-only skill hub is the `0.3` semantic
 
 The higher-level tools reduce repeated primitive round trips without replacing lower-level authority:
 
-- `workspace.inspect` assembles bounded evidence about project types, languages, manifests, entrypoints, and areas from retained-root inspection. `context.build` composes existing inspect/Git/search/verification/read capabilities using deterministic rules and a byte budget; it performs no model inference.
+- `workspace.inspect` assembles bounded full-repository evidence about project types, languages, manifests, entrypoints, areas, symbols, and relationships from retained-root inspection. `context.build` composes existing inspect/Git/search/verification/read capabilities using deterministic rules and a byte budget; when a target is supplied it emits a compact target-scoped workspace summary while retaining the full relationship graph only for internal ranking. It performs no model inference.
 - `code.search` reports its precision (`exact`, `lexical`, or `heuristic`) and explicit truncation reasons. Heuristic symbol/definition/reference matches are never described as compiler-precise.
 - `git.changes` provides a content-sensitive deterministic checkpoint. Untracked content participates in fingerprint identity, while v1 unified patch coverage is explicitly limited to staged and worktree tracked diffs.
-- `verify.list` discovers only named deterministic recipes. `verify.run` selects and re-resolves one of those recipes through the existing process sandbox; it does not accept an arbitrary replacement executable/argv or shell command.
+- `verify.list` discovers only named deterministic recipes. With an optional target it selects the nearest project ecosystem, prioritizes target package/crate recipes, and keeps root/full-gate recipes as fallback. `verify.run` selects and re-resolves one of those recipes through the existing process sandbox; it does not accept an arbitrary replacement executable/argv or shell command.
+- `process.status` remains the single status tool; optional `waitMs` is bounded to 30 seconds and running operations expose bounded already-spooled stdout/stderr progress without a scheduler, queue, or second process store.
 - `file.patch` defaults to `check`. It parses a bounded text-only unified patch, performs full preflight for all affected files before the first mutation, then in `apply` mode uses per-file conditional retained-root commits. It is **not** a globally atomic multi-file transaction: a host/runtime failure during commit may leave already committed earlier paths in place, and KodeGPT reports `committedPaths` plus `failedPath` rather than claiming rollback.
 
-High-level repository understanding uses an internal **semantic traversal scope** by default for `workspace.inspect`, all `code.search` modes, `context.build` discovery evidence, and verification project discovery. The fixed VCS/worktree/generated/vendor/cache directory set is skipped for relevance before traversal/search budgets are consumed; this is not an access-control deny list. Primitive `file.tree`/`file.search` remain literal, arbitrary hidden first-party config directories are not excluded merely because they begin with `.`, and explicitly asking a high-level operation to start inside an otherwise excluded subtree opts that requested root back in.
+High-level repository understanding uses an internal **semantic traversal scope** by default for `workspace.inspect`, all `code.search` modes, `context.build` discovery evidence, and verification project discovery. The fixed VCS/worktree/generated/vendor/cache directory set is skipped for relevance before traversal/search budgets are consumed; this is not an access-control deny list. Public `file.tree` remains literal, while retained-root lexical search is private authority behind `code.search`; arbitrary hidden first-party config directories are not excluded merely because they begin with `.`, and explicitly asking a high-level operation to start inside an otherwise excluded subtree opts that requested root back in.
 
 Workspace trust remains local-only and is deliberately absent from the MCP tool inventory. The public surface also contains no `shell.run`, `codex.run`, `codex.exec`, or `skill.run` execution tools.
 
