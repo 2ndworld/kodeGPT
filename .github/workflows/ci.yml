@@ -42,6 +42,9 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$node_root"
           chmod 0755 "$node_root"
           test "$(stat -c '%u:%g:%a' "$node_root")" = "$(id -u):$(id -g):755"
+          sudo chown "$(id -u):$(id -g)" "$node_root/bin"
+          chmod 0755 "$node_root/bin"
+          test "$(stat -c '%u:%g:%a' "$node_root/bin")" = "$(id -u):$(id -g):755"
           pnpm_entry="$node_root/bin/pnpm"
           pnpm_target="$(readlink -f "$pnpm_entry")"
           case "$pnpm_target" in

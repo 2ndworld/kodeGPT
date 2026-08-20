@@ -30,10 +30,17 @@ function baseDependencies(events: string[]) {
       throw new Error("not used");
     },
     closeWorkspace: async () => undefined,
+    workspaceInfo: async () => {
+      throw new Error("not used");
+    },
+    checkpointWorkspace: async () => {
+      throw new Error("not used");
+    },
     requireReady: () => {
       throw new Error("not used");
     },
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+    readFileBytes: async () => ({ bytes: new Uint8Array(), bytesRead: 0, eof: true }),
     writeFile: async () => ({ bytesWritten: 0, created: false }),
     editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
     gitStatus: async () => {
@@ -132,10 +139,6 @@ function baseDependencies(events: string[]) {
       events.push("connector-verifier");
       return { authenticate: async () => true };
     },
-    prepareExtensionRegistry: async () => {
-      events.push("extensions");
-      return { listEnabled: () => [] };
-    },
     startKernel: async () => {
       events.push("kernel.start");
       return kernel;
@@ -204,12 +207,11 @@ describe("production skill catalog lifecycle", () => {
       "state-root",
       "audit",
       "connector-verifier",
-      "extensions",
       "kernel.start",
       "kernel.hello",
-      "skill.catalog",
       "trust-profile",
-      "managers"
+      "managers",
+      "skill.catalog"
     ]);
     await expect(stack.toolContext.skill.list({})).resolves.toMatchObject({
       schemaVersion: 1,
@@ -227,19 +229,21 @@ describe("production skill catalog lifecycle", () => {
   it("closes an already-created catalog before stopping the kernel when later startup fails", async () => {
     const events: string[] = [];
     const { dependencies } = baseDependencies(events);
-    dependencies.createTrustProfile = () => {
-      events.push("trust-profile.fail");
-      throw new Error("trust failed");
-    };
+    Object.assign(dependencies, {
+      createProviderGateway: () => {
+        events.push("provider.fail");
+        throw new Error("provider failed");
+      }
+    });
 
     await expect(
       createProductionServiceStack(
         { runtimePath: "/runtime", stateRoot: "/state" },
         dependencies
       )
-    ).rejects.toThrow("trust failed");
+    ).rejects.toThrow("provider failed");
 
-    expect(events.slice(-3)).toEqual(["trust-profile.fail", "skill.close", "kernel.stop"]);
+    expect(events.slice(-3)).toEqual(["provider.fail", "skill.close", "kernel.stop"]);
   });
 
   it("closes HTTP resources before the production stack and remains idempotent", async () => {

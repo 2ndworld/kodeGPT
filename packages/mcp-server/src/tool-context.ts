@@ -63,9 +63,11 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
+  WorkspaceCheckpointMutationInput,
+  WorkspaceCheckpointMutationResult,
+  WorkspaceInfo,
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
-import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
 import {
   resolveSkillCapabilityPlan,
   type SkillCatalogToolAdapter,
@@ -107,7 +109,8 @@ export interface WorkspaceToolContext {
   }): MaybePromise<TrustedWorkspaceSummary>;
   untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
-  info(input: { workspaceId: string }): MaybePromise<OpenWorkspace>;
+  checkpoint(input: WorkspaceCheckpointMutationInput): MaybePromise<WorkspaceCheckpointMutationResult>;
+  info(input: { workspaceId: string }): MaybePromise<WorkspaceInfo>;
   readFile(input: {
     workspaceId: string;
     path: string;
@@ -200,10 +203,6 @@ export interface ArtifactToolContext {
   read(input: { uri: string; offset?: number; maxBytes?: number }): MaybePromise<ArtifactReadResult>;
 }
 
-export interface ExtensionToolContext {
-  list(input: { limit?: number }): MaybePromise<PublicExtensionMetadata[]>;
-}
-
 export interface ProfileToolContext {
   current(input: { workspaceId: string }): MaybePromise<ProfileCurrentResult>;
   inspect(input: { name: "observe" | "develop" | "trusted" }): MaybePromise<JsonObject>;
@@ -251,6 +250,7 @@ export interface SkillToolContext {
     sourceId?: string;
     compatibility?: SkillCompatibility;
     pinned?: boolean;
+    workspaceId?: string;
   }): Promise<SkillListResult>;
   inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {
@@ -258,6 +258,7 @@ export interface SkillToolContext {
     fingerprint?: string;
     resources?: string[];
     maxBytes?: number;
+    workspaceId?: string;
   }): Promise<SkillLoadResult>;
 }
 
@@ -270,7 +271,6 @@ export interface KodegptToolContext {
   browser: BrowserToolContext;
   visual: VisualToolContext;
   artifact: ArtifactToolContext;
-  extension: ExtensionToolContext;
   profile: ProfileToolContext;
   system: SystemToolContext;
   code: CodeToolContext;
@@ -290,6 +290,8 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "trustWorkspace"
   | "untrustWorkspace"
   | "closeWorkspace"
+  | "checkpointWorkspace"
+  | "workspaceInfo"
   | "requireReady"
   | "readFile"
   | "writeFile"
@@ -307,7 +309,6 @@ export type WorkspaceManagerToolAdapter = Pick<
 
 export type ExecutionManagerToolAdapter = Pick<ExecutionManager, "run" | "status" | "cancel">;
 export type ArtifactStoreToolAdapter = Pick<ArtifactStore, "read">;
-export type ExtensionRegistryToolAdapter = Pick<ExtensionRegistry, "listEnabled">;
 
 export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
@@ -352,7 +353,6 @@ export function createKodegptToolContext(options: {
   browser?: BrowserToolContext;
   visual?: VisualToolContext;
   artifactStore: ArtifactStoreToolAdapter;
-  extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
   remoteCi?: CiToolContext;
   githubRead?: GitHubReadToolAdapter;
@@ -385,7 +385,8 @@ export function createKodegptToolContext(options: {
         await options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
-      info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
+      checkpoint: (input) => options.workspaceManager.checkpointWorkspace(input),
+      info: ({ workspaceId }) => options.workspaceManager.workspaceInfo(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
       writeFile: ({ workspaceId, path, content, precondition }) =>
@@ -456,9 +457,6 @@ export function createKodegptToolContext(options: {
     artifact: {
       read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
     },
-    extension: {
-      list: ({ limit }) => options.extensionRegistry.listEnabled(limit)
-    },
     profile: {
       current: ({ workspaceId }) => ({
         workspaceId,
@@ -501,12 +499,17 @@ export function createKodegptToolContext(options: {
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
-        const inspection = await skill.inspect({ skillId, fingerprint });
+        const inspection = await skill.inspect({
+          skillId,
+          fingerprint,
+          ...(workspaceId === undefined ? {} : { workspaceId })
+        });
         if (workspaceId === undefined) return inspection;
         const ready = options.workspaceManager.requireReady(workspaceId);
         const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {
           workspaceId,
           allowProcess: ready.effectivePolicy.allowProcess,
+          allowDynamicExecutables: ready.effectivePolicy.allowDynamicExecutables,
           allowedExecutableNames: ready.effectivePolicy.allowedExecutableNames,
           inspectExecutable: async (executable) => {
             const availability = await options.workspaceManager.inspectExecutable(workspaceId, executable);

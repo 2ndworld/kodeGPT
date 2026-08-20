@@ -65,6 +65,7 @@ pub struct RuntimePolicy {
     pub name: ProfileName,
     pub allow_write: bool,
     pub allow_process: bool,
+    pub allow_dynamic_executables: bool,
     pub network: NetworkMode,
     pub allowed_executable_names: Vec<String>,
     pub inherit_env: InheritEnvDisabled,
@@ -103,6 +104,29 @@ pub struct TrustAuditParams {
     pub operation_id: String,
     pub action: TrustAuditAction,
     pub phase: TrustAuditPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceCheckpointAuditAction {
+    Upsert,
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceCheckpointAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceCheckpointAuditParams {
+    pub operation_id: String,
+    pub action: WorkspaceCheckpointAuditAction,
+    pub phase: WorkspaceCheckpointAuditPhase,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -806,6 +830,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: TrustAuditParams,
+    },
+    #[serde(rename = "workspace.checkpoint_audit")]
+    WorkspaceCheckpointAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCheckpointAuditParams,
     },
     #[serde(rename = "ci.audit")]
     CiAudit {

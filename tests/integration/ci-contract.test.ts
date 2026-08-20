@@ -44,6 +44,9 @@ describe("release CI contract", () => {
     expect(source).toContain("Harden trusted Node toolchain root");
     expect(source).toContain("sudo chown \"$(id -u):$(id -g)\" \"$node_root\"");
     expect(source).toContain("chmod 0755 \"$node_root\"");
+    expect(source).toContain("sudo chown \"$(id -u):$(id -g)\" \"$node_root/bin\"");
+    expect(source).toContain("chmod 0755 \"$node_root/bin\"");
+    expect(source).toContain("stat -c '%u:%g:%a' \"$node_root/bin\"");
     expect(source).toContain("chmod 0755 \"$pnpm_target\"");
     expect(source).toContain("chmod 0755 \"$node_target\"");
     expect(source).toContain("stat -c '%u:%g:%a' \"$node_root\"");

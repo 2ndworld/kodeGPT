@@ -58,11 +58,14 @@ describe("service runtime readiness state", () => {
     await expect(store.read()).resolves.toEqual(legacy);
   });
 
-  it("reads the current surface 0.16 readiness file without dropping prior-version compatibility", async () => {
+  it("reads prior surface 0.16 and current surface 0.17 readiness without dropping compatibility", async () => {
     const { store } = await storeFixture();
-    const current = { ...ready(), surfaceVersion: "0.16" as const };
-    await writeFile(store.path, JSON.stringify(current), "utf8");
+    const prior = { ...ready(), surfaceVersion: "0.16" as const };
+    await writeFile(store.path, JSON.stringify(prior), "utf8");
+    await expect(store.read()).resolves.toEqual(prior);
 
+    const current = { ...ready(), surfaceVersion: "0.17" as const };
+    await writeFile(store.path, JSON.stringify(current), "utf8");
     await expect(store.read()).resolves.toEqual(current);
   });
 

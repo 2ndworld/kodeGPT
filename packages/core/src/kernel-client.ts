@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 
 import { FrameDecoder, encodeFrame } from "@kodegpt/protocol";
 
+import { DeveloperEnvironmentStore } from "./developer-environment-store.js";
+
 export interface KernelHello {
   runtimeVersion: string;
   testMethods: boolean;
@@ -125,15 +127,17 @@ export class KernelClient {
     stateRoot: string;
     enableTestMethods?: boolean;
   }): Promise<KernelClient> {
+    const rustToolchainRoot = stableRustToolchainRoot();
+    await new DeveloperEnvironmentStore(options.stateRoot).ensureBootstrap({
+      nodeRoot: dirname(dirname(process.execPath)),
+      ...(rustToolchainRoot === undefined ? {} : { rustRoot: rustToolchainRoot }),
+      trustedWorkspaceRoots: []
+    });
+
     const environment: NodeJS.ProcessEnv = {
       KODEGPT_STATE_ROOT: options.stateRoot,
-      KODEGPT_HOST_NODE_ROOT: dirname(dirname(process.execPath)),
       KODEGPT_HOST_COREPACK_HOME: join(homedir(), ".cache", "node", "corepack")
     };
-    const rustToolchainRoot = stableRustToolchainRoot();
-    if (rustToolchainRoot !== undefined) {
-      environment.KODEGPT_HOST_RUST_TOOLCHAIN_ROOT = rustToolchainRoot;
-    }
     if (options.enableTestMethods === true) {
       environment.KODEGPT_RUNTIME_TEST_METHODS = "1";
     }

@@ -29,7 +29,6 @@
     "@kodegpt/auth": "workspace:*",
     "@kodegpt/capabilities": "workspace:*",
     "@kodegpt/core": "workspace:*",
-    "@kodegpt/extensions": "workspace:*",
     "@kodegpt/mcp-server": "workspace:*",
     "@kodegpt/profiles": "workspace:*",
     "@kodegpt/skills": "workspace:*",

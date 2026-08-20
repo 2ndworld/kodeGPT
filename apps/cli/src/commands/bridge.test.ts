@@ -55,6 +55,7 @@ describe("bridge command unit tests", () => {
       name: "observe" as const,
       allowWrite: false,
       allowProcess: false,
+      allowDynamicExecutables: false,
       network: "deny" as const,
       allowedExecutableNames: [],
       inheritEnv: false as const,
@@ -88,7 +89,6 @@ describe("bridge command unit tests", () => {
     const dependencies = {
       prepareStateRoot: async () => {},
       prepareAudit: async () => {},
-      prepareExtensionRegistry: async () => ({ listEnabled: () => [] }),
       startKernel: async () => ({
         request: async <T>() => ({}) as T,
         hello: async () => ({
@@ -133,8 +133,11 @@ describe("bridge command unit tests", () => {
           }),
           untrustWorkspace: async () => true,
           closeWorkspace: async () => undefined,
+          workspaceInfo: async () => readyWorkspace,
+          checkpointWorkspace: async () => { throw new Error("not used"); },
           requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+          readFileBytes: async () => ({ bytes: new Uint8Array(), bytesRead: 0, eof: true }),
           pathIdentity: async () => ({
             schemaVersion: 1 as const,
             exists: false,

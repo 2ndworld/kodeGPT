@@ -809,11 +809,6 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(consoleResult.content?.[0]).toMatchObject({ type: "text" });
       expect(JSON.stringify(consoleResult.structuredContent)).toContain(openedA.id);
 
-      const extensions = textJson(
-        await callTool(port, credential.token, "extension.list", {}, "req_full_extensions")
-      );
-      expect(extensions).toEqual([]);
-
       await callTool(
         port,
         credential.token,

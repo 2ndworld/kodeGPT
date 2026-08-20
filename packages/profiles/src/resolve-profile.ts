@@ -35,6 +35,9 @@ export function resolveProfile(current: ProfilePolicy, restriction: ProfilePolic
   if (!parsedCurrent.allowProcess && parsedRestriction.allowProcess) {
     throw new ProfileEscalationError("Project profile cannot enable processes");
   }
+  if (!parsedCurrent.allowDynamicExecutables && parsedRestriction.allowDynamicExecutables) {
+    throw new ProfileEscalationError("Project profile cannot enable dynamic executables");
+  }
   if (NETWORK_RANK[parsedRestriction.network] > NETWORK_RANK[parsedCurrent.network]) {
     throw new ProfileEscalationError("Project profile cannot broaden network access");
   }

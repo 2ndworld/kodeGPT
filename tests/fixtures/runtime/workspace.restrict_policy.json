@@ -8,6 +8,7 @@
       "name": "develop",
       "allowWrite": false,
       "allowProcess": true,
+      "allowDynamicExecutables": false,
       "network": "deny",
       "allowedExecutableNames": ["git", "node"],
       "inheritEnv": false,

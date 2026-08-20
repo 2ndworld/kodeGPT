@@ -7,6 +7,7 @@ export function getProfilePreset(name: ProfileName): ProfilePolicy {
         name: "observe",
         allowWrite: false,
         allowProcess: false,
+        allowDynamicExecutables: false,
         network: "deny",
         allowedExecutableNames: [],
         inheritEnv: false,
@@ -17,6 +18,7 @@ export function getProfilePreset(name: ProfileName): ProfilePolicy {
         name: "develop",
         allowWrite: true,
         allowProcess: true,
+        allowDynamicExecutables: false,
         network: "deny",
         allowedExecutableNames: ["cargo", "node", "python3", "rustc"],
         inheritEnv: false,
@@ -27,6 +29,7 @@ export function getProfilePreset(name: ProfileName): ProfilePolicy {
         name: "trusted",
         allowWrite: true,
         allowProcess: true,
+        allowDynamicExecutables: true,
         network: "unrestricted",
         allowedExecutableNames: [
           "bash",

@@ -16,6 +16,10 @@ import type {
 } from "@kodegpt/trust";
 
 import { KernelRpcError } from "./kernel-client.js";
+import type {
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointBody
+} from "./workspace-checkpoint-store.js";
 
 export interface KernelTransport {
   request<T>(method: RuntimeMethod, params: Record<string, unknown>): Promise<T>;
@@ -41,6 +45,46 @@ export interface OpenWorkspace {
   effectivePolicy: ProfilePolicy;
 }
 
+export interface WorkspaceInfo extends OpenWorkspace {
+  checkpoint?: WorkspaceCheckpoint;
+}
+
+export type WorkspaceCheckpointMutationInput =
+  | {
+      workspaceId: string;
+      operation: "upsert";
+      expectedRevision?: number;
+      checkpoint: WorkspaceCheckpointBody;
+    }
+  | {
+      workspaceId: string;
+      operation: "clear";
+      expectedRevision: number;
+    };
+
+export type WorkspaceCheckpointMutationResult =
+  | {
+      schemaVersion: 1;
+      operation: "upsert";
+      checkpoint: WorkspaceCheckpoint;
+    }
+  | {
+      schemaVersion: 1;
+      operation: "clear";
+      cleared: true;
+    };
+
+interface WorkspaceCheckpointStorage {
+  read(trustId: string): Promise<WorkspaceCheckpoint | undefined>;
+  upsert(input: {
+    trustId: string;
+    body: WorkspaceCheckpointBody;
+    expectedRevision?: number;
+  }): Promise<WorkspaceCheckpoint>;
+  clear(trustId: string, expectedRevision: number): Promise<void>;
+  purge(trustId: string): Promise<void>;
+}
+
 export interface TrustedWorkspaceSummary {
   id: string;
   canonicalRoot: string;
@@ -50,9 +94,17 @@ export interface TrustedWorkspaceSummary {
 
 type TrustAuditAction = "trust" | "profile_update" | "untrust";
 type TrustAuditPhase = "decision" | "success" | "failed";
+type CheckpointAuditAction = "upsert" | "clear";
+type CheckpointAuditPhase = "decision" | "success" | "failed";
 
 export interface WorkspaceFileReadResult {
   contents: string;
+  bytesRead: number;
+  eof: boolean;
+}
+
+export interface WorkspaceFileReadBytesResult {
+  bytes: Uint8Array;
   bytesRead: number;
   eof: boolean;
 }
@@ -396,8 +448,12 @@ export interface WorkspaceTreeEntry {
   kind: WorkspaceTreeEntryKind;
 }
 
+export interface WorkspaceTreeMetadataEntry extends WorkspaceTreeEntry {
+  sizeBytes: number;
+}
+
 export interface WorkspaceTreeResult {
-  entries: WorkspaceTreeEntry[];
+  entries: WorkspaceTreeMetadataEntry[];
   truncated: boolean;
 }
 
@@ -490,6 +546,7 @@ export class ProjectProfileInvalidError extends WorkspaceManagerError {
 export class WorkspaceManager {
   readonly #kernel: KernelTransport;
   readonly #trust: TrustResolver;
+  readonly #checkpointStore: WorkspaceCheckpointStorage | undefined;
   readonly #idFactory: () => string;
   readonly #auditOperationIdFactory: () => string;
   readonly #closeTimeoutMs: number;
@@ -498,12 +555,14 @@ export class WorkspaceManager {
   constructor(options: {
     kernel: KernelTransport;
     trust: TrustResolver;
+    checkpointStore?: WorkspaceCheckpointStorage;
     idFactory?: () => string;
     auditOperationIdFactory?: () => string;
     closeTimeoutMs?: number;
   }) {
     this.#kernel = options.kernel;
     this.#trust = options.trust;
+    this.#checkpointStore = options.checkpointStore;
     this.#idFactory =
       options.idFactory ?? (() => `ws_${randomUUID().replaceAll("-", "")}`);
     this.#auditOperationIdFactory =
@@ -535,6 +594,14 @@ export class WorkspaceManager {
     phase: TrustAuditPhase
   ): Promise<void> {
     await this.#requestOk("trust.audit", { operationId, action, phase });
+  }
+
+  async #auditCheckpoint(
+    operationId: string,
+    action: CheckpointAuditAction,
+    phase: CheckpointAuditPhase
+  ): Promise<void> {
+    await this.#requestOk("workspace.checkpoint_audit", { operationId, action, phase });
   }
 
   async openWorkspace(rootPath: string): Promise<OpenWorkspace> {
@@ -685,6 +752,7 @@ export class WorkspaceManager {
       for (const state of bound) {
         await this.closeWorkspace(state.id);
       }
+      await this.#checkpointStore?.purge(trustId);
       removed = await this.#trust.untrust(trustId);
     } catch (error) {
       try {
@@ -696,6 +764,58 @@ export class WorkspaceManager {
     }
     await this.#auditTrust(operationId, "untrust", "success");
     return removed;
+  }
+
+  async workspaceInfo(workspaceId: string): Promise<WorkspaceInfo> {
+    const state = this.#requireReadyState(workspaceId);
+    const workspace = publicWorkspace(state);
+    if (this.#checkpointStore === undefined) return workspace;
+    const trustId = requireReadyTrustId(state);
+    const checkpoint = await this.#checkpointStore.read(trustId);
+    return checkpoint === undefined ? workspace : { ...workspace, checkpoint };
+  }
+
+  async checkpointWorkspace(
+    input: WorkspaceCheckpointMutationInput
+  ): Promise<WorkspaceCheckpointMutationResult> {
+    const state = this.#requireReadyState(input.workspaceId);
+    const checkpointStore = this.#checkpointStore;
+    if (checkpointStore === undefined) {
+      throw new WorkspaceManagerError(
+        "CHECKPOINT_UNAVAILABLE",
+        "Workspace checkpoint storage is unavailable"
+      );
+    }
+    const trustId = requireReadyTrustId(state);
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditCheckpoint(operationId, input.operation, "decision");
+
+    let result: WorkspaceCheckpointMutationResult;
+    try {
+      if (input.operation === "upsert") {
+        const checkpoint = await checkpointStore.upsert({
+          trustId,
+          body: input.checkpoint,
+          ...(input.expectedRevision === undefined
+            ? {}
+            : { expectedRevision: input.expectedRevision })
+        });
+        result = { schemaVersion: 1, operation: "upsert", checkpoint };
+      } else {
+        await checkpointStore.clear(trustId, input.expectedRevision);
+        result = { schemaVersion: 1, operation: "clear", cleared: true };
+      }
+    } catch (error) {
+      try {
+        await this.#auditCheckpoint(operationId, input.operation, "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+
+    await this.#auditCheckpoint(operationId, input.operation, "success");
+    return result;
   }
 
   requireReady(workspaceId: string): OpenWorkspace {
@@ -739,6 +859,57 @@ export class WorkspaceManager {
     }
     return {
       contents: result.contents,
+      bytesRead: result.bytesRead as number,
+      eof: result.eof
+    };
+  }
+
+  async readFileBytes(
+    workspaceId: string,
+    path: string,
+    options: { offset?: number; maxBytes?: number } = {}
+  ): Promise<WorkspaceFileReadBytesResult> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace file path must not be empty");
+    }
+    const offset = options.offset ?? 0;
+    const maxBytes = options.maxBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RangeError("offset must be a non-negative safe integer");
+    }
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > 1024 * 1024) {
+      throw new RangeError("maxBytes must be an integer in the range 0..1048576");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.read", {
+      capabilityId: state.capabilityId,
+      path,
+      offset,
+      maxBytes,
+      encoding: "base64"
+    });
+    if (
+      !isRecord(result) ||
+      typeof result.contentBase64 !== "string" ||
+      !Number.isSafeInteger(result.bytesRead) ||
+      (result.bytesRead as number) < 0 ||
+      (result.bytesRead as number) > maxBytes ||
+      typeof result.eof !== "boolean"
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.read returned an invalid binary payload"
+      );
+    }
+    const bytes = decodeCanonicalBase64(result.contentBase64);
+    if (bytes === undefined || bytes.byteLength !== result.bytesRead) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.read returned an invalid binary payload"
+      );
+    }
+    return {
+      bytes,
       bytesRead: result.bytesRead as number,
       eof: result.eof
     };
@@ -1186,7 +1357,10 @@ export class WorkspaceManager {
   }
 
   async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
-    return (await this.treeBounded(workspaceId, path, 2_000)).entries;
+    return (await this.treeBounded(workspaceId, path, 2_000)).entries.map(({ path: entryPath, kind }) => ({
+      path: entryPath,
+      kind
+    }));
   }
 
   async treeBounded(
@@ -1614,6 +1788,13 @@ function publicWorkspace(state: WorkspaceState): OpenWorkspace {
   };
 }
 
+function requireReadyTrustId(state: WorkspaceState): string {
+  if (state.phase !== "READY" || state.trustId === undefined) {
+    throw new WorkspaceNotReadyError(state.id);
+  }
+  return state.trustId;
+}
+
 function publicTrustedWorkspace(entry: TrustedWorkspaceEntry): TrustedWorkspaceSummary {
   return {
     id: entry.id,
@@ -1639,18 +1820,20 @@ function validateInspectResult(value: unknown): asserts value is InspectRootResu
   }
 }
 
-function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
+function validateTreeEntry(value: unknown): WorkspaceTreeMetadataEntry {
   if (
     !isRecord(value) ||
     typeof value.path !== "string" ||
-    !isTreeEntryKind(value.kind)
+    !isTreeEntryKind(value.kind) ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    (value.sizeBytes as number) < 0
   ) {
     throw new WorkspaceManagerError(
       "RUNTIME_PROTOCOL_INVALID",
       "file.tree returned an invalid entry"
     );
   }
-  return { path: value.path, kind: value.kind };
+  return { path: value.path, kind: value.kind, sizeBytes: value.sizeBytes as number };
 }
 
 function validateGitCheckpoint(value: unknown): WorkspaceGitCheckpointResult {
@@ -2105,6 +2288,17 @@ function validateGitHistoryResult(value: unknown, method: string): Record<string
         !record.changedPaths.every(validChangedPath) || !validSummary(record.summary) || typeof record.patch !== "string") reject();
   }
   return record;
+}
+
+function decodeCanonicalBase64(value: string): Uint8Array | undefined {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return undefined;
+  }
+  const buffer = Buffer.from(value, "base64");
+  if (buffer.toString("base64") !== value) {
+    return undefined;
+  }
+  return Uint8Array.from(buffer);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

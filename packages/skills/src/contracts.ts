@@ -233,13 +233,15 @@ export interface SkillCatalogToolAdapter {
     sourceId?: string;
     compatibility?: SkillCompatibility;
     pinned?: boolean;
+    workspaceId?: string;
   }): Promise<SkillListResult>;
-  inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
+  inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {
     skillId: string;
     fingerprint?: string;
     resources?: string[];
     maxBytes?: number;
+    workspaceId?: string;
   }): Promise<SkillLoadResult>;
 }
 
@@ -276,6 +278,7 @@ export interface SkillExternalCliResolution {
 export interface SkillCapabilityRuntimeContext {
   readonly workspaceId: string;
   readonly allowProcess: boolean;
+  readonly allowDynamicExecutables: boolean;
   readonly allowedExecutableNames: readonly string[];
   inspectExecutable(executable: string): Promise<{
     executableAvailable: boolean;
@@ -346,6 +349,27 @@ export interface SkillSourceReadBytesResult {
   bytes: Uint8Array;
   bytesRead: number;
   eof: boolean;
+}
+
+export interface WorkspaceSkillSourceDescriptor {
+  sourceId: string;
+  label: string;
+  kind: "agent-skills";
+}
+
+export interface WorkspaceSkillSourceAuthority {
+  listReady(): Promise<Array<{ workspaceId: string; trustId: string }>>;
+  pathIdentity(
+    workspaceId: string,
+    path: string
+  ): Promise<{ exists: boolean; kind?: "file" | "directory" | "symlink" | "other" }>;
+  tree(workspaceId: string, path: string, maxEntries: number): Promise<SkillSourceTreeResult>;
+  readBytes(
+    workspaceId: string,
+    path: string,
+    offset: number,
+    maxBytes: number
+  ): Promise<SkillSourceReadBytesResult>;
 }
 
 export interface SkillSourceRuntimeAdapter {

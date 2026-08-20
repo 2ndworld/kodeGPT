@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use kodegpt_protocol::{
     CiAuditParams, FileWriteParams, FileWritePrecondition, GitRepositoryIdentityParams,
-    MAX_FRAME_BYTES, ProviderAuditParams, RuntimeRequest, read_frame, write_frame,
+    MAX_FRAME_BYTES, ProviderAuditParams, RuntimePolicy, RuntimeRequest,
+    WorkspaceCheckpointAuditParams, read_frame, write_frame,
 };
 use serde_json::{Value, json};
 
@@ -58,6 +59,81 @@ fn rejects_truncated_body_and_malformed_json() {
 
     let mut malformed = Cursor::new(b"Content-Length: 1\r\n\r\n{".as_slice());
     assert!(read_frame(&mut malformed).is_err());
+}
+
+#[test]
+fn workspace_checkpoint_audit_params_are_closed_and_typed() {
+    for action in ["upsert", "clear"] {
+        for phase in ["decision", "success", "failed"] {
+            serde_json::from_value::<WorkspaceCheckpointAuditParams>(json!({
+                "operationId": "op_checkpoint_audit",
+                "action": action,
+                "phase": phase
+            }))
+            .unwrap_or_else(|error| panic!("{action}/{phase} must deserialize: {error}"));
+        }
+    }
+
+    for invalid in [
+        json!({
+            "operationId": "op_checkpoint_audit",
+            "action": "delete",
+            "phase": "decision"
+        }),
+        json!({
+            "operationId": "op_checkpoint_audit",
+            "action": "upsert",
+            "phase": "complete"
+        }),
+        json!({
+            "operationId": "op_checkpoint_audit",
+            "action": "upsert",
+            "phase": "decision",
+            "checkpoint": { "objective": "must not enter audit" }
+        }),
+        json!({
+            "operationId": "op_checkpoint_audit",
+            "action": "upsert",
+            "phase": "decision",
+            "trustId": "trust_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }),
+    ] {
+        serde_json::from_value::<WorkspaceCheckpointAuditParams>(invalid)
+            .expect_err("checkpoint audit must reject unsupported or sensitive fields");
+    }
+
+    let request = serde_json::from_value::<RuntimeRequest>(json!({
+        "jsonrpc": "2.0",
+        "id": "req_checkpoint_audit",
+        "method": "workspace.checkpoint_audit",
+        "params": {
+            "operationId": "op_checkpoint_audit",
+            "action": "upsert",
+            "phase": "decision"
+        }
+    }));
+    assert!(
+        request.is_ok(),
+        "closed checkpoint audit request must deserialize"
+    );
+}
+
+#[test]
+fn runtime_policy_accepts_explicit_dynamic_executable_authority() {
+    let policy = serde_json::from_value::<RuntimePolicy>(json!({
+        "name": "trusted",
+        "allowWrite": true,
+        "allowProcess": true,
+        "allowDynamicExecutables": true,
+        "network": "unrestricted",
+        "allowedExecutableNames": ["bash", "sh"],
+        "inheritEnv": false,
+        "envAllowlist": ["LANG"]
+    }));
+    assert!(
+        policy.is_ok(),
+        "dynamic executable authority is part of the closed policy contract"
+    );
 }
 
 #[test]

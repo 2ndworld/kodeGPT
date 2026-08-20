@@ -13,7 +13,6 @@ function baseOptions(calls: string[]) {
     } as never,
     executionManager: {} as never,
     artifactStore: {} as never,
-    extensionRegistry: {} as never,
     inspectProfile: () => ({}),
     capabilities: () => ({}),
     health: () => ({})

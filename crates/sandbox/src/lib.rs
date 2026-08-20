@@ -8,6 +8,7 @@ pub(crate) static PROCESS_SPAWN_LOCK: Mutex<()> = Mutex::new(());
 
 mod bubblewrap;
 mod capabilities;
+mod developer_environment;
 mod executable;
 mod git_metadata;
 
@@ -16,6 +17,9 @@ pub use bubblewrap::{
     SandboxLaunchSpec, SandboxNetworkMode, WorkspaceAccess, WorkspaceAlias,
 };
 pub use capabilities::{SandboxCapabilities, SandboxEnforcement, probe_sandbox_capabilities};
+pub use developer_environment::{
+    DeveloperEnvironmentError, DeveloperEnvironmentRegistry, resolve_dynamic_executable,
+};
 pub use executable::{
     BUBBLEWRAP_MINIMUM_VERSION, ExecutableIdentity, ExecutableVersion, TrustedExecutable,
     TrustedExecutableError, resolve_bubblewrap, resolve_trusted_executable,

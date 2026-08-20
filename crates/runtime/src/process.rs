@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use kodegpt_protocol::{NetworkMode, ProfileName, RuntimePolicy};
 use kodegpt_sandbox::{
-    BubblewrapProvider, GitMetadataAccess, SandboxError, SandboxLaunchSpec, SandboxNetworkMode,
-    WorkspaceAccess, resolve_trusted_executable,
+    BubblewrapProvider, DeveloperEnvironmentRegistry, GitMetadataAccess, SandboxError,
+    SandboxLaunchSpec, SandboxNetworkMode, TrustedExecutable, WorkspaceAccess,
+    resolve_dynamic_executable, resolve_trusted_executable,
 };
 use kodegpt_workspace_io::open_directory_beneath;
 use serde::Serialize;
@@ -247,6 +248,54 @@ fn managed_cargo_home(state_root: &Path) -> PathBuf {
     state_root.join("tool-state").join("cargo-home")
 }
 
+fn resolve_process_executable(
+    state_root: &Path,
+    policy: &RuntimePolicy,
+    logical_executable: &str,
+) -> Result<TrustedExecutable, ProcessError> {
+    if policy.allow_dynamic_executables {
+        resolve_dynamic_executable(state_root, logical_executable)
+            .map_err(SandboxError::from)
+            .map_err(ProcessError::from)
+    } else {
+        resolve_trusted_executable(logical_executable)
+            .map_err(SandboxError::from)
+            .map_err(ProcessError::from)
+    }
+}
+
+fn load_process_developer_environment(
+    state_root: &Path,
+    policy: &RuntimePolicy,
+) -> Result<Option<DeveloperEnvironmentRegistry>, ProcessError> {
+    if !policy.allow_dynamic_executables {
+        return Ok(None);
+    }
+    DeveloperEnvironmentRegistry::load(state_root)
+        .map(Some)
+        .map_err(SandboxError::from)
+        .map_err(ProcessError::from)
+}
+
+fn executable_admitted_by_policy(policy: &RuntimePolicy, logical_executable: &str) -> bool {
+    let fixed = policy
+        .allowed_executable_names
+        .iter()
+        .any(|name| name == logical_executable);
+    let dynamic_candidate =
+        policy.allow_dynamic_executables && !matches!(logical_executable, "bash" | "sh");
+    fixed || dynamic_candidate
+}
+
+pub(crate) fn process_executable_available(
+    state_root: &Path,
+    policy: &RuntimePolicy,
+    logical_executable: &str,
+) -> bool {
+    executable_admitted_by_policy(policy, logical_executable)
+        && resolve_process_executable(state_root, policy, logical_executable).is_ok()
+}
+
 pub fn run_process(
     workspace_root: OwnedFd,
     state_root: &Path,
@@ -262,28 +311,32 @@ pub fn run_process(
     validate_policy(&policy, &request)?;
     let child_cwd = validate_cwd(&workspace_root, &request.cwd)?;
     let provider = BubblewrapProvider::discover()?;
-    let program =
-        resolve_trusted_executable(&request.logical_executable).map_err(SandboxError::from)?;
+    let program = resolve_process_executable(state_root, &policy, &request.logical_executable)?;
     let mut spec = SandboxLaunchSpec::new(program);
+    spec.developer_environment = load_process_developer_environment(state_root, &policy)?;
     if policy.name == ProfileName::Trusted {
         for candidates in [&["node", "npm", "npx", "pnpm"][..], &["cargo", "rustc"][..]] {
             if let Some(auxiliary) = candidates
                 .iter()
                 .filter(|candidate| {
-                    policy
-                        .allowed_executable_names
-                        .iter()
-                        .any(|allowed| allowed == **candidate)
+                    policy.allow_dynamic_executables
+                        || policy
+                            .allowed_executable_names
+                            .iter()
+                            .any(|allowed| allowed == **candidate)
                 })
-                .find_map(|candidate| resolve_trusted_executable(candidate).ok())
+                .find_map(|candidate| {
+                    resolve_process_executable(state_root, &policy, candidate).ok()
+                })
             {
                 spec.auxiliary_programs.push(auxiliary);
             }
         }
-        if policy
-            .allowed_executable_names
-            .iter()
-            .any(|name| matches!(name.as_str(), "cargo" | "rustc"))
+        if policy.allow_dynamic_executables
+            || policy
+                .allowed_executable_names
+                .iter()
+                .any(|name| matches!(name.as_str(), "cargo" | "rustc"))
         {
             let cargo_home = managed_cargo_home(state_root);
             fs::create_dir_all(&cargo_home)
@@ -425,11 +478,7 @@ fn validate_policy(
     if !policy.allow_process || policy.name == ProfileName::Observe {
         return Err(ProcessError::PolicyDenied);
     }
-    if !policy
-        .allowed_executable_names
-        .iter()
-        .any(|name| name == &request.logical_executable)
-    {
+    if !executable_admitted_by_policy(policy, &request.logical_executable) {
         return Err(ProcessError::ExecutableDenied);
     }
     if request.env.keys().any(|key| {
@@ -739,7 +788,7 @@ fn terminate_child(child: &mut kodegpt_sandbox::SandboxChild) {
 mod tests {
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::{Arc, Mutex};
@@ -754,7 +803,8 @@ mod tests {
 
     use super::{
         ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, ProcessState,
-        next_process_operation_id, run_process, validate_cwd, validate_policy,
+        load_process_developer_environment, next_process_operation_id, resolve_process_executable,
+        run_process, validate_cwd, validate_policy,
     };
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -770,11 +820,49 @@ mod tests {
         root
     }
 
+    fn write_developer_registry(state_root: &Path, entries: &[(&Path, &[&str])]) {
+        let values = entries
+            .iter()
+            .enumerate()
+            .map(|(index, (tool_root, executable_dirs))| {
+                let metadata = fs::metadata(tool_root).expect("developer root metadata");
+                let device = metadata.dev();
+                let major = ((device & 0x0000_0000_000f_ff00) >> 8)
+                    | ((device & 0xffff_f000_0000_0000) >> 32);
+                let minor = (device & 0xff) | ((device & 0x0000_0fff_fff0_0000) >> 12);
+                serde_json::json!({
+                    "id": format!("denv_{:032x}", index + 1),
+                    "label": format!("runtime fixture {}", index + 1),
+                    "source": "operator",
+                    "canonicalRoot": fs::canonicalize(tool_root).expect("canonical developer root"),
+                    "executableDirs": executable_dirs,
+                    "identity": {
+                        "deviceMajor": major,
+                        "deviceMinor": minor,
+                        "inode": metadata.ino().to_string()
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let directory = state_root.join("developer-environments");
+        fs::create_dir_all(&directory).expect("developer registry directory");
+        fs::write(
+            directory.join("registry.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": 1,
+                "entries": values
+            }))
+            .expect("developer registry JSON"),
+        )
+        .expect("developer registry written");
+    }
+
     fn policy(allow_write: bool) -> RuntimePolicy {
         RuntimePolicy {
             name: ProfileName::Develop,
             allow_write,
             allow_process: true,
+            allow_dynamic_executables: false,
             network: NetworkMode::Deny,
             allowed_executable_names: vec!["python3".to_owned()],
             inherit_env: InheritEnvDisabled,
@@ -787,6 +875,7 @@ mod tests {
             name: ProfileName::Trusted,
             allow_write: true,
             allow_process: true,
+            allow_dynamic_executables: true,
             network: NetworkMode::Deny,
             allowed_executable_names: vec!["node".to_owned(), "cargo".to_owned()],
             inherit_env: InheritEnvDisabled,
@@ -799,6 +888,7 @@ mod tests {
             name: ProfileName::Trusted,
             allow_write: true,
             allow_process: true,
+            allow_dynamic_executables: true,
             network: NetworkMode::Deny,
             allowed_executable_names: vec!["bash".to_owned(), "node".to_owned(), "pnpm".to_owned()],
             inherit_env: InheritEnvDisabled,
@@ -811,6 +901,7 @@ mod tests {
             name: ProfileName::Trusted,
             allow_write: true,
             allow_process: true,
+            allow_dynamic_executables: true,
             network: NetworkMode::Deny,
             allowed_executable_names: vec!["bash".to_owned(), "cargo".to_owned()],
             inherit_env: InheritEnvDisabled,
@@ -823,6 +914,7 @@ mod tests {
             name: ProfileName::Develop,
             allow_write: true,
             allow_process: true,
+            allow_dynamic_executables: false,
             network: NetworkMode::Deny,
             allowed_executable_names: vec!["bash".to_owned(), "cargo".to_owned()],
             inherit_env: InheritEnvDisabled,
@@ -983,6 +1075,7 @@ mod tests {
         let mut permissions = fs::metadata(&cargo).expect("cargo metadata").permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&cargo, permissions).expect("cargo executable mode");
+        write_developer_registry(&state, &[(&rust_root, &["bin"])]);
 
         let output = Command::new(std::env::current_exe().expect("current test executable"))
             .args([
@@ -990,7 +1083,6 @@ mod tests {
                 "--exact",
                 "process::tests::persistent_cargo_home_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &rust_root)
             .env("KODEGPT_TEST_WORKSPACE", &workspace)
             .env("KODEGPT_TEST_STATE", &state)
             .output()
@@ -1146,6 +1238,7 @@ mod tests {
         let mut cargo_permissions = fs::metadata(&cargo).expect("cargo metadata").permissions();
         cargo_permissions.set_mode(0o755);
         fs::set_permissions(&cargo, cargo_permissions).expect("cargo executable mode");
+        write_developer_registry(&state, &[(&node_root, &["bin"]), (&rust_root, &["bin"])]);
 
         let output = Command::new(std::env::current_exe().expect("current test executable"))
             .args([
@@ -1153,8 +1246,6 @@ mod tests {
                 "--exact",
                 "process::tests::trusted_toolchain_composition_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_NODE_ROOT", &node_root)
-            .env("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT", &rust_root)
             .env("KODEGPT_TEST_WORKSPACE", &workspace)
             .env("KODEGPT_TEST_STATE", &state)
             .env("PATH", "/tmp/kodegpt-host-path-sentinel")
@@ -1186,6 +1277,7 @@ mod tests {
         let mut pnpm_permissions = fs::metadata(&pnpm).expect("pnpm metadata").permissions();
         pnpm_permissions.set_mode(0o755);
         fs::set_permissions(&pnpm, pnpm_permissions).expect("pnpm executable mode");
+        write_developer_registry(&state, &[(&node_root, &["bin"])]);
 
         let output = Command::new(std::env::current_exe().expect("current test executable"))
             .args([
@@ -1193,8 +1285,6 @@ mod tests {
                 "--exact",
                 "process::tests::trusted_toolchain_fallback_subprocess_helper",
             ])
-            .env("KODEGPT_HOST_NODE_ROOT", &node_root)
-            .env_remove("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT")
             .env("KODEGPT_TEST_WORKSPACE", &workspace)
             .env("KODEGPT_TEST_STATE", &state)
             .output()
@@ -1299,6 +1389,86 @@ mod tests {
         );
         assert_eq!(view.exit_code, Some(0), "{}", view.stderr_preview);
         assert_eq!(view.stdout_preview, "nested-cargo-ok\n");
+    }
+
+    #[test]
+    fn dynamic_policy_admits_registered_developer_environment_only_when_enabled() {
+        let state = temporary_root("dynamic-environment-state");
+        let tool_root = temporary_root("dynamic-environment-tool");
+        write_developer_registry(&state, &[(&tool_root, &["."])]);
+
+        let mut trusted = trusted_cargo_state_policy();
+        trusted.allow_dynamic_executables = true;
+        let registry = load_process_developer_environment(&state, &trusted)
+            .expect("dynamic developer environment loads")
+            .expect("dynamic policy retains developer environment");
+        assert_eq!(registry.len(), 1);
+
+        trusted.allow_dynamic_executables = false;
+        assert!(
+            load_process_developer_environment(&state, &trusted)
+                .expect("fixed-only policy remains valid")
+                .is_none()
+        );
+
+        fs::remove_dir_all(state).expect("state cleanup");
+        fs::remove_dir_all(tool_root).expect("tool root cleanup");
+    }
+
+    #[test]
+    fn trusted_dynamic_resolution_prefers_registered_developer_executable() {
+        let state = temporary_root("dynamic-resolution-state");
+        let tool_root = temporary_root("dynamic-resolution-tool");
+        let bin = tool_root.join("bin");
+        fs::create_dir_all(&bin).expect("developer bin");
+        let fixture = bin.join("fixture-tool");
+        fs::write(&fixture, b"#!/bin/sh\nexit 0\n").expect("fixture executable");
+        fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755))
+            .expect("fixture executable mode");
+        write_developer_registry(&state, &[(&tool_root, &["bin"])]);
+
+        let mut trusted = trusted_cargo_state_policy();
+        trusted.allow_dynamic_executables = true;
+        let resolved = resolve_process_executable(&state, &trusted, "fixture-tool")
+            .expect("registered developer executable resolves");
+        assert_eq!(
+            resolved.canonical_path(),
+            fs::canonicalize(&fixture).expect("canonical fixture")
+        );
+
+        trusted.allow_dynamic_executables = false;
+        assert!(resolve_process_executable(&state, &trusted, "fixture-tool").is_err());
+
+        fs::remove_dir_all(state).expect("state cleanup");
+        fs::remove_dir_all(tool_root).expect("tool root cleanup");
+    }
+
+    #[test]
+    fn dynamic_executable_policy_allows_unlisted_names_but_never_implicitly_admits_shells() {
+        let mut trusted = trusted_cargo_state_policy();
+        trusted.allow_dynamic_executables = true;
+
+        let dynamic = ProcessLaunchRequest {
+            logical_executable: "fixture-tool".to_owned(),
+            argv: vec![],
+            cwd: ".".to_owned(),
+            env: BTreeMap::new(),
+            background: false,
+        };
+        assert!(validate_policy(&trusted, &dynamic).is_ok());
+
+        let shell = ProcessLaunchRequest {
+            logical_executable: "sh".to_owned(),
+            ..dynamic
+        };
+        assert!(matches!(
+            validate_policy(&trusted, &shell),
+            Err(ProcessError::ExecutableDenied)
+        ));
+
+        let mut fixed = shell;
+        fixed.logical_executable = "bash".to_owned();
+        assert!(validate_policy(&trusted, &fixed).is_ok());
     }
 
     #[test]

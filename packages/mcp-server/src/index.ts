@@ -32,8 +32,6 @@ export type {
   CodeToolContext,
   ContextToolContext,
   ExecutionManagerToolAdapter,
-  ExtensionRegistryToolAdapter,
-  ExtensionToolContext,
   FileCapabilityToolContext,
   GitToolContext,
   JsonObject,

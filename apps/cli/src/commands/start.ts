@@ -31,17 +31,16 @@ import {
   PlaywrightBrowserDriver,
   PreviewManager,
   VisualVerificationManager,
+  WorkspaceCheckpointStore,
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
-import { ExtensionRegistry } from "@kodegpt/extensions";
 import {
   MCP_SURFACE_VERSION,
   createKodegptNodeHandler,
   createKodegptToolContext,
   listSurfaceTools,
   type BearerAuthenticator,
-  type ExtensionRegistryToolAdapter,
   type KodegptToolContext,
   type WorkspaceManagerToolAdapter
 } from "@kodegpt/mcp-server";
@@ -51,9 +50,11 @@ import {
   SkillPinStore,
   SkillSourceManager,
   SkillSourceStore,
+  WorkspaceSkillSourceProvider,
   createSkillCatalogToolAdapter,
   createSkillSourceRuntimeAdapter,
-  type SkillCatalogToolAdapter
+  type SkillCatalogToolAdapter,
+  type WorkspaceSkillSourceAuthority
 } from "@kodegpt/skills";
 import { WorkspaceTrustStore } from "@kodegpt/trust";
 
@@ -99,6 +100,7 @@ export interface ManagerBundle {
       | "inspectGitRepositoryIdentity"
       | "auditRemoteCi"
       | "pathIdentity"
+      | "readFileBytes"
       | "commitPatchFile"
       | "inspectExecutable"
       | "runVerificationProcess"
@@ -183,14 +185,15 @@ export interface ProductionServiceStackDependencies {
     stateRoot: string,
     options: { allowMissingCredential: boolean }
   ): Promise<BearerAuthenticator>;
-  prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
   startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
   prepareSkillCatalog(options: {
     stateRoot: string;
     kernel: StartKernel;
+    workspaceAuthority: WorkspaceSkillSourceAuthority;
   }): Promise<SkillCatalogToolAdapter & { close(): Promise<void> }>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
   createManagers(options: {
+    stateRoot: string;
     kernel: StartKernel;
     trustProfile: TrustProfileBundle;
   }): ManagerBundle;
@@ -207,7 +210,6 @@ export interface ProductionServiceStack {
   bearerAuthenticator?: BearerAuthenticator;
   toolContext: KodegptToolContext;
   remoteCi: RemoteCiToolAdapter;
-  extensionRegistry: ExtensionRegistryToolAdapter;
   close(): Promise<void>;
 }
 
@@ -232,16 +234,18 @@ export async function createProductionServiceStack(
           allowMissingCredential: options.allowMissingConnectorCredential ?? false
         })
       : undefined;
-    const extensionRegistry = await dependencies.prepareExtensionRegistry(stateRoot);
-
     kernel = await dependencies.startKernel({ runtimePath: options.runtimePath, stateRoot });
     const hello = await kernel.hello();
     validateKernelCapabilities(hello);
 
-    skillCatalog = await dependencies.prepareSkillCatalog({ stateRoot, kernel });
-
     const trustProfile = dependencies.createTrustProfile(stateRoot);
-    const managers = dependencies.createManagers({ kernel, trustProfile });
+    const managers = dependencies.createManagers({ stateRoot, kernel, trustProfile });
+    const workspaceSkillAuthority = createWorkspaceSkillSourceAuthority(managers.workspaceManager);
+    skillCatalog = await dependencies.prepareSkillCatalog({
+      stateRoot,
+      kernel,
+      workspaceAuthority: workspaceSkillAuthority
+    });
     const providerAudit = new ProviderAuditClient({
       request: (method, params) => kernel!.request(method, params as Record<string, unknown>)
     });
@@ -443,6 +447,7 @@ export async function createProductionServiceStack(
             const policy = managers.workspaceManager.requireReady(workspaceId).effectivePolicy;
             return {
               allowProcess: policy.allowProcess,
+              allowDynamicExecutables: policy.allowDynamicExecutables,
               allowedExecutableNames: [...policy.allowedExecutableNames]
             };
           }
@@ -467,7 +472,6 @@ export async function createProductionServiceStack(
       remoteCi,
       githubRead: createGitHubReadToolAdapter(providerRuntime),
       githubWrite: createGitHubWriteToolAdapter(providerRuntime),
-      extensionRegistry,
       skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
       capabilities: async () => systemCapabilities(await kernel!.hello()),
@@ -483,7 +487,6 @@ export async function createProductionServiceStack(
       bearerAuthenticator,
       toolContext,
       remoteCi,
-      extensionRegistry,
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
@@ -570,6 +573,54 @@ export async function startKodegpt(
   }
 }
 
+function createWorkspaceSkillSourceAuthority(
+  workspaceManager: ManagerBundle["workspaceManager"]
+): WorkspaceSkillSourceAuthority {
+  return {
+    async listReady() {
+      const trusted = await workspaceManager.listTrustedWorkspaces();
+      const trustByRoot = new Map(trusted.map((entry) => [entry.canonicalRoot, entry.id]));
+      return workspaceManager
+        .listWorkspaces()
+        .map((workspace) => {
+          const trustId = trustByRoot.get(workspace.canonicalRoot);
+          if (trustId === undefined) {
+            throw new Error(`READY workspace trust binding is unavailable: ${workspace.id}`);
+          }
+          return { workspaceId: workspace.id, trustId };
+        })
+        .sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
+    },
+    async pathIdentity(workspaceId, path) {
+      const identity = await workspaceManager.pathIdentity(workspaceId, path, {
+        includeSha256: false
+      });
+      return {
+        exists: identity.exists,
+        ...(identity.kind === undefined ? {} : { kind: identity.kind })
+      };
+    },
+    async tree(workspaceId, path, maxEntries) {
+      const tree = await workspaceManager.treeBounded(
+        workspaceId,
+        path,
+        maxEntries,
+        "literal"
+      );
+      return {
+        entries: tree.entries.map((entry) => ({
+          path: entry.path,
+          kind: entry.kind,
+          sizeBytes: entry.sizeBytes
+        })),
+        truncated: tree.truncated
+      };
+    },
+    readBytes: (workspaceId, path, offset, maxBytes) =>
+      workspaceManager.readFileBytes(workspaceId, path, { offset, maxBytes })
+  };
+}
+
 export const defaultStartDependencies: StartDependencies = {
   prepareStateRoot: async (stateRoot) => {
     await ensurePrivateDirectory(stateRoot);
@@ -586,13 +637,13 @@ export const defaultStartDependencies: StartDependencies = {
     }
     return new ConnectorBearerAuthenticator(store);
   },
-  prepareExtensionRegistry: (stateRoot) => ExtensionRegistry.open(stateRoot),
   startKernel: (options) => KernelClient.start(options),
-  prepareSkillCatalog: async ({ stateRoot, kernel }) => {
+  prepareSkillCatalog: async ({ stateRoot, kernel, workspaceAuthority }) => {
     const sourceStore = new SkillSourceStore(stateRoot);
     const sourceManager = new SkillSourceManager(
       sourceStore,
-      createSkillSourceRuntimeAdapter(kernel)
+      createSkillSourceRuntimeAdapter(kernel),
+      new WorkspaceSkillSourceProvider(workspaceAuthority)
     );
     const pinStore = new SkillPinStore(stateRoot);
     const catalog = new SkillCatalog(sourceManager, { pins: pinStore });
@@ -606,10 +657,11 @@ export const defaultStartDependencies: StartDependencies = {
     trust: new WorkspaceTrustStore(stateRoot),
     inspectProfile: (name) => getProfilePreset(name)
   }),
-  createManagers: ({ kernel, trustProfile }) => ({
+  createManagers: ({ stateRoot, kernel, trustProfile }) => ({
     workspaceManager: new WorkspaceManager({
       kernel,
-      trust: trustProfile.trust as WorkspaceTrustStore
+      trust: trustProfile.trust as WorkspaceTrustStore,
+      checkpointStore: new WorkspaceCheckpointStore(stateRoot)
     })
   }),
   createRemoteCi: (options) => createGitHubRemoteCiToolAdapter(options),
@@ -652,6 +704,13 @@ function systemCapabilities(hello: KernelHello): Record<string, unknown> {
     filesystemBoundaryAvailable: hello.filesystemBoundaryAvailable,
     mcpProtocolVersion: MCP_PROTOCOL_VERSION,
     mcpSurfaceVersion: MCP_SURFACE_VERSION,
+    execution: {
+      processRun: true,
+      explicitTrustedShell: true,
+      dynamicExecutableResolution: true,
+      developerEnvironmentRegistry: true,
+      inheritsHostEnvironment: false
+    },
     publicTools: publicToolInventory()
   };
 }

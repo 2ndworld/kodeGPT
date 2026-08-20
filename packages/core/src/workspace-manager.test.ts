@@ -4,6 +4,10 @@ import { ProfileEscalationError, getProfilePreset } from "@kodegpt/profiles";
 import type { PersistentFilesystemIdentity, TrustedWorkspaceEntry } from "@kodegpt/trust";
 
 import { KernelRpcError } from "./kernel-client.js";
+import type {
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointBody
+} from "./workspace-checkpoint-store.js";
 import {
   WorkspaceCloseIncompleteError,
   WorkspaceManager,
@@ -36,6 +40,16 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function checkpointBody(overrides: Partial<WorkspaceCheckpointBody> = {}): WorkspaceCheckpointBody {
+  return {
+    objective: "Continue workspace implementation",
+    status: "active",
+    nextActions: ["Run focused tests"],
+    evidenceRefs: [{ kind: "git", ref: "head" }],
+    ...overrides
+  };
 }
 
 class FakeTrust implements TrustResolver {
@@ -97,10 +111,61 @@ class FakeTrust implements TrustResolver {
   }
 }
 
+class FakeCheckpointStore {
+  readonly calls: Array<{ operation: string; trustId: string; input?: unknown }> = [];
+  readonly events: string[];
+  current: WorkspaceCheckpoint | undefined;
+  upsertError: unknown;
+  clearError: unknown;
+  purgeError: unknown;
+
+  constructor(events: string[] = []) {
+    this.events = events;
+  }
+
+  async read(trustId: string): Promise<WorkspaceCheckpoint | undefined> {
+    this.calls.push({ operation: "read", trustId });
+    return this.current === undefined ? undefined : structuredClone(this.current);
+  }
+
+  async upsert(input: {
+    trustId: string;
+    body: WorkspaceCheckpointBody;
+    expectedRevision?: number;
+  }): Promise<WorkspaceCheckpoint> {
+    this.events.push("store:upsert");
+    this.calls.push({ operation: "upsert", trustId: input.trustId, input: structuredClone(input) });
+    if (this.upsertError !== undefined) throw this.upsertError;
+    this.current = {
+      schemaVersion: 1,
+      revision: (this.current?.revision ?? 0) + 1,
+      ...structuredClone(input.body),
+      updatedAt: "2026-08-20T08:00:00.000Z"
+    };
+    return structuredClone(this.current);
+  }
+
+  async clear(trustId: string, expectedRevision: number): Promise<void> {
+    this.events.push("store:clear");
+    this.calls.push({ operation: "clear", trustId, input: { expectedRevision } });
+    if (this.clearError !== undefined) throw this.clearError;
+    this.current = undefined;
+  }
+
+  async purge(trustId: string): Promise<void> {
+    this.events.push("store:purge");
+    this.calls.push({ operation: "purge", trustId });
+    if (this.purgeError !== undefined) throw this.purgeError;
+    this.current = undefined;
+  }
+}
+
 class FakeKernel implements KernelTransport {
   readonly calls: Array<{ method: string; params: Record<string, unknown> }> = [];
   inspectRootError: unknown;
   trustAuditErrorPhase: "decision" | "success" | "failed" | undefined;
+  checkpointAuditErrorPhase: "decision" | "success" | "failed" | undefined;
+  eventSink: string[] | undefined;
   ciAuditError = false;
   profileRead: Promise<{ contents: string | null }> = Promise.resolve({ contents: null });
   activateResult: unknown = { ok: true };
@@ -117,6 +182,11 @@ class FakeKernel implements KernelTransport {
     sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
   };
   fileWriteError: unknown;
+  fileReadBytesResult: unknown = {
+    contentBase64: Buffer.from([0, 1, 2, 255]).toString("base64"),
+    bytesRead: 4,
+    eof: true
+  };
   gitHistoryResult: unknown = {
     schemaVersion: 1,
     resolvedOid: "1".repeat(40),
@@ -139,6 +209,12 @@ class FakeKernel implements KernelTransport {
       case "trust.audit":
         if (params.phase === this.trustAuditErrorPhase) throw new Error("trust audit failed");
         return { ok: true } as T;
+      case "workspace.checkpoint_audit":
+        this.eventSink?.push(`audit:${String(params.phase)}`);
+        if (params.phase === this.checkpointAuditErrorPhase) {
+          throw new Error("checkpoint audit failed");
+        }
+        return { ok: true } as T;
       case "ci.audit":
         if (this.ciAuditError) throw new KernelRpcError(-32010, "AUDIT_UNAVAILABLE");
         return { ok: true } as T;
@@ -151,6 +227,7 @@ class FakeKernel implements KernelTransport {
       case "workspace.activate":
         return this.activateResult as T;
       case "file.read":
+        if (params.encoding === "base64") return this.fileReadBytesResult as T;
         return { contents: "file contents", bytesRead: 13, eof: true } as T;
       case "file.identity":
         return {
@@ -344,8 +421,8 @@ class FakeKernel implements KernelTransport {
       case "file.tree":
         return {
           entries: [
-            { path: "src", kind: "directory" },
-            { path: "src/index.ts", kind: "file" }
+            { path: "src", kind: "directory", sizeBytes: 0 },
+            { path: "src/index.ts", kind: "file", sizeBytes: 19 }
           ],
           truncated: false
         } as T;
@@ -542,6 +619,200 @@ describe("WorkspaceManager", () => {
 
     expect(trust.trustCalls).toEqual([]);
     expect(trust.untrustCalls).toEqual([]);
+  });
+
+  it("reads and mutates continuity checkpoints through the READY workspace trust binding", async () => {
+    const events: string[] = [];
+    const kernel = new FakeKernel();
+    kernel.eventSink = events;
+    const trust = new FakeTrust();
+    const checkpoints = new FakeCheckpointStore(events);
+    checkpoints.current = {
+      schemaVersion: 1,
+      revision: 1,
+      ...checkpointBody(),
+      updatedAt: "2026-08-20T07:00:00.000Z"
+    };
+    const operationIds = ["op_checkpoint_upsert", "op_checkpoint_clear"];
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      checkpointStore: checkpoints,
+      idFactory: () => "ws_checkpoint",
+      auditOperationIdFactory: () => operationIds.shift() ?? "op_checkpoint_unexpected"
+    });
+    const opened = await manager.openWorkspace("/workspace");
+    kernel.calls.length = 0;
+    checkpoints.calls.length = 0;
+    events.length = 0;
+
+    await expect(manager.workspaceInfo(opened.id)).resolves.toMatchObject({
+      id: "ws_checkpoint",
+      checkpoint: { revision: 1, objective: "Continue workspace implementation" }
+    });
+    expect(checkpoints.calls).toEqual([{ operation: "read", trustId: "trust_fixture" }]);
+
+    const updated = await manager.checkpointWorkspace({
+      workspaceId: opened.id,
+      operation: "upsert",
+      expectedRevision: 1,
+      checkpoint: checkpointBody({ objective: "Finish checkpoint wiring" })
+    });
+    expect(updated).toMatchObject({
+      schemaVersion: 1,
+      operation: "upsert",
+      checkpoint: { revision: 2, objective: "Finish checkpoint wiring" }
+    });
+    expect(events).toEqual(["audit:decision", "store:upsert", "audit:success"]);
+    expect(kernel.calls.filter((call) => call.method === "workspace.checkpoint_audit")).toEqual([
+      {
+        method: "workspace.checkpoint_audit",
+        params: { operationId: "op_checkpoint_upsert", action: "upsert", phase: "decision" }
+      },
+      {
+        method: "workspace.checkpoint_audit",
+        params: { operationId: "op_checkpoint_upsert", action: "upsert", phase: "success" }
+      }
+    ]);
+    expect(checkpoints.calls.at(-1)).toMatchObject({
+      operation: "upsert",
+      trustId: "trust_fixture",
+      input: { expectedRevision: 1 }
+    });
+
+    events.length = 0;
+    kernel.calls.length = 0;
+    const cleared = await manager.checkpointWorkspace({
+      workspaceId: opened.id,
+      operation: "clear",
+      expectedRevision: 2
+    });
+    expect(cleared).toEqual({ schemaVersion: 1, operation: "clear", cleared: true });
+    expect(events).toEqual(["audit:decision", "store:clear", "audit:success"]);
+    expect(checkpoints.calls.at(-1)).toEqual({
+      operation: "clear",
+      trustId: "trust_fixture",
+      input: { expectedRevision: 2 }
+    });
+  });
+
+  it("orders checkpoint mutation audit around the durable store and fails closed", async () => {
+    const events: string[] = [];
+    const kernel = new FakeKernel();
+    kernel.eventSink = events;
+    const trust = new FakeTrust();
+    const checkpoints = new FakeCheckpointStore(events);
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      checkpointStore: checkpoints,
+      idFactory: () => "ws_checkpoint_audit",
+      auditOperationIdFactory: () => "op_checkpoint_audit"
+    });
+    await manager.openWorkspace("/workspace");
+    kernel.calls.length = 0;
+    events.length = 0;
+
+    kernel.checkpointAuditErrorPhase = "decision";
+    await expect(
+      manager.checkpointWorkspace({
+        workspaceId: "ws_checkpoint_audit",
+        operation: "upsert",
+        checkpoint: checkpointBody()
+      })
+    ).rejects.toThrow("checkpoint audit failed");
+    expect(events).toEqual(["audit:decision"]);
+    expect(checkpoints.calls).toEqual([]);
+
+    kernel.checkpointAuditErrorPhase = undefined;
+    checkpoints.upsertError = new Error("checkpoint store failed");
+    events.length = 0;
+    await expect(
+      manager.checkpointWorkspace({
+        workspaceId: "ws_checkpoint_audit",
+        operation: "upsert",
+        checkpoint: checkpointBody()
+      })
+    ).rejects.toThrow("checkpoint store failed");
+    expect(events).toEqual(["audit:decision", "store:upsert", "audit:failed"]);
+
+    checkpoints.upsertError = undefined;
+    kernel.checkpointAuditErrorPhase = "success";
+    events.length = 0;
+    checkpoints.calls.length = 0;
+    await expect(
+      manager.checkpointWorkspace({
+        workspaceId: "ws_checkpoint_audit",
+        operation: "upsert",
+        checkpoint: checkpointBody({ objective: "durable before success audit" })
+      })
+    ).rejects.toThrow("checkpoint audit failed");
+    expect(events).toEqual(["audit:decision", "store:upsert", "audit:success"]);
+    expect(checkpoints.calls.filter((call) => call.operation === "upsert")).toHaveLength(1);
+  });
+
+  it("does not expose or mutate checkpoint state after the workspace is closed", async () => {
+    const kernel = new FakeKernel();
+    const checkpoints = new FakeCheckpointStore();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      checkpointStore: checkpoints,
+      idFactory: () => "ws_checkpoint_closed"
+    });
+    await manager.openWorkspace("/workspace");
+    await manager.closeWorkspace("ws_checkpoint_closed");
+
+    await expect(manager.workspaceInfo("ws_checkpoint_closed")).rejects.toBeInstanceOf(
+      WorkspaceNotFoundError
+    );
+    await expect(
+      manager.checkpointWorkspace({
+        workspaceId: "ws_checkpoint_closed",
+        operation: "upsert",
+        checkpoint: checkpointBody()
+      })
+    ).rejects.toBeInstanceOf(WorkspaceNotFoundError);
+    expect(checkpoints.calls).toEqual([]);
+  });
+
+  it("purges checkpoint state before durable untrust and prevents trust removal when purge fails", async () => {
+    const kernel = new FakeKernel();
+    const trust = new FakeTrust();
+    const checkpoints = new FakeCheckpointStore();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust,
+      checkpointStore: checkpoints,
+      idFactory: () => "ws_checkpoint_untrust",
+      auditOperationIdFactory: () => "op_checkpoint_untrust"
+    });
+    await manager.openWorkspace("/workspace");
+    kernel.calls.length = 0;
+    trust.beforeUntrust = () => {
+      expect(manager.listWorkspaces()).toEqual([]);
+      expect(checkpoints.calls.at(-1)).toEqual({ operation: "purge", trustId: "trust_fixture" });
+    };
+
+    await expect(manager.untrustWorkspace("trust_fixture")).resolves.toBe(true);
+    expect(trust.untrustCalls).toEqual(["trust_fixture"]);
+    expect(checkpoints.calls).toContainEqual({ operation: "purge", trustId: "trust_fixture" });
+
+    const failedTrust = new FakeTrust();
+    const failedCheckpoints = new FakeCheckpointStore();
+    failedCheckpoints.purgeError = new Error("checkpoint purge failed");
+    const failedManager = new WorkspaceManager({
+      kernel: new FakeKernel(),
+      trust: failedTrust,
+      checkpointStore: failedCheckpoints,
+      idFactory: () => "ws_checkpoint_untrust_failed",
+      auditOperationIdFactory: () => "op_checkpoint_untrust_failed"
+    });
+    await expect(failedManager.untrustWorkspace("trust_fixture")).rejects.toThrow(
+      "checkpoint purge failed"
+    );
+    expect(failedTrust.untrustCalls).toEqual([]);
+    expect(failedCheckpoints.calls).toEqual([{ operation: "purge", trustId: "trust_fixture" }]);
   });
 
   it("untrusts a closed workspace without invoking runtime lifecycle operations", async () => {
@@ -953,6 +1224,30 @@ describe("WorkspaceManager", () => {
     });
   });
 
+  it("rejects malformed retained binary read payloads", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_binary_invalid"
+    });
+    await manager.openWorkspace("/workspace");
+
+    kernel.fileReadBytesResult = { contentBase64: "***", bytesRead: 3, eof: true };
+    await expect(
+      manager.readFileBytes("ws_binary_invalid", "binary.dat", { maxBytes: 16 })
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+
+    kernel.fileReadBytesResult = {
+      contentBase64: Buffer.from([1, 2]).toString("base64"),
+      bytesRead: 3,
+      eof: true
+    };
+    await expect(
+      manager.readFileBytes("ws_binary_invalid", "binary.dat", { maxBytes: 16 })
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+  });
+
   it("routes READY public workspace file operations through the private runtime capability", async () => {
     const kernel = new FakeKernel();
     const manager = new WorkspaceManager({
@@ -963,6 +1258,7 @@ describe("WorkspaceManager", () => {
 
     const opened = await manager.openWorkspace("/workspace");
     const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
+    const readBytes = await manager.readFileBytes("ws_files", "binary.dat", { offset: 1, maxBytes: 64 });
     const identity = await manager.pathIdentity("ws_files", "inside.txt", { includeSha256: true });
     const write = await manager.writeFile("ws_files", "created.txt", "created");
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
@@ -978,6 +1274,7 @@ describe("WorkspaceManager", () => {
     const semanticMatches = await manager.searchBounded("ws_files", "needle", ".", 500, "semantic");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
+    expect(readBytes).toEqual({ bytes: Uint8Array.from([0, 1, 2, 255]), bytesRead: 4, eof: true });
     expect(identity).toEqual({
       schemaVersion: 1,
       exists: true,
@@ -1057,8 +1354,8 @@ describe("WorkspaceManager", () => {
     ]);
     expect(boundedTree).toEqual({
       entries: [
-        { path: "src", kind: "directory" },
-        { path: "src/index.ts", kind: "file" }
+        { path: "src", kind: "directory", sizeBytes: 0 },
+        { path: "src/index.ts", kind: "file", sizeBytes: 19 }
       ],
       truncated: false
     });
@@ -1073,10 +1370,20 @@ describe("WorkspaceManager", () => {
     });
     expect(semanticMatches).toEqual(boundedMatches);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-14)).toEqual([
+    expect(kernel.calls.slice(-15)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
+      },
+      {
+        method: "file.read",
+        params: {
+          capabilityId: "kc_fixture",
+          path: "binary.dat",
+          offset: 1,
+          maxBytes: 64,
+          encoding: "base64"
+        }
       },
       {
         method: "file.identity",

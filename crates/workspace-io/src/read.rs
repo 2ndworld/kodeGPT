@@ -264,6 +264,23 @@ pub fn tree_beneath_scoped(
     )
 }
 
+pub(crate) fn tree_beneath_scoped_with_metadata(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    max_entries: usize,
+    scope: TraversalScope,
+) -> Result<TreeResult, WorkspaceReadError> {
+    tree_beneath_with_options(
+        root_fd,
+        relative_path,
+        max_entries,
+        TREE_MAX_ENTRIES,
+        false,
+        true,
+        scope,
+    )
+}
+
 pub(crate) fn tree_beneath_no_symlinks_with_hard_cap(
     root_fd: &OwnedFd,
     relative_path: &Path,

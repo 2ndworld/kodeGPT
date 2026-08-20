@@ -13,7 +13,9 @@ When isolated branch work materially helps, the host may explicitly compose `git
 
 ## Resume / continuation
 
-When the user asks to continue, resume, or lanjutkan prior work, recover coordination state before rebuilding repository context. Inspect current Git state first. If `.ai-bridge/current-plan.md` exists, read it; consult `.ai-bridge/agent-status.md`, `decisions.md`, or `open-questions.md` only when they are relevant to the active plan. Treat an explicit `CLOSED`, `RECONCILED`, `CLEAN`, or equivalent terminal state as terminal and do not invent a new phase merely to keep working. Resolve the active objective and target before `context.build`; `.ai-bridge` remains host coordination state and is not automatically part of semantic context.
+When the user asks to continue, resume, or lanjutkan prior work, recover bounded coordination state before rebuilding repository context. Start with `workspace.info` for the active READY workspace. When a checkpoint is present, use its objective, status, next actions, evidence references, blocker, and notes as continuation hints, then validate the live repository with current Git evidence before acting; a checkpoint baseline is historical evidence and must never override the current branch, HEAD, or worktree state reported by Git. When no checkpoint is present, derive the active state from current Git evidence and the user's request.
+
+Read `.ai-bridge/current-plan.md` only when there is explicit external-agent or cross-chat handoff context that makes that coordination file relevant; consult `.ai-bridge/agent-status.md`, `decisions.md`, or `open-questions.md` only when they are relevant to that active handoff. Treat an explicit `CLOSED`, `RECONCILED`, `CLEAN`, or equivalent terminal state as terminal and do not invent a new phase merely to keep working. Resolve the active objective and target before `context.build`. Do not create or update a workspace checkpoint automatically merely because this workflow is running; checkpoint mutation is an explicit bounded continuity action, not a conversation log or task scheduler.
 
 ## Adaptive flow
 

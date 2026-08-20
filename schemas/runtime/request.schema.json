@@ -20,6 +20,7 @@
         "name",
         "allowWrite",
         "allowProcess",
+        "allowDynamicExecutables",
         "network",
         "allowedExecutableNames",
         "inheritEnv",
@@ -29,6 +30,7 @@
         "name": { "enum": ["observe", "develop", "trusted"] },
         "allowWrite": { "type": "boolean" },
         "allowProcess": { "type": "boolean" },
+        "allowDynamicExecutables": { "type": "boolean" },
         "network": { "enum": ["deny", "localhost", "allowlist", "unrestricted"] },
         "allowedExecutableNames": {
           "type": "array",
@@ -133,6 +135,29 @@
               "pattern": "^op_[A-Za-z0-9_-]{1,93}$"
             },
             "action": { "enum": ["trust", "profile_update", "untrust"] },
+            "phase": { "enum": ["decision", "success", "failed"] }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "const": "workspace.checkpoint_audit" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operationId", "action", "phase"],
+          "properties": {
+            "operationId": {
+              "type": "string",
+              "pattern": "^op_[A-Za-z0-9_-]{1,93}$"
+            },
+            "action": { "enum": ["upsert", "clear"] },
             "phase": { "enum": ["decision", "success", "failed"] }
           }
         }

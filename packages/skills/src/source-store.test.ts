@@ -194,7 +194,9 @@ describe("skill contracts and errors", () => {
       "SKILL_RESOURCE_UNSUPPORTED",
       "SKILL_LOAD_LIMIT_EXCEEDED",
       "SKILL_PIN_INVALID",
-      "SKILL_PIN_SCHEMA_UNSUPPORTED"
+      "SKILL_PIN_SCHEMA_UNSUPPORTED",
+      "SKILL_WORKSPACE_REQUIRED",
+      "SKILL_WORKSPACE_MISMATCH"
     ]);
     expect(SKILL_STATE_SCHEMA_VERSION).toBe(1);
     expect(MAX_SOURCES).toBe(16);

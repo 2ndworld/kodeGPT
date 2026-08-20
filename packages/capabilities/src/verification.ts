@@ -14,6 +14,7 @@ import {
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
 import { isSemanticDiscoveryPath } from "./semantic-scope.js";
+import { readVerificationConfig } from "./verification-config.js";
 
 const PACKAGE_JSON = "package.json";
 const CARGO_TOML = "Cargo.toml";
@@ -90,6 +91,7 @@ type RecipeLaunchDefinition = Omit<VerificationRecipe, "allowed" | "blockedReaso
 };
 type PolicySnapshot = {
   allowProcess: boolean;
+  allowDynamicExecutables: boolean;
   allowedExecutableNames: ReadonlySet<string>;
 };
 type ManagerResolution =
@@ -131,8 +133,10 @@ export async function listVerifications(
   const effectivePolicy = workspace.effectivePolicy(input.workspaceId);
   const policy: PolicySnapshot = {
     allowProcess: effectivePolicy.allowProcess,
+    allowDynamicExecutables: effectivePolicy.allowDynamicExecutables,
     allowedExecutableNames: new Set(effectivePolicy.allowedExecutableNames)
   };
+  const configuredRecipes = await readVerificationConfig(workspace, input.workspaceId);
   const recipes: VerificationRecipe[] = [];
   const packagePaths = scopedManifestPaths(
     "package",
@@ -188,6 +192,19 @@ export async function listVerifications(
     const projectDir = manifestDirectory(manifestPath);
     recipes.push(...(await cargoProjectRecipes(input.workspaceId, projectDir, policy, availability)));
   }
+
+  recipes.push(
+    ...(await Promise.all(
+      configuredRecipes.map((recipe) =>
+        withStaticAvailability(
+          input.workspaceId,
+          { ...recipe, argv: [...recipe.argv] },
+          policy,
+          availability
+        )
+      )
+    ))
+  );
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
@@ -498,7 +515,10 @@ async function withStaticAvailability(
   if (!policy.allowProcess) {
     return { ...recipe, allowed: false, blockedReason: "PROCESS_NOT_ALLOWED" };
   }
-  if (!policy.allowedExecutableNames.has(recipe.logicalExecutable)) {
+  if (
+    !policy.allowedExecutableNames.has(recipe.logicalExecutable) &&
+    !policy.allowDynamicExecutables
+  ) {
     return { ...recipe, allowed: false, blockedReason: "EXECUTABLE_NOT_ALLOWED" };
   }
 

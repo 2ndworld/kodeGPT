@@ -28,6 +28,26 @@ describe("sandboxed process policy source regressions", () => {
     expect(productionImplementation).not.toContain("canonicalize(");
   });
 
+  it("generalizes developer executable authority without restoring host PATH or toolchain env hints", async () => {
+    const runtime = await source("crates/runtime/src/process.rs");
+    const sandbox = await source("crates/sandbox/src/developer_environment.rs");
+    const executable = await source("crates/sandbox/src/executable.rs");
+    const bubblewrap = await source("crates/sandbox/src/bubblewrap.rs");
+    const kernelClient = await source("packages/core/src/kernel-client.ts");
+
+    expect(runtime).toContain("allow_dynamic_executables");
+    expect(runtime).toContain("resolve_dynamic_executable");
+    expect(runtime).toContain("DeveloperEnvironmentRegistry");
+    expect(sandbox).toContain("DeveloperEnvironmentRegistry");
+    expect(bubblewrap).toContain("developer_environment");
+    expect(bubblewrap).toContain("--ro-bind-fd");
+    for (const implementation of [runtime, sandbox, executable, kernelClient]) {
+      expect(implementation).not.toContain("KODEGPT_HOST_NODE_ROOT");
+      expect(implementation).not.toContain("KODEGPT_HOST_RUST_TOOLCHAIN_ROOT");
+    }
+    expect(kernelClient).not.toContain("process.env.PATH");
+  });
+
   it("exposes opaque process operation tools without PID/PGID authority", async () => {
     const tools = await source("packages/mcp-server/src/tools.ts");
     expect(tools).toContain('"process.run"');

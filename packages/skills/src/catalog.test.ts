@@ -14,6 +14,7 @@ import {
   SKILL_DESCRIPTOR_MAX_BYTES,
   SKILL_MD_MAX_BYTES,
   SkillCatalog,
+  SkillError,
   SkillPinStore,
   type PersistedSkillSource,
   type SkillSourceReadBytesResult,
@@ -43,6 +44,7 @@ type FakeSource = {
 class FakeSourceManager {
   readonly sources = new Map<string, FakeSource>();
   readonly unavailableSourceIds = new Set<string>();
+  readonly workspaceBySourceId = new Map<string, string>();
 
   addSource(sourceId: string, label: string): FakeSource {
     const source: PersistedSkillSource = {
@@ -61,16 +63,31 @@ class FakeSourceManager {
     return value;
   }
 
-  async listSources(): Promise<PersistedSkillSource[]> {
-    return [...this.sources.values()].map(({ source }) => ({
-      ...source,
-      identity: { ...source.identity }
-    }));
+  addWorkspaceSource(workspaceId: string, sourceId: string, label: string): FakeSource {
+    const source = this.addSource(sourceId, label);
+    this.workspaceBySourceId.set(sourceId, workspaceId);
+    return source;
   }
 
-  async tree(input: { sourceId: string; path: string }): Promise<SkillSourceTreeResult> {
+  async listSources(workspaceId?: string): Promise<PersistedSkillSource[]> {
+    return [...this.sources.values()]
+      .filter(({ source }) => {
+        const scope = this.workspaceBySourceId.get(source.sourceId);
+        return scope === undefined || scope === workspaceId;
+      })
+      .map(({ source }) => ({
+        ...source,
+        identity: { ...source.identity }
+      }));
+  }
+
+  async listReadyWorkspaceIds(): Promise<string[]> {
+    return [...new Set(this.workspaceBySourceId.values())].sort(compareUtf8);
+  }
+
+  async tree(input: { workspaceId?: string; sourceId: string; path: string }): Promise<SkillSourceTreeResult> {
     if (this.unavailableSourceIds.has(input.sourceId)) throw new Error("fake source unavailable");
-    const source = this.requiredSource(input.sourceId);
+    const source = this.requiredSource(input.sourceId, input.workspaceId);
     const prefix = input.path === "." ? "" : `${input.path}/`;
     const entries = [...source.entries.values()]
       .filter((entry) => prefix === "" || entry.path.startsWith(prefix))
@@ -84,13 +101,14 @@ class FakeSourceManager {
   }
 
   async readBytes(input: {
+    workspaceId?: string;
     sourceId: string;
     path: string;
     offset: number;
     maxBytes: number;
   }): Promise<SkillSourceReadBytesResult> {
     if (this.unavailableSourceIds.has(input.sourceId)) throw new Error("fake source unavailable");
-    const entry = this.requiredSource(input.sourceId).entries.get(input.path);
+    const entry = this.requiredSource(input.sourceId, input.workspaceId).entries.get(input.path);
     if (entry?.kind !== "file" || entry.bytes === undefined) {
       throw new Error("fake file unavailable");
     }
@@ -104,23 +122,29 @@ class FakeSourceManager {
   }
 
   setFile(sourceId: string, path: string, bytes: Uint8Array): void {
-    const source = this.requiredSource(sourceId);
+    const source = this.requiredSource(sourceId, this.workspaceBySourceId.get(sourceId));
     source.entries.set(path, { path, kind: "file", sizeBytes: bytes.byteLength, bytes });
   }
 
   setEntry(sourceId: string, entry: FakeEntry): void {
-    this.requiredSource(sourceId).entries.set(entry.path, entry);
+    this.requiredSource(sourceId, this.workspaceBySourceId.get(sourceId)).entries.set(entry.path, entry);
   }
 
-  private requiredSource(sourceId: string): FakeSource {
+  private requiredSource(sourceId: string, workspaceId?: string): FakeSource {
     const source = this.sources.get(sourceId);
     if (source === undefined) throw new Error(`missing fake source ${sourceId}`);
+    const scope = this.workspaceBySourceId.get(sourceId);
+    if (scope !== undefined && scope !== workspaceId) {
+      throw new SkillError("SKILL_WORKSPACE_MISMATCH", "fake workspace skill mismatch");
+    }
     return source;
   }
 }
 
 const SOURCE_A = `ss_${"a".repeat(32)}`;
 const SOURCE_B = `ss_${"b".repeat(32)}`;
+const SOURCE_C = `ss_${"c".repeat(32)}`;
+const SOURCE_D = `ss_${"d".repeat(32)}`;
 
 function bytes(value: string): Uint8Array {
   return Buffer.from(value, "utf8");
@@ -345,6 +369,43 @@ describe("SkillCatalog live discovery", () => {
     expect(frontmatterLimit.skills).toEqual([]);
     expect(frontmatterLimit.truncated).toBe(true);
     expect(frontmatterLimit.truncationReasons).toContain("DESCRIPTOR_SIZE_LIMIT");
+  });
+});
+
+describe("SkillCatalog workspace scope", () => {
+  it("adds READY workspace skills only with matching scope and reports required/mismatch on scoped misses", async () => {
+    const manager = new FakeSourceManager();
+    manager.addSource(SOURCE_A, "global");
+    manager.addWorkspaceSource("ws_1", SOURCE_C, "workspace-one");
+    manager.addWorkspaceSource("ws_2", SOURCE_D, "workspace-two");
+    addSkill(manager, SOURCE_A, "global-skill");
+    addSkill(manager, SOURCE_C, "local-one");
+    addSkill(manager, SOURCE_D, "local-two");
+    const catalog = new SkillCatalog(manager);
+
+    const global = await catalog.list();
+    expect(global.skills.map((skill) => skill.name)).toEqual(["global-skill"]);
+
+    const scoped = await catalog.list({ workspaceId: "ws_1" });
+    expect(scoped.skills.map((skill) => skill.name)).toEqual(["global-skill", "local-one"]);
+    const local = scoped.skills.find((skill) => skill.name === "local-one")!;
+
+    await expect(catalog.inspect({ skillId: local.skillId, workspaceId: "ws_1" }))
+      .resolves.toMatchObject({ skill: { name: "local-one" } });
+    await expect(catalog.loadRaw({ skillId: local.skillId, workspaceId: "ws_1" }))
+      .resolves.toMatchObject({ descriptor: { name: "local-one" }, availability: "live" });
+
+    await expect(catalog.inspect({ skillId: local.skillId }))
+      .rejects.toMatchObject({ code: "SKILL_WORKSPACE_REQUIRED" });
+    await expect(catalog.loadRaw({ skillId: local.skillId }))
+      .rejects.toMatchObject({ code: "SKILL_WORKSPACE_REQUIRED" });
+    await expect(catalog.inspect({ skillId: local.skillId, workspaceId: "ws_2" }))
+      .rejects.toMatchObject({ code: "SKILL_WORKSPACE_MISMATCH" });
+    await expect(catalog.loadRaw({ skillId: local.skillId, workspaceId: "ws_2" }))
+      .rejects.toMatchObject({ code: "SKILL_WORKSPACE_MISMATCH" });
+
+    await expect(catalog.inspect({ skillId: `sk_${"f".repeat(64)}` }))
+      .rejects.toMatchObject({ code: "SKILL_NOT_FOUND" });
   });
 });
 

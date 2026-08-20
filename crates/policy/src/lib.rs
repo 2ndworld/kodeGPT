@@ -27,6 +27,7 @@ pub fn restrict_policy(
     if profile_rank(&restriction.name) > profile_rank(&current.name)
         || (!current.allow_write && restriction.allow_write)
         || (!current.allow_process && restriction.allow_process)
+        || (!current.allow_dynamic_executables && restriction.allow_dynamic_executables)
         || network_rank(&restriction.network) > network_rank(&current.network)
         || !is_subset(
             &restriction.allowed_executable_names,
@@ -82,6 +83,7 @@ mod tests {
             name,
             allow_write,
             allow_process,
+            allow_dynamic_executables: false,
             network,
             allowed_executable_names: executables
                 .iter()
@@ -148,6 +150,30 @@ mod tests {
         assert_eq!(effective, narrowed);
         assert!(matches!(
             restrict_policy(&effective, &widen),
+            Err(PolicyError::Escalation)
+        ));
+    }
+
+    #[test]
+    fn dynamic_executable_authority_may_only_narrow() {
+        let mut trusted = policy(
+            ProfileName::Trusted,
+            true,
+            true,
+            NetworkMode::Unrestricted,
+            &["bash"],
+            &[],
+        );
+        trusted.allow_dynamic_executables = true;
+
+        let mut narrowed = trusted.clone();
+        narrowed.allow_dynamic_executables = false;
+        assert_eq!(restrict_policy(&trusted, &narrowed), Ok(narrowed.clone()));
+
+        let mut widened = narrowed.clone();
+        widened.allow_dynamic_executables = true;
+        assert!(matches!(
+            restrict_policy(&narrowed, &widened),
             Err(PolicyError::Escalation)
         ));
     }

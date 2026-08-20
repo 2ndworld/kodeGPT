@@ -46,6 +46,7 @@ function dependencies(
     name: "observe" as const,
     allowWrite: false,
     allowProcess: false,
+    allowDynamicExecutables: false,
     network: "deny" as const,
     allowedExecutableNames: [],
     inheritEnv: false as const,
@@ -99,8 +100,11 @@ function dependencies(
     untrustWorkspace: async () => true,
     openWorkspace: async () => readyWorkspace,
     closeWorkspace: async () => undefined,
+    workspaceInfo: async () => readyWorkspace,
+    checkpointWorkspace: async () => { throw new Error("unexpected checkpointWorkspace"); },
     requireReady: () => readyWorkspace,
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+    readFileBytes: async () => ({ bytes: new Uint8Array(), bytesRead: 0, eof: true }),
     pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
     commitPatchFile: async (input: { action: "create" | "update" | "delete"; content: string | null }) => ({
       schemaVersion: 1 as const,
@@ -167,10 +171,6 @@ function dependencies(
     prepareConnectorAuth: async () => {
       events.push("connector-verifier");
       return { authenticate: async () => true };
-    },
-    prepareExtensionRegistry: async () => {
-      events.push("extensions");
-      return { listEnabled: () => [] };
     },
     startKernel: async () => {
       events.push("kernel.start");
@@ -240,6 +240,137 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
+  it("self-describes trusted execution features independently from workspace policy", async () => {
+    const events: string[] = [];
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      dependencies(events)
+    );
+    try {
+      const capabilities = await stack.toolContext.system.capabilities();
+      expect(capabilities.execution).toEqual({
+        processRun: true,
+        explicitTrustedShell: true,
+        dynamicExecutableResolution: true,
+        developerEnvironmentRegistry: true,
+        inheritsHostEnvironment: false
+      });
+      expect(capabilities.publicTools).toBeDefined();
+    } finally {
+      await stack.close();
+    }
+  });
+
+  it("wires workspace skill authority from READY workspace trust and retained file access", async () => {
+    const events: string[] = [];
+    const deps = dependencies(events);
+    const originalCreateManagers = deps.createManagers;
+    const authorityCalls: string[] = [];
+    let authority: {
+      listReady(): Promise<Array<{ workspaceId: string; trustId: string }>>;
+      pathIdentity(workspaceId: string, path: string): Promise<unknown>;
+      tree(workspaceId: string, path: string, maxEntries: number): Promise<unknown>;
+      readBytes(workspaceId: string, path: string, offset: number, maxBytes: number): Promise<unknown>;
+    } | undefined;
+
+    deps.createManagers = (options) => {
+      const managers = originalCreateManagers(options);
+      Object.assign(managers.workspaceManager, {
+        listWorkspaces: () => [
+          {
+            id: "ws_test",
+            canonicalRoot: "/workspace",
+            effectivePolicy: {
+              name: "trusted",
+              allowWrite: true,
+              allowProcess: true,
+              allowDynamicExecutables: true,
+              network: "unrestricted",
+              allowedExecutableNames: ["node"],
+              inheritEnv: false,
+              envAllowlist: []
+            }
+          }
+        ],
+        listTrustedWorkspaces: async () => [
+          {
+            id: "trust_test",
+            canonicalRoot: "/workspace",
+            profileCeiling: "trusted" as const,
+            trustedAt: "2026-08-20T00:00:00.000Z"
+          },
+          {
+            id: "trust_unbound",
+            canonicalRoot: "/other",
+            profileCeiling: "trusted" as const,
+            trustedAt: "2026-08-20T00:00:00.000Z"
+          }
+        ],
+        pathIdentity: async (workspaceId: string, path: string) => {
+          authorityCalls.push(`identity:${workspaceId}:${path}`);
+          return {
+            schemaVersion: 1 as const,
+            exists: true,
+            kind: "directory" as const,
+            sizeBytes: 0,
+            hashTruncated: false
+          };
+        },
+        treeBounded: async (workspaceId: string, path: string, maxEntries: number, scope: string) => {
+          authorityCalls.push(`tree:${workspaceId}:${path}:${maxEntries}:${scope}`);
+          return {
+            entries: [{ path: `${path}/demo/SKILL.md`, kind: "file" as const, sizeBytes: 4 }],
+            truncated: false
+          };
+        },
+        readFileBytes: async (
+          workspaceId: string,
+          path: string,
+          options: { offset?: number; maxBytes?: number }
+        ) => {
+          authorityCalls.push(`read:${workspaceId}:${path}:${options.offset}:${options.maxBytes}`);
+          return { bytes: Buffer.from("test"), bytesRead: 4, eof: true };
+        }
+      });
+      return managers;
+    };
+    const originalPrepareSkillCatalog = deps.prepareSkillCatalog;
+    deps.prepareSkillCatalog = async (input: never) => {
+      authority = (input as unknown as { workspaceAuthority?: typeof authority }).workspaceAuthority;
+      return originalPrepareSkillCatalog(input);
+    };
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      deps
+    );
+    try {
+      expect(authority).toBeDefined();
+      await expect(authority!.listReady()).resolves.toEqual([
+        { workspaceId: "ws_test", trustId: "trust_test" }
+      ]);
+      await expect(authority!.pathIdentity("ws_test", "skills")).resolves.toEqual({
+        exists: true,
+        kind: "directory"
+      });
+      await expect(authority!.tree("ws_test", "skills", 20_000)).resolves.toEqual({
+        entries: [{ path: "skills/demo/SKILL.md", kind: "file", sizeBytes: 4 }],
+        truncated: false
+      });
+      await expect(authority!.readBytes("ws_test", "skills/demo/SKILL.md", 0, 64)).resolves.toMatchObject({
+        bytesRead: 4,
+        eof: true
+      });
+      expect(authorityCalls).toEqual([
+        "identity:ws_test:skills",
+        "tree:ws_test:skills:20000:literal",
+        "read:ws_test:skills/demo/SKILL.md:0:64"
+      ]);
+    } finally {
+      await stack.close();
+    }
+  });
+
   it("keeps Provider Gateway private and startup-idle while wiring only GitHub contexts", async () => {
     const events: string[] = [];
     const providerExecutions: Array<Record<string, unknown>> = [];
@@ -533,12 +664,11 @@ describe("kodegpt start orchestration", () => {
       "state-root",
       "audit",
       "connector-verifier",
-      "extensions",
       "kernel.start",
       "kernel.hello",
-      "skill.catalog",
       "trust-profile",
       "managers",
+      "skill.catalog",
       "mcp",
       "bind"
     ]);

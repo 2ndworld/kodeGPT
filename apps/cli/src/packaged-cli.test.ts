@@ -95,6 +95,11 @@ describe("packaged CLI skill surface", () => {
     expect(result.stdout).toContain("kodegpt provider list [--json] [--state-root <path>]");
     expect(result.stdout).toContain("kodegpt provider inspect <provider-id> [--json]");
     expect(result.stdout).not.toContain("kodegpt provider invoke");
+    expect(result.stdout).toContain("kodegpt env sync [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt env add <root> [--exec-dir <relative>] [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt env list [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt env remove <environment-id> [--state-root <path>]");
+    expect(result.stdout).toContain("kodegpt env doctor [executable] [--state-root <path>]");
     expect(result.stdout).toContain("kodegpt service install --name <namespace:name>");
     expect(result.stdout).toContain("kodegpt service start [--state-root <path>]");
     expect(result.stdout).toContain("kodegpt service stop [--state-root <path>]");
@@ -113,6 +118,15 @@ describe("packaged CLI skill surface", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unknown service command: wat");
+  });
+
+  it("lists empty developer environment state without starting or requiring the runtime", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "kodegpt-packaged-env-state-"));
+    temporaryRoots.push(stateRoot);
+
+    const result = runStateOnlySkillCli(["env", "list"], stateRoot);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("no developer environments");
   });
 
   it("lists empty local provider state without starting or requiring the runtime", async () => {

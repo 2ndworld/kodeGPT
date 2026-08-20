@@ -108,6 +108,7 @@ const typedWorkspaceListResult: OpenWorkspace[] = [
       name: "observe",
       allowWrite: false,
       allowProcess: false,
+      allowDynamicExecutables: false,
       network: "deny",
       allowedExecutableNames: [],
       inheritEnv: false,
@@ -331,6 +332,19 @@ function makeContext(): KodegptToolContext {
       }),
       untrust: async ({ trustId }) => ({ trustId, removed: true }),
       close: async () => ({ ok: true }),
+      checkpoint: async (input) =>
+        input.operation === "upsert"
+          ? {
+              schemaVersion: 1 as const,
+              operation: "upsert" as const,
+              checkpoint: {
+                schemaVersion: 1 as const,
+                revision: 1,
+                ...input.checkpoint,
+                updatedAt: "2026-08-20T08:00:00.000Z"
+              }
+            }
+          : { schemaVersion: 1 as const, operation: "clear" as const, cleared: true as const },
       info: async () => typedWorkspaceListResult[0],
       inspect: async () => typedWorkspaceInspectResult,
       readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
@@ -400,9 +414,6 @@ function makeContext(): KodegptToolContext {
     },
     artifact: {
       read: async () => ({} as never)
-    },
-    extension: {
-      list: async () => []
     },
     profile: {
       current: async () => ({} as never),
@@ -954,6 +965,100 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
+  it("registers one bounded workspace checkpoint mutation surface with strict CAS input and closed outputs", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      revision: 2,
+      objective: "Continue checkpoint integration",
+      status: "active" as const,
+      baseline: { branch: "feat/checkpoint", headOid: "a".repeat(40) },
+      nextActions: ["Wire MCP"],
+      evidenceRefs: [{ kind: "git" as const, ref: "53172e3", summary: "Lifecycle commit" }],
+      notes: "Keep Git state authoritative.",
+      updatedAt: "2026-08-20T08:00:00.000Z"
+    };
+    context.workspace.info = async () => ({ ...typedWorkspaceListResult[0]!, checkpoint });
+    Object.assign(context.workspace, {
+      checkpoint: async (input: { operation: "upsert" | "clear" }) =>
+        input.operation === "upsert"
+          ? { schemaVersion: 1 as const, operation: "upsert" as const, checkpoint }
+          : { schemaVersion: 1 as const, operation: "clear" as const, cleared: true as const }
+    });
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const definition = definitions.get("workspace.checkpoint");
+    const handler = handlers.get("workspace.checkpoint");
+    expect(definition).toBeDefined();
+    expect(handler).toBeDefined();
+    expect(definition?.annotations).toEqual(WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS);
+    const schema = definition?.inputSchema as z.ZodTypeAny;
+    const body = {
+      objective: "Continue checkpoint integration",
+      status: "active",
+      baseline: { branch: "feat/checkpoint", headOid: "A".repeat(40) },
+      nextActions: ["Wire MCP"],
+      evidenceRefs: [{ kind: "git", ref: "53172e3" }],
+      notes: "Keep Git state authoritative."
+    };
+    expect(schema.safeParse({ workspaceId: "ws_1", operation: "upsert", checkpoint: body }).success).toBe(true);
+    expect(schema.safeParse({ workspaceId: "ws_1", operation: "upsert", expectedRevision: 2, checkpoint: body }).success).toBe(true);
+    expect(schema.safeParse({ workspaceId: "ws_1", operation: "clear", expectedRevision: 2 }).success).toBe(true);
+    for (const invalid of [
+      { workspaceId: "ws_1", operation: "upsert" },
+      { workspaceId: "ws_1", operation: "clear" },
+      { workspaceId: "ws_1", operation: "clear", expectedRevision: 2, checkpoint: body },
+      { workspaceId: "ws_1", operation: "upsert", checkpoint: { ...body, revision: 1 } },
+      { workspaceId: "ws_1", operation: "upsert", checkpoint: { ...body, updatedAt: "2026-08-20T08:00:00.000Z" } },
+      { workspaceId: "ws_1", operation: "upsert", checkpoint: body, unexpected: true }
+    ]) {
+      expect(schema.safeParse(invalid).success).toBe(false);
+    }
+
+    const info = (await handlers.get("workspace.info")!({ workspaceId: "ws_1" } as never)) as {
+      structuredContent?: unknown;
+    };
+    expect(info.structuredContent).toMatchObject({ checkpoint: { revision: 2 } });
+    for (const forbidden of ["trustId", "capabilityId", "deviceMajor", "inode"] ) {
+      expect(JSON.stringify(info.structuredContent)).not.toContain(forbidden);
+    }
+
+    const upsert = (await handler!({
+      workspaceId: "ws_1",
+      operation: "upsert",
+      expectedRevision: 1,
+      checkpoint: body
+    } as never)) as { structuredContent?: unknown };
+    expect(upsert.structuredContent).toEqual({ schemaVersion: 1, operation: "upsert", checkpoint });
+    expect(JSON.stringify(upsert.structuredContent)).not.toContain("trustId");
+
+    const cleared = (await handler!({
+      workspaceId: "ws_1",
+      operation: "clear",
+      expectedRevision: 2
+    } as never)) as { structuredContent?: unknown };
+    expect(cleared.structuredContent).toEqual({ schemaVersion: 1, operation: "clear", cleared: true });
+
+    context.workspace.checkpoint = async () => {
+      throw Object.assign(new Error("internal stale details"), { code: "CHECKPOINT_STALE" });
+    };
+    await expect(
+      handler!({
+        workspaceId: "ws_1",
+        operation: "clear",
+        expectedRevision: 2
+      } as never)
+    ).rejects.toThrow("CHECKPOINT_STALE: Workspace checkpoint request failed");
+  });
+
   it("keeps workspace.inspect schemas, annotations, and structured fallback aligned", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
@@ -1163,6 +1268,22 @@ describe("structured MCP tool results", () => {
     expect(listInput).toEqual({ workspaceId: "ws_1", target: "crates/runtime/src/process.rs" });
     expect(result.structuredContent).toEqual(typedVerifyListResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("describes process.run as direct execution with explicit trusted-shell escape hatch", () => {
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>) {
+        definitions.set(name, definition);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const description = definitions.get("process.run")?.description;
+    expect(typeof description).toBe("string");
+    expect(description).toMatch(/logical executable.*direct/i);
+    expect(description).toMatch(/bash.*sh.*explicit/i);
+    expect(description).toMatch(/structured tools.*preferred/i);
   });
 
   it("keeps verify.run schemas, process annotations, and structured fallback aligned", async () => {

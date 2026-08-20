@@ -4,6 +4,7 @@ export const RUNTIME_METHODS = [
   "runtime.hello",
   "system.inspect_root",
   "trust.audit",
+  "workspace.checkpoint_audit",
   "ci.audit",
   "provider.audit",
   "workspace.register",
@@ -60,6 +61,7 @@ export const runtimePolicySchema = z
     name: z.enum(["observe", "develop", "trusted"]),
     allowWrite: z.boolean(),
     allowProcess: z.boolean(),
+    allowDynamicExecutables: z.boolean(),
     network: z.enum(["deny", "localhost", "allowlist", "unrestricted"]),
     allowedExecutableNames: z.array(z.string().min(1)),
     inheritEnv: z.literal(false),
@@ -79,6 +81,14 @@ const trustAuditParamsSchema = z
   .object({
     operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
     action: z.enum(["trust", "profile_update", "untrust"]),
+    phase: z.enum(["decision", "success", "failed"])
+  })
+  .strict();
+
+const workspaceCheckpointAuditParamsSchema = z
+  .object({
+    operationId: z.string().regex(/^op_[A-Za-z0-9_-]{1,93}$/),
+    action: z.enum(["upsert", "clear"]),
     phase: z.enum(["decision", "success", "failed"])
   })
   .strict();
@@ -485,6 +495,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("method", [
   requestSchema("runtime.hello", runtimeHelloParamsSchema),
   requestSchema("system.inspect_root", systemInspectRootParamsSchema),
   requestSchema("trust.audit", trustAuditParamsSchema),
+  requestSchema("workspace.checkpoint_audit", workspaceCheckpointAuditParamsSchema),
   requestSchema("ci.audit", ciAuditParamsSchema),
   requestSchema("provider.audit", providerAuditParamsSchema),
   requestSchema("workspace.register", workspaceRegisterParamsSchema),

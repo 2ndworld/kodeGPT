@@ -99,7 +99,10 @@ export async function resolveSkillCapabilityPlan(
   for (const requirement of requirements) {
     const executable = requirement.slice(EXTERNAL_CLI_PREFIX.length);
     let status: SkillExternalCliStatus;
-    if (!context.allowProcess || !allowedExecutables.has(executable)) {
+    if (
+      !context.allowProcess ||
+      (!allowedExecutables.has(executable) && !context.allowDynamicExecutables)
+    ) {
       status = "not-allowed";
     } else {
       const availability = await context.inspectExecutable(executable);
