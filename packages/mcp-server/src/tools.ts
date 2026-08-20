@@ -164,6 +164,156 @@ export const VisualCompareResultSchema = z
   })
   .strict();
 
+function boundedUtf8String(maxBytes: number) {
+  return z.string().refine((value) => Buffer.byteLength(value, "utf8") <= maxBytes, {
+    message: `must be at most ${maxBytes} UTF-8 bytes`
+  });
+}
+
+const WORKSPACE_CHECKPOINT_EVIDENCE_SCHEMA = z
+  .object({
+    kind: z.enum(["artifact", "process", "preview", "pr", "ci", "git", "note"]),
+    ref: boundedUtf8String(512).refine((value) => value.length > 0),
+    summary: boundedUtf8String(1024).optional()
+  })
+  .strict();
+const WORKSPACE_CHECKPOINT_BASELINE_SCHEMA = z
+  .object({
+    branch: z.string().optional(),
+    headOid: z.string().regex(/^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/).optional()
+  })
+  .strict();
+const WORKSPACE_CHECKPOINT_BODY_SHAPE = {
+  objective: boundedUtf8String(2 * 1024).optional(),
+  status: z.enum(["active", "blocked", "complete"]),
+  baseline: WORKSPACE_CHECKPOINT_BASELINE_SCHEMA.optional(),
+  nextActions: z.array(boundedUtf8String(512)).max(8),
+  evidenceRefs: z.array(WORKSPACE_CHECKPOINT_EVIDENCE_SCHEMA).max(16),
+  blocker: boundedUtf8String(2 * 1024).optional(),
+  notes: boundedUtf8String(4 * 1024).optional()
+} as const;
+
+function enforceWorkspaceCheckpointStatus(
+  value: {
+    status: "active" | "blocked" | "complete";
+    nextActions: string[];
+    blocker?: string;
+  },
+  context: z.RefinementCtx
+): void {
+  if (value.status === "blocked") {
+    if (value.blocker === undefined || value.blocker.trim().length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["blocker"],
+        message: "blocked checkpoint requires a non-empty blocker"
+      });
+    }
+  } else if (value.blocker !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["blocker"],
+      message: "only blocked checkpoints may include blocker"
+    });
+  }
+  if (value.status === "complete" && value.nextActions.length !== 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["nextActions"],
+      message: "complete checkpoint must have no next actions"
+    });
+  }
+}
+
+export const WorkspaceCheckpointBodySchema = z
+  .object(WORKSPACE_CHECKPOINT_BODY_SHAPE)
+  .strict()
+  .superRefine(enforceWorkspaceCheckpointStatus);
+
+export const WorkspaceCheckpointSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    revision: z.number().int().positive().safe(),
+    ...WORKSPACE_CHECKPOINT_BODY_SHAPE,
+    updatedAt: z.string().datetime({ offset: true })
+  })
+  .strict()
+  .superRefine(enforceWorkspaceCheckpointStatus);
+
+const WORKSPACE_EFFECTIVE_POLICY_SCHEMA = z
+  .object({
+    name: z.enum(["observe", "develop", "trusted"]),
+    allowWrite: z.boolean(),
+    allowProcess: z.boolean(),
+    allowDynamicExecutables: z.boolean(),
+    network: z.enum(["deny", "localhost", "allowlist", "unrestricted"]),
+    allowedExecutableNames: z.array(z.string()),
+    inheritEnv: z.literal(false),
+    envAllowlist: z.array(z.string())
+  })
+  .strict();
+
+export const WorkspaceInfoResultSchema = z
+  .object({
+    id: z.string().min(1),
+    canonicalRoot: z.string().min(1),
+    effectivePolicy: WORKSPACE_EFFECTIVE_POLICY_SCHEMA,
+    checkpoint: WorkspaceCheckpointSchema.optional()
+  })
+  .strict();
+
+export const WorkspaceCheckpointInputSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    operation: z.enum(["upsert", "clear"]),
+    expectedRevision: z.number().int().positive().safe().optional(),
+    checkpoint: WorkspaceCheckpointBodySchema.optional()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.operation === "upsert") {
+      if (value.checkpoint === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["checkpoint"],
+          message: "upsert requires checkpoint"
+        });
+      }
+      return;
+    }
+    if (value.expectedRevision === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedRevision"],
+        message: "clear requires expectedRevision"
+      });
+    }
+    if (value.checkpoint !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["checkpoint"],
+        message: "clear forbids checkpoint"
+      });
+    }
+  });
+
+export const WorkspaceCheckpointResultSchema = z.discriminatedUnion("operation", [
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      operation: z.literal("upsert"),
+      checkpoint: WorkspaceCheckpointSchema
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      operation: z.literal("clear"),
+      cleared: z.literal(true)
+    })
+    .strict()
+]);
+
 const SURFACE_TOOLS = Object.freeze([
   { name: "artifact.read", required: ["uri"] },
   { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
@@ -237,6 +387,7 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
+  { name: "workspace.checkpoint", required: ["workspaceId", "operation"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },
@@ -710,13 +861,48 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "workspace.checkpoint",
+    {
+      description: "Create, compare-and-swap update, or clear one bounded development continuity checkpoint for a READY workspace.",
+      inputSchema: WorkspaceCheckpointInputSchema,
+      outputSchema: WorkspaceCheckpointResultSchema,
+      annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      checkpointToolResult(async () =>
+        WorkspaceCheckpointResultSchema.parse(
+          await context.workspace.checkpoint(
+            input.operation === "upsert"
+              ? {
+                  workspaceId: input.workspaceId,
+                  operation: "upsert",
+                  ...(input.expectedRevision === undefined
+                    ? {}
+                    : { expectedRevision: input.expectedRevision }),
+                  checkpoint: input.checkpoint!
+                }
+              : {
+                  workspaceId: input.workspaceId,
+                  operation: "clear",
+                  expectedRevision: input.expectedRevision!
+                }
+          )
+        )
+      )
+  );
+
+  server.registerTool(
     "workspace.info",
     {
-      description: "Inspect public information for a READY workspace.",
+      description: "Inspect public information and optional development continuity checkpoint for a READY workspace.",
       inputSchema: { workspaceId: z.string().min(1) },
+      outputSchema: WorkspaceInfoResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) => structuredToolResult(await context.workspace.info({ workspaceId }))
+    async ({ workspaceId }) =>
+      structuredToolResult(
+        WorkspaceInfoResultSchema.parse(await context.workspace.info({ workspaceId }))
+      )
   );
 
   server.registerTool(
@@ -1335,6 +1521,21 @@ export function registerKodegptTools(
     },
     async () => structuredToolResult(await context.system.health())
   );
+}
+
+async function checkpointToolResult<T>(operation: () => Promise<T> | T) {
+  try {
+    return structuredToolResult(await operation());
+  } catch (error) {
+    if (
+      isRecord(error) &&
+      typeof error.code === "string" &&
+      error.code.startsWith("CHECKPOINT_")
+    ) {
+      throw new Error(`${error.code}: Workspace checkpoint request failed`);
+    }
+    throw error;
+  }
 }
 
 async function previewToolResult<T>(operation: () => Promise<T> | T) {

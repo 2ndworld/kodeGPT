@@ -148,6 +148,9 @@ export {
 export type {
   OpenWorkspace,
   TrustedWorkspaceSummary,
+  WorkspaceCheckpointMutationInput,
+  WorkspaceCheckpointMutationResult,
+  WorkspaceInfo,
   WorkspaceFileReadBytesResult,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,

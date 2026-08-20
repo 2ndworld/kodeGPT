@@ -174,9 +174,9 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships only the intended typed trust, Git, bounded GitHub, preview, browser, and visual surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.16");
+    expect(MCP_SURFACE_VERSION).toBe("0.17");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(75);
+    expect(names).toHaveLength(76);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
@@ -231,6 +231,7 @@ describe("full security acceptance invariants", () => {
       "trust.list",
       "workspace.trust",
       "workspace.untrust",
+      "workspace.checkpoint",
       "skill.list",
       "skill.inspect",
       "skill.load"

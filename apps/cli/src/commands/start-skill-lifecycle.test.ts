@@ -30,6 +30,12 @@ function baseDependencies(events: string[]) {
       throw new Error("not used");
     },
     closeWorkspace: async () => undefined,
+    workspaceInfo: async () => {
+      throw new Error("not used");
+    },
+    checkpointWorkspace: async () => {
+      throw new Error("not used");
+    },
     requireReady: () => {
       throw new Error("not used");
     },

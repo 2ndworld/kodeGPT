@@ -100,6 +100,8 @@ function dependencies(
     untrustWorkspace: async () => true,
     openWorkspace: async () => readyWorkspace,
     closeWorkspace: async () => undefined,
+    workspaceInfo: async () => readyWorkspace,
+    checkpointWorkspace: async () => { throw new Error("unexpected checkpointWorkspace"); },
     requireReady: () => readyWorkspace,
     readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
     readFileBytes: async () => ({ bytes: new Uint8Array(), bytesRead: 0, eof: true }),

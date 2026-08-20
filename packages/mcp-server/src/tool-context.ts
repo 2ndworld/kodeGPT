@@ -63,6 +63,9 @@ import type {
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
+  WorkspaceCheckpointMutationInput,
+  WorkspaceCheckpointMutationResult,
+  WorkspaceInfo,
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
 import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
@@ -107,7 +110,8 @@ export interface WorkspaceToolContext {
   }): MaybePromise<TrustedWorkspaceSummary>;
   untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
-  info(input: { workspaceId: string }): MaybePromise<OpenWorkspace>;
+  checkpoint(input: WorkspaceCheckpointMutationInput): MaybePromise<WorkspaceCheckpointMutationResult>;
+  info(input: { workspaceId: string }): MaybePromise<WorkspaceInfo>;
   readFile(input: {
     workspaceId: string;
     path: string;
@@ -292,6 +296,8 @@ export type WorkspaceManagerToolAdapter = Pick<
   | "trustWorkspace"
   | "untrustWorkspace"
   | "closeWorkspace"
+  | "checkpointWorkspace"
+  | "workspaceInfo"
   | "requireReady"
   | "readFile"
   | "writeFile"
@@ -387,7 +393,8 @@ export function createKodegptToolContext(options: {
         await options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
-      info: ({ workspaceId }) => options.workspaceManager.requireReady(workspaceId),
+      checkpoint: (input) => options.workspaceManager.checkpointWorkspace(input),
+      info: ({ workspaceId }) => options.workspaceManager.workspaceInfo(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
       writeFile: ({ workspaceId, path, content, precondition }) =>
