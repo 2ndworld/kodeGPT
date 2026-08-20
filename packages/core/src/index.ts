@@ -14,9 +14,12 @@ export {
   DeveloperEnvironmentStore
 } from "./developer-environment-store.js";
 export type {
+  DeveloperEnvironmentDiagnostic,
+  DeveloperEnvironmentDiagnosticStatus,
   DeveloperEnvironmentEntry,
   DeveloperEnvironmentErrorCode,
-  DeveloperEnvironmentSource
+  DeveloperEnvironmentSource,
+  DeveloperExecutableDiagnosticStatus
 } from "./developer-environment-store.js";
 
 export { ExecutionManager } from "./execution-manager.js";

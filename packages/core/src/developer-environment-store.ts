@@ -20,6 +20,24 @@ export interface DeveloperEnvironmentEntry {
   identity: PersistentFilesystemIdentity;
 }
 
+export type DeveloperEnvironmentDiagnosticStatus =
+  | "available"
+  | "missing"
+  | "changed"
+  | "unsafe";
+
+export type DeveloperExecutableDiagnosticStatus = "available" | "absent" | "unavailable";
+
+export interface DeveloperEnvironmentDiagnostic {
+  entry: DeveloperEnvironmentEntry;
+  status: DeveloperEnvironmentDiagnosticStatus;
+  mountAvailable: boolean;
+  executable?: {
+    name: string;
+    status: DeveloperExecutableDiagnosticStatus;
+  };
+}
+
 interface DeveloperEnvironmentDocument {
   schemaVersion: typeof DEVELOPER_ENVIRONMENT_SCHEMA_VERSION;
   entries: DeveloperEnvironmentEntry[];
@@ -73,6 +91,45 @@ export class DeveloperEnvironmentStore {
       entries.push(cloneEntry(entry));
     }
     return entries;
+  }
+
+  async diagnose(executable?: string): Promise<DeveloperEnvironmentDiagnostic[]> {
+    if (executable !== undefined && !isSimpleLogicalExecutableName(executable)) {
+      throw new DeveloperEnvironmentError(
+        "DEV_ENV_REGISTRY_INVALID",
+        "Developer executable diagnosis requires a simple logical executable name"
+      );
+    }
+
+    const document = await this.#readDocument();
+    const diagnostics: DeveloperEnvironmentDiagnostic[] = [];
+    for (const entry of document.entries) {
+      let status: DeveloperEnvironmentDiagnosticStatus = "available";
+      try {
+        await this.#revalidateEntry(entry);
+      } catch (error) {
+        if (!(error instanceof DeveloperEnvironmentError)) throw error;
+        status = diagnosticStatusForError(error);
+      }
+
+      const mountAvailable = status === "available" && (await canOpenDirectory(entry.canonicalRoot));
+      const executableDiagnostic = executable === undefined
+        ? undefined
+        : {
+            name: executable,
+            status:
+              status === "available"
+                ? await this.#diagnoseExecutable(entry, executable)
+                : ("unavailable" as const)
+          };
+      diagnostics.push({
+        entry: cloneEntry(entry),
+        status,
+        mountAvailable,
+        ...(executableDiagnostic === undefined ? {} : { executable: executableDiagnostic })
+      });
+    }
+    return diagnostics;
   }
 
   async add(input: {
@@ -366,6 +423,46 @@ export class DeveloperEnvironmentStore {
     }
   }
 
+  async #diagnoseExecutable(
+    entry: DeveloperEnvironmentEntry,
+    executable: string
+  ): Promise<DeveloperExecutableDiagnosticStatus> {
+    const rootMetadata = await safeBigIntStat(entry.canonicalRoot);
+    let unsafeCandidate = false;
+    for (const executableDir of entry.executableDirs) {
+      const candidate = executableDir === "."
+        ? join(entry.canonicalRoot, executable)
+        : join(entry.canonicalRoot, executableDir, executable);
+      let canonical: string;
+      try {
+        canonical = await realpath(candidate);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        unsafeCandidate = true;
+        continue;
+      }
+      if (!isBeneathOrEqual(canonical, entry.canonicalRoot) || canonical === entry.canonicalRoot) {
+        unsafeCandidate = true;
+        continue;
+      }
+      const metadata = await safeBigIntStat(canonical);
+      const mode = Number(metadata.mode & 0o7777n);
+      const ownerAllowed = metadata.uid === rootMetadata.uid || metadata.uid === 0n;
+      if (
+        !metadata.isFile() ||
+        !ownerAllowed ||
+        (mode & 0o6000) !== 0 ||
+        (mode & 0o022) !== 0 ||
+        (mode & 0o111) === 0
+      ) {
+        unsafeCandidate = true;
+        continue;
+      }
+      return "available";
+    }
+    return unsafeCandidate ? "unavailable" : "absent";
+  }
+
   async #canonicalStateRoot(): Promise<string> {
     await mkdir(this.#stateRoot, { recursive: true, mode: 0o700 });
     return realpath(this.#stateRoot);
@@ -618,6 +715,44 @@ async function safeBigIntStat(path: string) {
 function explicitRootModeIsSafe(mode: bigint, uid: bigint, gid: bigint): boolean {
   const bits = Number(mode & 0o7777n);
   return (bits & 0o6000) === 0 && (bits & 0o002) === 0 && !((bits & 0o020) !== 0 && gid !== uid);
+}
+
+function diagnosticStatusForError(
+  error: DeveloperEnvironmentError
+): DeveloperEnvironmentDiagnosticStatus {
+  switch (error.code) {
+    case "DEV_ENV_ROOT_NOT_FOUND":
+      return "missing";
+    case "DEV_ENV_ROOT_CHANGED":
+      return "changed";
+    case "DEV_ENV_ROOT_UNTRUSTED":
+      return "unsafe";
+    default:
+      throw error;
+  }
+}
+
+async function canOpenDirectory(path: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(path, "r");
+    return (await handle.stat()).isDirectory();
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+function isSimpleLogicalExecutableName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\0") &&
+    /^[A-Za-z0-9._-]+$/.test(value)
+  );
 }
 
 function pathsOverlap(left: string, right: string): boolean {

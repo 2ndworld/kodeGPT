@@ -13,7 +13,7 @@ import {
   ProviderOperatorService,
   ProviderRegistryStore
 } from "@kodegpt/capabilities";
-import { KernelClient } from "@kodegpt/core";
+import { DeveloperEnvironmentStore, KernelClient } from "@kodegpt/core";
 import {
   createSkillSourceRuntimeAdapter,
   SkillCatalog,
@@ -25,6 +25,7 @@ import { WorkspaceTrustStore } from "@kodegpt/trust";
 
 import { runAuthCommand } from "./commands/auth.js";
 import { runBridgeCommand } from "./commands/bridge.js";
+import { runEnvCommand } from "./commands/env.js";
 import {
   exposeZrokWithDefaults,
   formatExposeZrokStatus,
@@ -64,6 +65,9 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     case "workspace":
       await workspace(rest);
+      return;
+    case "env":
+      await env(rest);
       return;
     case "provider":
       await provider(rest);
@@ -129,6 +133,20 @@ async function workspace(args: string[]): Promise<void> {
     }
   };
   const output = await runWorkspaceCommand(remaining, { store, inspectRoot });
+  process.stdout.write(`${output}\n`);
+}
+
+async function env(args: string[]): Promise<void> {
+  const { stateRoot, remaining } = extractStateRoot(args);
+  const store = new DeveloperEnvironmentStore(stateRoot);
+  const trustedWorkspaceRoots = (await new WorkspaceTrustStore(stateRoot).list()).map(
+    (entry) => entry.canonicalRoot
+  );
+  const output = await runEnvCommand(remaining, {
+    store,
+    trustedWorkspaceRoots,
+    pathValue: process.env.PATH ?? ""
+  });
   process.stdout.write(`${output}\n`);
 }
 
@@ -407,6 +425,11 @@ function helpText(): string {
     "  kodegpt workspace trust <path> [--ceiling observe|develop|trusted] [--state-root <path>]",
     "  kodegpt workspace untrust <trust-id> [--state-root <path>]",
     "  kodegpt workspace list [--state-root <path>]",
+    "  kodegpt env sync [--state-root <path>]",
+    "  kodegpt env add <root> [--exec-dir <relative>] [--state-root <path>]",
+    "  kodegpt env list [--state-root <path>]",
+    "  kodegpt env remove <environment-id> [--state-root <path>]",
+    "  kodegpt env doctor [executable] [--state-root <path>]",
     "  kodegpt provider add --adapter <adapter-id> --name <display-name> [--config <json>] [--helper-path <path> --helper-sha256 <sha256>] [--state-root <path>]",
     "  kodegpt provider remove <provider-id> [--state-root <path>]",
     "  kodegpt provider enable <provider-id> [--state-root <path>]",

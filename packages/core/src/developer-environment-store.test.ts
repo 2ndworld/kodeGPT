@@ -156,6 +156,64 @@ describe("DeveloperEnvironmentStore", () => {
     await expect(store.list()).rejects.toMatchObject({ code: "DEV_ENV_ROOT_CHANGED" });
   });
 
+  it("diagnoses entry health and executable availability without executing the tool", async () => {
+    const stateRoot = await temporaryRoot("diagnose-state");
+    const toolchain = await temporaryRoot("diagnose-toolchain");
+    const bin = join(toolchain, "bin");
+    await safeDirectory(bin);
+    const executable = join(bin, "fixture-tool");
+    await writeFile(executable, "#!/bin/sh\nexit 91\n", { mode: 0o755 });
+    await chmod(executable, 0o755);
+
+    const store = new DeveloperEnvironmentStore(stateRoot);
+    await store.add({
+      root: toolchain,
+      executableDirs: ["bin"],
+      label: "diagnostic fixture",
+      source: "operator",
+      trustedWorkspaceRoots: []
+    });
+
+    const [healthy] = await store.diagnose("fixture-tool");
+    expect(healthy).toMatchObject({
+      status: "available",
+      mountAvailable: true,
+      executable: { name: "fixture-tool", status: "available" }
+    });
+
+    await chmod(toolchain, 0o777);
+    const [unsafe] = await store.diagnose("fixture-tool");
+    expect(unsafe).toMatchObject({
+      status: "unsafe",
+      mountAvailable: false,
+      executable: { name: "fixture-tool", status: "unavailable" }
+    });
+  });
+
+  it("diagnose reports identity drift per entry instead of failing the whole registry", async () => {
+    const stateRoot = await temporaryRoot("diagnose-drift-state");
+    const toolchain = await temporaryRoot("diagnose-drift-toolchain");
+    const store = new DeveloperEnvironmentStore(stateRoot);
+    await store.add({
+      root: toolchain,
+      executableDirs: ["."],
+      label: "drift fixture",
+      source: "operator",
+      trustedWorkspaceRoots: []
+    });
+
+    const registryPath = join(stateRoot, "developer-environments", "registry.json");
+    const document = JSON.parse(await readFile(registryPath, "utf8")) as {
+      schemaVersion: number;
+      entries: Array<{ identity: { inode: string } }>;
+    };
+    document.entries[0]!.identity.inode = "999999999999";
+    await writeFile(registryPath, `${JSON.stringify(document)}\n`, { mode: 0o600 });
+
+    const [diagnostic] = await store.diagnose();
+    expect(diagnostic).toMatchObject({ status: "changed", mountAvailable: false });
+  });
+
   it("rejects executable directories that cannot be represented safely in PATH", async () => {
     const stateRoot = await temporaryRoot("path-separator-state");
     const toolchain = await temporaryRoot("path-separator-toolchain");
