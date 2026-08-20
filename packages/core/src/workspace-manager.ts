@@ -57,6 +57,12 @@ export interface WorkspaceFileReadResult {
   eof: boolean;
 }
 
+export interface WorkspaceFileReadBytesResult {
+  bytes: Uint8Array;
+  bytesRead: number;
+  eof: boolean;
+}
+
 export type WorkspaceFileWritePrecondition =
   | { kind: "missing" }
   | { kind: "sha256"; value: string };
@@ -739,6 +745,57 @@ export class WorkspaceManager {
     }
     return {
       contents: result.contents,
+      bytesRead: result.bytesRead as number,
+      eof: result.eof
+    };
+  }
+
+  async readFileBytes(
+    workspaceId: string,
+    path: string,
+    options: { offset?: number; maxBytes?: number } = {}
+  ): Promise<WorkspaceFileReadBytesResult> {
+    if (path.length === 0) {
+      throw new TypeError("Workspace file path must not be empty");
+    }
+    const offset = options.offset ?? 0;
+    const maxBytes = options.maxBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RangeError("offset must be a non-negative safe integer");
+    }
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > 1024 * 1024) {
+      throw new RangeError("maxBytes must be an integer in the range 0..1048576");
+    }
+    const state = this.#requireReadyState(workspaceId);
+    const result = await this.#kernel.request<unknown>("file.read", {
+      capabilityId: state.capabilityId,
+      path,
+      offset,
+      maxBytes,
+      encoding: "base64"
+    });
+    if (
+      !isRecord(result) ||
+      typeof result.contentBase64 !== "string" ||
+      !Number.isSafeInteger(result.bytesRead) ||
+      (result.bytesRead as number) < 0 ||
+      (result.bytesRead as number) > maxBytes ||
+      typeof result.eof !== "boolean"
+    ) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.read returned an invalid binary payload"
+      );
+    }
+    const bytes = decodeCanonicalBase64(result.contentBase64);
+    if (bytes === undefined || bytes.byteLength !== result.bytesRead) {
+      throw new WorkspaceManagerError(
+        "RUNTIME_PROTOCOL_INVALID",
+        "file.read returned an invalid binary payload"
+      );
+    }
+    return {
+      bytes,
       bytesRead: result.bytesRead as number,
       eof: result.eof
     };
@@ -2105,6 +2162,17 @@ function validateGitHistoryResult(value: unknown, method: string): Record<string
         !record.changedPaths.every(validChangedPath) || !validSummary(record.summary) || typeof record.patch !== "string") reject();
   }
   return record;
+}
+
+function decodeCanonicalBase64(value: string): Uint8Array | undefined {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    return undefined;
+  }
+  const buffer = Buffer.from(value, "base64");
+  if (buffer.toString("base64") !== value) {
+    return undefined;
+  }
+  return Uint8Array.from(buffer);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

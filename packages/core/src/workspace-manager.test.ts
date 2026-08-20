@@ -117,6 +117,11 @@ class FakeKernel implements KernelTransport {
     sha256: "7b9a72466d3960eb2aacccfc848939453490db0678bd4725def3f789b891c919"
   };
   fileWriteError: unknown;
+  fileReadBytesResult: unknown = {
+    contentBase64: Buffer.from([0, 1, 2, 255]).toString("base64"),
+    bytesRead: 4,
+    eof: true
+  };
   gitHistoryResult: unknown = {
     schemaVersion: 1,
     resolvedOid: "1".repeat(40),
@@ -151,6 +156,7 @@ class FakeKernel implements KernelTransport {
       case "workspace.activate":
         return this.activateResult as T;
       case "file.read":
+        if (params.encoding === "base64") return this.fileReadBytesResult as T;
         return { contents: "file contents", bytesRead: 13, eof: true } as T;
       case "file.identity":
         return {
@@ -953,6 +959,30 @@ describe("WorkspaceManager", () => {
     });
   });
 
+  it("rejects malformed retained binary read payloads", async () => {
+    const kernel = new FakeKernel();
+    const manager = new WorkspaceManager({
+      kernel,
+      trust: new FakeTrust(),
+      idFactory: () => "ws_binary_invalid"
+    });
+    await manager.openWorkspace("/workspace");
+
+    kernel.fileReadBytesResult = { contentBase64: "***", bytesRead: 3, eof: true };
+    await expect(
+      manager.readFileBytes("ws_binary_invalid", "binary.dat", { maxBytes: 16 })
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+
+    kernel.fileReadBytesResult = {
+      contentBase64: Buffer.from([1, 2]).toString("base64"),
+      bytesRead: 3,
+      eof: true
+    };
+    await expect(
+      manager.readFileBytes("ws_binary_invalid", "binary.dat", { maxBytes: 16 })
+    ).rejects.toMatchObject({ code: "RUNTIME_PROTOCOL_INVALID" });
+  });
+
   it("routes READY public workspace file operations through the private runtime capability", async () => {
     const kernel = new FakeKernel();
     const manager = new WorkspaceManager({
@@ -963,6 +993,7 @@ describe("WorkspaceManager", () => {
 
     const opened = await manager.openWorkspace("/workspace");
     const read = await manager.readFile("ws_files", "inside.txt", { offset: 2, maxBytes: 64 });
+    const readBytes = await manager.readFileBytes("ws_files", "binary.dat", { offset: 1, maxBytes: 64 });
     const identity = await manager.pathIdentity("ws_files", "inside.txt", { includeSha256: true });
     const write = await manager.writeFile("ws_files", "created.txt", "created");
     const edit = await manager.editFile("ws_files", "inside.txt", "old", "new", 2);
@@ -978,6 +1009,7 @@ describe("WorkspaceManager", () => {
     const semanticMatches = await manager.searchBounded("ws_files", "needle", ".", 500, "semantic");
 
     expect(read).toEqual({ contents: "file contents", bytesRead: 13, eof: true });
+    expect(readBytes).toEqual({ bytes: Uint8Array.from([0, 1, 2, 255]), bytesRead: 4, eof: true });
     expect(identity).toEqual({
       schemaVersion: 1,
       exists: true,
@@ -1073,10 +1105,20 @@ describe("WorkspaceManager", () => {
     });
     expect(semanticMatches).toEqual(boundedMatches);
     expect(JSON.stringify(opened)).not.toContain("kc_fixture");
-    expect(kernel.calls.slice(-14)).toEqual([
+    expect(kernel.calls.slice(-15)).toEqual([
       {
         method: "file.read",
         params: { capabilityId: "kc_fixture", path: "inside.txt", offset: 2, maxBytes: 64 }
+      },
+      {
+        method: "file.read",
+        params: {
+          capabilityId: "kc_fixture",
+          path: "binary.dat",
+          offset: 1,
+          maxBytes: 64,
+          encoding: "base64"
+        }
       },
       {
         method: "file.identity",

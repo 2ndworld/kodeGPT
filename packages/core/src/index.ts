@@ -134,6 +134,7 @@ export {
 export type {
   OpenWorkspace,
   TrustedWorkspaceSummary,
+  WorkspaceFileReadBytesResult,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceSearchMatch,
