@@ -1,4 +1,5 @@
 import { NATIVE_CAPABILITY_IDS, type NativeCapabilityId } from "./contracts.js";
+import { getPublicActionDescriptor } from "./public-actions.js";
 
 export interface NativeCapabilitySemanticMetadata {
   readonly id: NativeCapabilityId;
@@ -8,211 +9,21 @@ export interface NativeCapabilitySemanticMetadata {
 
 type Registry = Readonly<Record<NativeCapabilityId, NativeCapabilitySemanticMetadata>>;
 
-function entry(
-  id: NativeCapabilityId,
-  purpose: string,
-  semanticAliases: readonly string[]
-): NativeCapabilitySemanticMetadata {
+function fromPublicAction(id: NativeCapabilityId): NativeCapabilitySemanticMetadata {
+  const action = getPublicActionDescriptor(id);
   return Object.freeze({
     id,
-    purpose,
-    semanticAliases: Object.freeze([...semanticAliases])
+    purpose: action.purpose,
+    semanticAliases: action.aliases
   });
 }
 
-export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze({
-  "workspace.inspect": entry("workspace.inspect", "Summarize repository structure and project metadata.", [
-    "inspect workspace",
-    "workspace overview",
-    "project structure",
-    "repository structure"
-  ]),
-  "code.search": entry("code.search", "Find code paths, text, symbols, definitions, or references.", [
-    "search code",
-    "find code",
-    "find symbol",
-    "find reference",
-    "find definition"
-  ]),
-  "code.impact": entry("code.impact", "Find bounded dependents, references, tests, and affected repository areas.", [
-    "impact analysis",
-    "find dependents",
-    "affected tests",
-    "affected areas",
-    "dependency impact"
-  ]),
-  "file.read": entry("file.read", "Read bounded file content.", [
-    "read file",
-    "inspect file",
-    "view file content"
-  ]),
-  "file.write": entry("file.write", "Create or replace file content through the native file boundary.", [
-    "write file",
-    "create file",
-    "replace file"
-  ]),
-  "file.edit": entry("file.edit", "Replace exact text in an existing file.", [
-    "edit file",
-    "replace exact text",
-    "modify file"
-  ]),
-  "file.patch": entry("file.patch", "Check or apply a bounded structured patch.", [
-    "apply patch",
-    "check patch",
-    "structured patch",
-    "unified patch"
-  ]),
-  "git.status": entry("git.status", "Inspect repository status without mutation.", [
-    "git status",
-    "repository status",
-    "working tree status"
-  ]),
-  "git.diff": entry("git.diff", "Inspect repository diffs without mutation.", [
-    "git diff",
-    "review diff",
-    "inspect diff"
-  ]),
-  "git.changes": entry("git.changes", "Summarize bounded repository changes and change identity.", [
-    "git changes",
-    "review changes",
-    "changed files",
-    "summarize changes"
-  ]),
-  "git.stage": entry("git.stage", "Stage bounded workspace-relative paths in trusted local Git.", [
-    "git stage",
-    "git add",
-    "stage changes"
-  ]),
-  "git.commit": entry("git.commit", "Create a bounded trusted local Git commit.", [
-    "git commit",
-    "commit changes",
-    "local commit"
-  ]),
-  "git.branchCreate": entry("git.branchCreate", "Create a validated trusted local Git branch.", [
-    "create git branch",
-    "new branch",
-    "git branch create"
-  ]),
-  "git.branchSwitch": entry("git.branchSwitch", "Switch to a validated trusted local Git branch.", [
-    "switch git branch",
-    "checkout branch",
-    "git switch"
-  ]),
-  "git.branchDelete": entry("git.branchDelete", "Safely delete a merged validated trusted local Git branch.", [
-    "delete git branch",
-    "remove branch",
-    "safe branch delete"
-  ]),
-  "git.worktreeCreate": entry("git.worktreeCreate", "Create a bounded linked worktree at .worktrees/<name> for an existing local branch.", [
-    "create git worktree",
-    "linked worktree",
-    "worktree create"
-  ]),
-  "git.worktreeRemove": entry("git.worktreeRemove", "Remove a clean bounded linked worktree from .worktrees/<name> without deleting its branch.", [
-    "remove git worktree",
-    "delete linked worktree",
-    "worktree remove"
-  ]),
-  "git.fetch": entry("git.fetch", "Fetch a validated branch from a named remote in a trusted workspace.", [
-    "git fetch",
-    "fetch remote branch",
-    "update remote tracking branch"
-  ]),
-  "git.pull": entry("git.pull", "Fast-forward a trusted workspace from a validated remote branch.", [
-    "git pull",
-    "fast-forward pull",
-    "update from remote"
-  ]),
-  "git.push": entry("git.push", "Push a validated local branch to the same branch on a named remote.", [
-    "git push",
-    "push branch",
-    "publish branch"
-  ]),
-  "git.log": entry("git.log", "List bounded structured local Git commit history.", [
-    "git log",
-    "commit history",
-    "repository history"
-  ]),
-  "git.show": entry("git.show", "Inspect one bounded historical Git commit.", [
-    "git show",
-    "inspect commit",
-    "commit details"
-  ]),
-  "git.range": entry("git.range", "Inspect bounded ancestry and commit ranges.", [
-    "git range",
-    "commit range",
-    "merge base",
-    "ahead behind"
-  ]),
-  "git.diffHistory": entry("git.diffHistory", "Inspect a bounded diff between two historical Git revisions.", [
-    "historical diff",
-    "git history diff",
-    "compare commits"
-  ]),
-  "ci.repository": entry("ci.repository", "Resolve bounded read-only Remote-CI repository context from a trusted workspace.", [
-    "ci repository",
-    "remote ci repository",
-    "github ci context"
-  ]),
-  "ci.status": entry("ci.status", "Summarize bounded read-only Remote-CI status for a trusted workspace revision.", [
-    "ci status",
-    "check ci",
-    "github actions status"
-  ]),
-  "ci.runs": entry("ci.runs", "List bounded recent read-only Remote-CI workflow runs.", [
-    "ci runs",
-    "workflow runs",
-    "github actions runs"
-  ]),
-  "ci.run": entry("ci.run", "Inspect one bounded read-only Remote-CI workflow run.", [
-    "ci run",
-    "workflow run details",
-    "github actions run"
-  ]),
-  "ci.failure": entry("ci.failure", "Inspect bounded redacted read-only failure evidence from one Remote-CI workflow run.", [
-    "ci failure",
-    "why ci failed",
-    "github actions failure"
-  ]),
-  "ci.rerun": entry("ci.rerun", "Re-run one GitHub Actions workflow run through bounded CI mutation authority.", [
-    "rerun ci",
-    "rerun workflow",
-    "rerun failed jobs"
-  ]),
-  "ci.cancel": entry("ci.cancel", "Cancel one GitHub Actions workflow run through bounded CI mutation authority.", [
-    "cancel ci",
-    "cancel workflow",
-    "stop workflow run"
-  ]),
-  "ci.dispatch": entry("ci.dispatch", "Dispatch one configured GitHub Actions workflow through bounded CI mutation authority.", [
-    "dispatch workflow",
-    "run workflow",
-    "workflow dispatch"
-  ]),
-  "process.run": entry("process.run", "Run a policy-approved process through native process controls.", [
-    "run process",
-    "native process",
-    "policy-approved process"
-  ]),
-  "verify.list": entry("verify.list", "Discover deterministic repository verification recipes.", [
-    "list verifications",
-    "discover verification",
-    "discover tests",
-    "available checks"
-  ]),
-  "verify.run": entry("verify.run", "Run a discovered verification recipe through existing process policy.", [
-    "run verification",
-    "run tests",
-    "run typecheck",
-    "run build checks"
-  ]),
-  "context.build": entry("context.build", "Build bounded repository context for a stated intent and target.", [
-    "build context",
-    "repository context",
-    "gather context",
-    "project context"
-  ])
-});
+export const NATIVE_CAPABILITY_SEMANTICS: Registry = Object.freeze(
+  Object.fromEntries(NATIVE_CAPABILITY_IDS.map((id) => [id, fromPublicAction(id)])) as Record<
+    NativeCapabilityId,
+    NativeCapabilitySemanticMetadata
+  >
+);
 
 export function getNativeCapabilitySemanticMetadata(
   id: NativeCapabilityId
@@ -220,7 +31,6 @@ export function getNativeCapabilitySemanticMetadata(
   return NATIVE_CAPABILITY_SEMANTICS[id];
 }
 
-// Compile-time completeness is enforced by Registry; keep this runtime assertion local to authored source drift.
 if (Object.keys(NATIVE_CAPABILITY_SEMANTICS).length !== NATIVE_CAPABILITY_IDS.length) {
   throw new Error("Native capability semantic metadata is incomplete");
 }

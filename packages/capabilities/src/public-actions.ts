@@ -187,7 +187,12 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "visual.captureMatrix": define(
     "Capture bounded responsive screenshot evidence across configured viewport sizes.",
-    ["capture viewport matrix", "responsive screenshots", "visual regression evidence"],
+    [
+      "capture viewport matrix",
+      "cek tampilan mobile",
+      "responsive screenshots",
+      "visual regression evidence"
+    ],
     ["browser", "responsive", "screenshot", "ui", "visual", "verification"],
     "composite",
     "preview",
@@ -203,7 +208,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "ci.failure": define(
     "Inspect bounded redacted read-only failure evidence from one Remote-CI workflow run.",
-    ["ci failure", "github actions failure", "why ci failed"],
+    ["ci failure", "github actions failure", "kenapa ci gagal", "why ci failed"],
     ["ci", "debug", "failure", "github-actions"],
     "integration",
     "repository",
@@ -259,7 +264,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "ci.status": define(
     "Summarize bounded read-only Remote-CI status for a trusted workspace revision.",
-    ["check ci", "ci status", "github actions status"],
+    ["cek ci", "check ci", "ci status", "github actions status"],
     ["ci", "github-actions", "status"],
     "integration",
     "repository",
@@ -267,7 +272,16 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "code.impact": define(
     "Find bounded dependents, references, tests, and affected repository areas.",
-    ["affected areas", "affected tests", "dependency impact", "find dependents", "impact analysis"],
+    [
+      "affected areas",
+      "affected tests",
+      "cari dampak perubahan ini",
+      "change impact",
+      "dependency impact",
+      "find dependents",
+      "impact analysis",
+      "what will this change affect"
+    ],
     ["code", "dependencies", "impact", "tests"],
     "composite",
     "workspace",
@@ -539,7 +553,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "process.run": define(
     "Run a policy-approved process through native process controls.",
-    ["native process", "policy-approved process", "run process"],
+    ["native process", "policy-approved process", "run a local development command", "run process"],
     ["command", "process", "runtime", "shell"],
     "primitive",
     "workspace",
@@ -555,7 +569,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "preview.inspect": define(
     "Inspect readiness and bounded state for a KodeGPT-owned local preview.",
-    ["check preview", "preview status", "preview readiness"],
+    ["check preview", "preview status", "preview readiness", "see whether the preview is ready"],
     ["preview", "readiness", "status", "ui"],
     "introspection",
     "preview",
@@ -651,7 +665,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "verify.run": define(
     "Run a discovered verification recipe through existing process policy.",
-    ["run build checks", "run tests", "run typecheck", "run verification"],
+    ["jalankan test", "run build checks", "run tests", "run typecheck", "run verification"],
     ["build", "test", "verification"],
     "composite",
     "workspace",
@@ -675,7 +689,14 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "workspace.info": define(
     "Read current open-workspace policy and bounded continuity checkpoint state.",
-    ["current workspace", "resume workspace", "workspace state"],
+    [
+      "cek status workspace",
+      "continue the work from the previous chat",
+      "current workspace",
+      "lanjutkan pekerjaan sebelumnya",
+      "resume workspace",
+      "workspace state"
+    ],
     ["continuity", "resume", "state", "workspace"],
     "introspection",
     "workspace",

@@ -38,6 +38,11 @@ export type {
   PublicActionRole,
   PublicActionScope
 } from "./public-actions.js";
+export { normalizeDiscoveryQuery, searchPublicActions } from "./public-action-search.js";
+export type {
+  NormalizedDiscoveryQuery,
+  PublicActionSearchMatch
+} from "./public-action-search.js";
 export type {
   CapabilityArtifactMetadata,
   CodeImpactDependent,
