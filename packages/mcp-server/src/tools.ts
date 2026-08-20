@@ -19,10 +19,6 @@ import {
   CodeSearchResultSchema,
   ContextBuildInputSchema,
   ContextBuildResultSchema,
-  DeployPreviewCreateInputSchema,
-  DeployPreviewCreateResultSchema,
-  DeployPreviewInspectInputSchema,
-  DeployPreviewInspectResultSchema,
   FilePatchInputSchema,
   FilePatchResultSchema,
   GitChangesInputSchema,
@@ -91,8 +87,6 @@ import {
   REMOTE_CI_CANCEL_TOOL_ANNOTATIONS,
   REMOTE_CI_MUTATION_TOOL_ANNOTATIONS,
   REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS,
-  REMOTE_DEPLOY_CREATE_TOOL_ANNOTATIONS,
-  REMOTE_DEPLOY_READ_ONLY_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS,
   REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS,
@@ -193,8 +187,6 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
-  { name: "deploy.preview.create", required: ["workspaceId"] },
-  { name: "deploy.preview.inspect", required: ["workspaceId", "deploymentId"] },
   { name: "extension.list", required: [] },
   {
     name: "file.edit",
@@ -202,7 +194,6 @@ const SURFACE_TOOLS = Object.freeze([
   },
   { name: "file.read", required: ["workspaceId", "path"] },
   { name: "file.patch", required: ["workspaceId", "patch"] },
-  { name: "file.search", required: ["workspaceId", "query"] },
   { name: "file.tree", required: ["workspaceId"] },
   { name: "file.write", required: ["workspaceId", "path", "content"] },
   { name: "git.branchCreate", required: ["workspaceId", "name"] },
@@ -561,34 +552,6 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
-    "deploy.preview.create",
-    {
-      description: "Create one Netlify branch preview from the exact clean trusted workspace HEAD.",
-      inputSchema: DeployPreviewCreateInputSchema,
-      outputSchema: DeployPreviewCreateResultSchema,
-      annotations: REMOTE_DEPLOY_CREATE_TOOL_ANNOTATIONS
-    },
-    async (input) =>
-      nativeCapabilityResult(async () =>
-        DeployPreviewCreateResultSchema.parse(await context.deploy.previewCreate(input))
-      )
-  );
-
-  server.registerTool(
-    "deploy.preview.inspect",
-    {
-      description: "Inspect one bounded normalized Netlify preview deployment.",
-      inputSchema: DeployPreviewInspectInputSchema,
-      outputSchema: DeployPreviewInspectResultSchema,
-      annotations: REMOTE_DEPLOY_READ_ONLY_TOOL_ANNOTATIONS
-    },
-    async (input) =>
-      nativeCapabilityResult(async () =>
-        DeployPreviewInspectResultSchema.parse(await context.deploy.previewInspect(input))
-      )
-  );
-
-  server.registerTool(
     "github.repository.inspect",
     {
       description: "Inspect one bounded normalized GitHub repository through the admitted read-only provider.",
@@ -875,21 +838,6 @@ export function registerKodegptTools(
     },
     async ({ workspaceId, path, offset, maxBytes }) =>
       structuredToolResult(await context.workspace.readFile({ workspaceId, path, offset, maxBytes }))
-  );
-
-  server.registerTool(
-    "file.search",
-    {
-      description: "Run bounded lexical UTF-8 search beneath a READY workspace retained root.",
-      inputSchema: {
-        workspaceId: z.string().min(1),
-        query: z.string().min(1),
-        path: z.string().min(1).optional()
-      },
-      annotations: READ_ONLY_TOOL_ANNOTATIONS
-    },
-    async ({ workspaceId, query, path }) =>
-      structuredToolResult(await context.workspace.search({ workspaceId, query, path }))
   );
 
   server.registerTool(

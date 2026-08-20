@@ -15,7 +15,6 @@ import {
   NativeCapabilityService,
   PRODUCTION_PROVIDER_MANIFESTS,
   ProviderAuditClient,
-  createDeployPreviewToolAdapter,
   createGitHubReadToolAdapter,
   createGitHubWriteToolAdapter,
   createGitHubRemoteCiToolAdapter,
@@ -456,12 +455,6 @@ export async function createProductionServiceStack(
         }
       }
     });
-    const deployPreview = createDeployPreviewToolAdapter(providerRuntime, {
-      repository: {
-        inspect: (workspaceId) => managers.workspaceManager.inspectGitRepositoryIdentity(workspaceId)
-      },
-      gitChanges: (input) => nativeCapabilities.gitChanges(input)
-    });
     const toolContext = createKodegptToolContext({
       workspaceManager: managers.workspaceManager,
       executionManager,
@@ -473,7 +466,6 @@ export async function createProductionServiceStack(
       remoteCi,
       githubRead: createGitHubReadToolAdapter(providerRuntime),
       githubWrite: createGitHubWriteToolAdapter(providerRuntime),
-      deployPreview,
       extensionRegistry,
       skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
