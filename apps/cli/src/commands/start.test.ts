@@ -363,7 +363,7 @@ describe("kodegpt start orchestration", () => {
       });
       expect(authorityCalls).toEqual([
         "identity:ws_test:skills",
-        "tree:ws_test:skills:20000:literal",
+        "tree:ws_test:skills:10000:literal",
         "read:ws_test:skills/demo/SKILL.md:0:64"
       ]);
     } finally {

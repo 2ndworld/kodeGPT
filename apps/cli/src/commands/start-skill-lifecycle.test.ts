@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { WorkspaceSkillSourceAuthority } from "@kodegpt/skills";
+
 import { createProductionServiceStack, startKodegpt, type StartKernel } from "./start.js";
 
 function baseDependencies(events: string[]) {
@@ -81,7 +83,19 @@ function baseDependencies(events: string[]) {
     },
     search: async () => [],
     tree: async () => [],
-    treeBounded: async () => ({ entries: [], truncated: false }),
+    treeBounded: async (
+      _workspaceId: string,
+      _path: string,
+      _maxEntries: number,
+      _scope?: "literal" | "semantic"
+    ) => ({
+      entries: [] as Array<{
+        path: string;
+        kind: "file" | "directory" | "symlink" | "other";
+        sizeBytes: number;
+      }>,
+      truncated: false
+    }),
     searchBounded: async () => ({ matches: [], truncated: false, truncationReasons: [] }),
     gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
     gitCheckpointPatch: async () => {
@@ -143,7 +157,13 @@ function baseDependencies(events: string[]) {
       events.push("kernel.start");
       return kernel;
     },
-    prepareSkillCatalog: async ({ kernel: receivedKernel }: { stateRoot: string; kernel: StartKernel }) => {
+    prepareSkillCatalog: async ({
+      kernel: receivedKernel
+    }: {
+      stateRoot: string;
+      kernel: StartKernel;
+      workspaceAuthority: WorkspaceSkillSourceAuthority;
+    }) => {
       expect(receivedKernel).toBe(kernel);
       events.push("skill.catalog");
       return {
@@ -190,7 +210,7 @@ function baseDependencies(events: string[]) {
     })
   };
 
-  return { dependencies, kernel };
+  return { dependencies, kernel, workspaceManager };
 }
 
 describe("production skill catalog lifecycle", () => {
@@ -224,6 +244,53 @@ describe("production skill catalog lifecycle", () => {
     await stack.close();
     expect(events.filter((event) => event === "skill.close")).toHaveLength(1);
     expect(events.filter((event) => event === "kernel.stop")).toHaveLength(1);
+  });
+
+  it("caps workspace skill-source traversal at the workspace tree hard limit", async () => {
+    const events: string[] = [];
+    const { dependencies, workspaceManager } = baseDependencies(events);
+    const treeBounds: number[] = [];
+
+    workspaceManager.treeBounded = async (_workspaceId, _path, maxEntries) => {
+      treeBounds.push(maxEntries);
+      if (maxEntries > 10_000) {
+        throw new TypeError("Workspace tree maxEntries must be between 1 and 10000");
+      }
+      return {
+        entries: [
+          { path: ".agents/skills/live-smoke", kind: "directory" as const, sizeBytes: 0 },
+          { path: ".agents/skills/live-smoke/SKILL.md", kind: "file" as const, sizeBytes: 64 }
+        ],
+        truncated: false
+      };
+    };
+    dependencies.prepareSkillCatalog = async ({ workspaceAuthority }) => {
+      const tree = await workspaceAuthority.tree("ws_local", ".agents/skills", 20_000);
+      expect(tree.entries).toHaveLength(2);
+      return {
+        list: async () => ({
+          schemaVersion: 1 as const,
+          skills: [],
+          truncated: false,
+          truncationReasons: []
+        }),
+        inspect: async () => {
+          throw new Error("not used");
+        },
+        load: async () => {
+          throw new Error("not used");
+        },
+        close: async () => undefined
+      };
+    };
+
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      dependencies
+    );
+
+    expect(treeBounds).toEqual([10_000]);
+    await stack.close();
   });
 
   it("closes an already-created catalog before stopping the kernel when later startup fails", async () => {
