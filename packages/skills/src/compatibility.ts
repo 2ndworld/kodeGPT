@@ -113,7 +113,14 @@ export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillComp
       hasStaticFinding = true;
       continue;
     }
-    if (CODEX_EXEC_PATTERN.test(snippet) || CODEX_COMMAND_PATTERN.test(snippet)) continue;
+    if (CODEX_EXEC_PATTERN.test(snippet)) continue;
+    if (CODEX_COMMAND_PATTERN.test(snippet)) {
+      unsupported = true;
+      hasStaticFinding = true;
+      missingCapabilities.add("codex.runtime");
+      reasons.add("CODEX_RUNTIME_UNSUPPORTED");
+      continue;
+    }
 
     const externalCli = externalCliName(snippet);
     if (externalCli !== undefined) {

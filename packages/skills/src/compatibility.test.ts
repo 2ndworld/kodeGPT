@@ -156,6 +156,16 @@ describe("analyzeSkillCompatibility", () => {
     expect(report.analysisBasis).toBe("static");
   });
 
+  it("keeps explicit Codex commands in shell code fences unsupported", () => {
+    const report = analyzeSkillCompatibility(
+      skill({ instructions: "Use this review command:\n```bash\ncodex review\n```" })
+    );
+
+    expect(report.classification).toBe("UNSUPPORTED");
+    expect(report.missingCapabilities).toContain("codex.runtime");
+    expect(report.reasons).toContain("CODEX_RUNTIME_UNSUPPORTED");
+  });
+
   it("does not reinterpret unlabeled generic code fences as shell commands", () => {
     const report = analyzeSkillCompatibility(
       skill({ instructions: "Use this example:\n```\nconst value = 1;\n```" })

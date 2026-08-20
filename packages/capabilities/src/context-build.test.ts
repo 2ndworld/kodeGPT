@@ -91,7 +91,6 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
     ]
   };
   const readCalls: string[] = [];
-  const readRequests: Array<{ path: string; maxBytes: number }> = [];
   return {
     adapter: {
       inspect: async (_input: WorkspaceInspectInput) => {
@@ -116,7 +115,6 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         const value = contents[path];
         if (value === undefined) throw new Error("missing");
         const maxBytes = readOptions?.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
-        readRequests.push({ path, maxBytes });
         const bytes = Buffer.from(value, "utf8");
         if (bytes.length <= maxBytes) return { contents: value, bytesRead: bytes.length, eof: true };
         return {
@@ -126,8 +124,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         };
       }
     },
-    readCalls,
-    readRequests
+    readCalls
   };
 }
 
