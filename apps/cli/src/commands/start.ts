@@ -604,7 +604,7 @@ function createWorkspaceSkillSourceAuthority(
       const tree = await workspaceManager.treeBounded(
         workspaceId,
         path,
-        maxEntries,
+        Math.min(maxEntries, 10_000),
         "literal"
       );
       return {
