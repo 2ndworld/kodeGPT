@@ -13,6 +13,7 @@ const MAX_DECLARED_REQUIREMENTS = 64;
 const MAX_REQUIREMENT_BYTES = 256;
 const NATIVE_CAPABILITIES = new Set<string>(NATIVE_CAPABILITY_IDS);
 const INLINE_CODE_PATTERN = /`([^`\r\n]{1,512})`/g;
+const INLINE_COMMAND_PREFIX_PATTERN = /(?:\b(?:run|execute|invoke|launch)\s*|\b(?:command|cli)\s*:\s*)$/i;
 const SHELL_FENCE_PATTERN = /```(?:bash|sh|shell|zsh|console|terminal)[ \t]*\r?\n([\s\S]*?)```/gi;
 const CODEX_EXEC_PATTERN = /\bcodex\s+exec\b/i;
 const CODEX_COMMAND_PATTERN = /^codex(?:\s|$)/i;
@@ -92,21 +93,27 @@ export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillComp
     reasons.add("SUBAGENT_SESSION_UNSUPPORTED");
   }
 
-  for (const snippet of [...inlineCodeSnippets(skill.instructions), ...shellCommandSnippets(skill.instructions)]) {
-    const nativeCommand = nativeCapabilityForCommand(snippet);
-    if (nativeCommand !== undefined) {
-      requiredCapabilities.add(nativeCommand);
-      hasStaticFinding = true;
-      continue;
-    }
+  for (const snippet of inlineCodeSnippets(skill.instructions)) {
     if (CODEX_EXEC_PATTERN.test(snippet)) continue;
     if (CODEX_COMMAND_PATTERN.test(snippet)) {
       unsupported = true;
       hasStaticFinding = true;
       missingCapabilities.add("codex.runtime");
       reasons.add("CODEX_RUNTIME_UNSUPPORTED");
+    }
+  }
+
+  for (const snippet of [
+    ...inlineCommandSnippets(skill.instructions),
+    ...shellCommandSnippets(skill.instructions)
+  ]) {
+    const nativeCommand = nativeCapabilityForCommand(snippet);
+    if (nativeCommand !== undefined) {
+      requiredCapabilities.add(nativeCommand);
+      hasStaticFinding = true;
       continue;
     }
+    if (CODEX_EXEC_PATTERN.test(snippet) || CODEX_COMMAND_PATTERN.test(snippet)) continue;
 
     const externalCli = externalCliName(snippet);
     if (externalCli !== undefined) {
@@ -221,6 +228,20 @@ function inlineCodeSnippets(instructions: string): string[] {
   while ((match = INLINE_CODE_PATTERN.exec(instructions)) !== null) {
     const snippet = match[1]?.trim();
     if (snippet !== undefined && snippet.length > 0) snippets.push(snippet);
+  }
+  return snippets;
+}
+
+function inlineCommandSnippets(instructions: string): string[] {
+  const snippets: string[] = [];
+  INLINE_CODE_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_CODE_PATTERN.exec(instructions)) !== null) {
+    const snippet = match[1]?.trim();
+    if (snippet === undefined || snippet.length === 0) continue;
+    const lineStart = instructions.lastIndexOf("\n", Math.max(0, match.index - 1)) + 1;
+    const prefix = instructions.slice(lineStart, match.index);
+    if (INLINE_COMMAND_PREFIX_PATTERN.test(prefix)) snippets.push(snippet);
   }
   return snippets;
 }

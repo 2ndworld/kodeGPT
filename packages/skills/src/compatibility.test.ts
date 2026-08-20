@@ -49,6 +49,19 @@ describe("analyzeSkillCompatibility", () => {
     expect(report.analysisBasis).toBe("static");
   });
 
+  it("does not treat inline prose or template examples as external CLIs", () => {
+    const report = analyzeSkillCompatibility(
+      skill({
+        instructions:
+          "Finish with `Lean already. Ship.` and render `Total users: ${users.length}` in the example."
+      })
+    );
+
+    expect(report.classification).toBe("NATIVE");
+    expect(report.missingCapabilities).toEqual([]);
+    expect(report.reasons).toEqual(["NATIVE_REQUIREMENTS_SATISFIED"]);
+  });
+
   it("classifies declared provider requirements as PROVIDER_REQUIRED", () => {
     const report = analyzeSkillCompatibility(
       skill({
