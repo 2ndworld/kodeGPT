@@ -107,6 +107,29 @@ pub struct TrustAuditParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceCheckpointAuditAction {
+    Upsert,
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspaceCheckpointAuditPhase {
+    Decision,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceCheckpointAuditParams {
+    pub operation_id: String,
+    pub action: WorkspaceCheckpointAuditAction,
+    pub phase: WorkspaceCheckpointAuditPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CiCapability {
     #[serde(rename = "ci.repository")]
     Repository,
@@ -807,6 +830,12 @@ pub enum RuntimeRequest {
         jsonrpc: JsonRpcVersion,
         id: String,
         params: TrustAuditParams,
+    },
+    #[serde(rename = "workspace.checkpoint_audit")]
+    WorkspaceCheckpointAudit {
+        jsonrpc: JsonRpcVersion,
+        id: String,
+        params: WorkspaceCheckpointAuditParams,
     },
     #[serde(rename = "ci.audit")]
     CiAudit {

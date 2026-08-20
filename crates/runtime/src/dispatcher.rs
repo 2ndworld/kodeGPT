@@ -15,7 +15,8 @@ use kodegpt_protocol::{
     RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
     SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
     SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
+    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceCheckpointAuditAction,
+    WorkspaceCheckpointAuditParams, WorkspaceCheckpointAuditPhase, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::BubblewrapProvider;
@@ -345,6 +346,40 @@ async fn dispatch_one(
                 ),
                 TrustAuditPhase::Success => audit.outcome(&audit_context, AuditOutcome::Success),
                 TrustAuditPhase::Failed => audit.outcome(&audit_context, AuditOutcome::Failed),
+            };
+            if recorded.is_err() {
+                return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
+            }
+            success_response(request.id, json!({ "ok": true }))
+        }
+        "workspace.checkpoint_audit" => {
+            let params =
+                match serde_json::from_value::<WorkspaceCheckpointAuditParams>(request.params) {
+                    Ok(params) if valid_audit_operation_id(&params.operation_id) => params,
+                    _ => return error_response(Some(request.id), -32602, "INVALID_PARAMS"),
+                };
+            let action = match params.action {
+                WorkspaceCheckpointAuditAction::Upsert => AuditAction::WorkspaceCheckpointUpsert,
+                WorkspaceCheckpointAuditAction::Clear => AuditAction::WorkspaceCheckpointClear,
+            };
+            let audit_context = AuditContext {
+                request_id: request.id.clone(),
+                operation_id: params.operation_id,
+                capability_id: None,
+                action,
+            };
+            let recorded = match params.phase {
+                WorkspaceCheckpointAuditPhase::Decision => audit.decision(
+                    &audit_context,
+                    AuditDecision::Allow,
+                    AuditReason::RequestValidated,
+                ),
+                WorkspaceCheckpointAuditPhase::Success => {
+                    audit.outcome(&audit_context, AuditOutcome::Success)
+                }
+                WorkspaceCheckpointAuditPhase::Failed => {
+                    audit.outcome(&audit_context, AuditOutcome::Failed)
+                }
             };
             if recorded.is_err() {
                 return error_response(Some(request.id), -32010, "AUDIT_UNAVAILABLE");
@@ -3805,6 +3840,37 @@ mod tests {
         response
     }
 
+    async fn checkpoint_audit_once(
+        audit: Arc<AuditSink>,
+        id: &str,
+        operation_id: &str,
+        action: &str,
+        phase: &str,
+    ) -> Value {
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(request_rx, response_tx, false, audit));
+        request_tx
+            .send(request(
+                id,
+                "workspace.checkpoint_audit",
+                json!({
+                    "operationId": operation_id,
+                    "action": action,
+                    "phase": phase
+                }),
+            ))
+            .expect("checkpoint audit request accepted");
+        drop(request_tx);
+
+        let response = tokio::time::timeout(Duration::from_millis(500), response_rx.recv())
+            .await
+            .expect("checkpoint audit response arrives")
+            .expect("response channel open");
+        dispatcher.await.expect("dispatcher task joins");
+        response
+    }
+
     async fn ci_audit_once(
         audit: Arc<AuditSink>,
         id: &str,
@@ -4024,6 +4090,75 @@ mod tests {
         )
         .await;
 
+        assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
+        assert!(!audit.is_healthy());
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn checkpoint_audit_routes_minimal_mutation_records_through_the_single_rust_sink() {
+        let (audit, audit_root) = audit_sink("checkpoint-control-plane");
+
+        let decision = checkpoint_audit_once(
+            Arc::clone(&audit),
+            "req_checkpoint_decision",
+            "op_checkpoint_control_plane",
+            "upsert",
+            "decision",
+        )
+        .await;
+        assert_eq!(decision["result"]["ok"], true);
+
+        let outcome = checkpoint_audit_once(
+            Arc::clone(&audit),
+            "req_checkpoint_success",
+            "op_checkpoint_control_plane",
+            "upsert",
+            "success",
+        )
+        .await;
+        assert_eq!(outcome["result"]["ok"], true);
+
+        let audit_text = fs::read_to_string(audit.path()).expect("audit readable");
+        assert_eq!(audit_text.lines().count(), 2);
+        assert!(audit_text.contains("workspace_checkpoint_upsert"));
+        assert!(audit_text.contains("op_checkpoint_control_plane"));
+        for forbidden in [
+            "objective",
+            "\"checkpoint\":",
+            "trustId",
+            "canonicalRoot",
+            "deviceMajor",
+            "inode",
+        ] {
+            assert!(!audit_text.contains(forbidden));
+        }
+
+        fs::remove_dir_all(audit_root).expect("audit root removed");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn checkpoint_audit_fails_closed_when_the_single_rust_sink_is_unavailable() {
+        let audit_root = std::env::temp_dir().join(format!(
+            "kodegpt-dispatcher-checkpoint-audit-fault-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&audit_root);
+        let audit = Arc::new(AuditSink::open_with_faults(
+            &audit_root,
+            AuditFaults {
+                fail_next_decision: true,
+                fail_next_outcome: false,
+            },
+        ));
+        let response = checkpoint_audit_once(
+            Arc::clone(&audit),
+            "req_checkpoint_fault",
+            "op_checkpoint_fault",
+            "clear",
+            "decision",
+        )
+        .await;
         assert_eq!(response["error"]["message"], "AUDIT_UNAVAILABLE");
         assert!(!audit.is_healthy());
         fs::remove_dir_all(audit_root).expect("audit root removed");
