@@ -278,6 +278,7 @@ export interface SkillExternalCliResolution {
 export interface SkillCapabilityRuntimeContext {
   readonly workspaceId: string;
   readonly allowProcess: boolean;
+  readonly allowDynamicExecutables: boolean;
   readonly allowedExecutableNames: readonly string[];
   inspectExecutable(executable: string): Promise<{
     executableAvailable: boolean;

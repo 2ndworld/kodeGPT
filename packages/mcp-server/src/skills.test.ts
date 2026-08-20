@@ -240,8 +240,9 @@ describe("MCP skill surface", () => {
               name: "trusted",
               allowWrite: true,
               allowProcess: true,
+              allowDynamicExecutables: true,
               network: "unrestricted",
-              allowedExecutableNames: ["npx"],
+              allowedExecutableNames: [],
               inheritEnv: false,
               envAllowlist: []
             }

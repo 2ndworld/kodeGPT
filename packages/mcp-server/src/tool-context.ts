@@ -513,6 +513,7 @@ export function createKodegptToolContext(options: {
         const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {
           workspaceId,
           allowProcess: ready.effectivePolicy.allowProcess,
+          allowDynamicExecutables: ready.effectivePolicy.allowDynamicExecutables,
           allowedExecutableNames: ready.effectivePolicy.allowedExecutableNames,
           inspectExecutable: async (executable) => {
             const availability = await options.workspaceManager.inspectExecutable(workspaceId, executable);

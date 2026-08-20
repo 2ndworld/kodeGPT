@@ -31,6 +31,7 @@ type Resolver = (
   context: {
     workspaceId: string;
     allowProcess: boolean;
+    allowDynamicExecutables: boolean;
     allowedExecutableNames: readonly string[];
     inspectExecutable(executable: string): Promise<{ executableAvailable: boolean; sandboxAvailable: boolean }>;
   }
@@ -259,6 +260,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const resolved = await resolve!(externalCliPlan(), {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async (executable) => {
         expect(executable).toBe("npx");
@@ -290,6 +292,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const resolved = await resolve!(externalCliPlan(), {
       workspaceId: "ws_1",
       allowProcess: false,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => {
         probes += 1;
@@ -303,6 +306,48 @@ describe("resolveSkillCapabilityPlan", () => {
     expect(resolved.externalCliRequirements?.[0]?.status).toBe("not-allowed");
   });
 
+  it("resolves an unlisted external CLI through dynamic executable authority", async () => {
+    const resolve = resolver();
+    expect(resolve).toBeTypeOf("function");
+    const plan: TestPlan = {
+      schemaVersion: 1,
+      classification: "PARTIAL",
+      nativeCapabilities: [],
+      missingCapabilities: ["external-cli:uv"],
+      externalRequirements: [],
+      blockedSemantics: [],
+      guidance: [],
+      truncated: false,
+      truncationReasons: []
+    };
+    let probes = 0;
+
+    const resolved = await resolve!(plan, {
+      workspaceId: "ws_dynamic",
+      allowProcess: true,
+      allowDynamicExecutables: true,
+      allowedExecutableNames: ["node"],
+      inspectExecutable: async (executable) => {
+        probes += 1;
+        expect(executable).toBe("uv");
+        return { executableAvailable: true, sandboxAvailable: true };
+      }
+    });
+
+    expect(probes).toBe(1);
+    expect(resolved.classification).toBe("NATIVE");
+    expect(resolved.missingCapabilities).toEqual([]);
+    expect(resolved.nativeCapabilities).toContain("process.run");
+    expect(resolved.externalCliRequirements).toEqual([
+      {
+        requirement: "external-cli:uv",
+        executable: "uv",
+        status: "available",
+        capability: "process.run"
+      }
+    ]);
+  });
+
   it("reports executable allowlist denial without probing the executable", async () => {
     const resolve = resolver();
     expect(resolve).toBeTypeOf("function");
@@ -311,6 +356,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const resolved = await resolve!(externalCliPlan(), {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["node"],
       inspectExecutable: async () => {
         probes += 1;
@@ -329,6 +375,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const notInstalled = await resolve!(externalCliPlan(), {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: false, sandboxAvailable: true })
     });
@@ -337,6 +384,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const noSandbox = await resolve!(externalCliPlan(), {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: false })
     });
@@ -356,6 +404,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const resolved = await resolve!(plan, {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
     });
@@ -382,6 +431,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const resolved = await resolve!(truncatedPlan, {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
     });
@@ -398,6 +448,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const context = {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
     };
@@ -422,6 +473,7 @@ describe("resolveSkillCapabilityPlan", () => {
     const context = {
       workspaceId: "ws_1",
       allowProcess: true,
+      allowDynamicExecutables: false,
       allowedExecutableNames: ["npx"],
       inspectExecutable: async () => ({ executableAvailable: true, sandboxAvailable: true })
     };
