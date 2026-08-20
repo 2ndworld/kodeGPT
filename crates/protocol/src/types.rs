@@ -476,6 +476,14 @@ pub struct FileReadParams {
     pub path: String,
     pub offset: u64,
     pub max_bytes: u64,
+    #[serde(default)]
+    pub encoding: Option<ReadEncoding>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadEncoding {
+    Base64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -787,12 +795,6 @@ pub struct SkillSourceTreeParams {
     pub max_entries: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SkillSourceReadEncoding {
-    Base64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SkillSourceReadParams {
@@ -801,7 +803,7 @@ pub struct SkillSourceReadParams {
     pub offset: u64,
     pub max_bytes: u64,
     #[serde(default)]
-    pub encoding: Option<SkillSourceReadEncoding>,
+    pub encoding: Option<ReadEncoding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

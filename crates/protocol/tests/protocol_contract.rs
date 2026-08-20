@@ -189,6 +189,18 @@ fn security_sensitive_params_reject_unknown_fields() {
 }
 
 #[test]
+fn file_read_accepts_only_the_shared_base64_encoding_mode() {
+    let mut base64 = fixture("file.read.json");
+    base64["params"]["encoding"] = json!("base64");
+    serde_json::from_value::<RuntimeRequest>(base64).expect("base64 file.read deserializes");
+
+    let mut unsupported = fixture("file.read.json");
+    unsupported["params"]["encoding"] = json!("hex");
+    serde_json::from_value::<RuntimeRequest>(unsupported)
+        .expect_err("unsupported file.read encoding rejected");
+}
+
+#[test]
 fn file_write_preconditions_are_optional_closed_and_typed() {
     let plain = serde_json::from_value::<FileWriteParams>(json!({
         "capabilityId": "kc_write",

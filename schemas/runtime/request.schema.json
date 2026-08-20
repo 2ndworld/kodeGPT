@@ -408,7 +408,8 @@
             "capabilityId": { "type": "string", "minLength": 1 },
             "path": { "type": "string" },
             "offset": { "type": "integer", "minimum": 0 },
-            "maxBytes": { "type": "integer", "minimum": 0 }
+            "maxBytes": { "type": "integer", "minimum": 0 },
+            "encoding": { "const": "base64" }
           }
         }
       }

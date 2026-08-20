@@ -142,6 +142,22 @@ pub fn read_file_beneath(
     )
 }
 
+pub fn read_bytes_beneath(
+    root_fd: &OwnedFd,
+    relative_path: &Path,
+    offset: u64,
+    max_bytes: u64,
+) -> Result<ReadBytesResult, WorkspaceReadError> {
+    read_bytes_beneath_with_flags(
+        root_fd,
+        relative_path,
+        offset,
+        max_bytes,
+        OFlags::empty(),
+        false,
+    )
+}
+
 pub(crate) fn read_file_beneath_no_follow(
     root_fd: &OwnedFd,
     relative_path: &Path,
