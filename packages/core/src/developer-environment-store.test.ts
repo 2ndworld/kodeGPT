@@ -156,6 +156,23 @@ describe("DeveloperEnvironmentStore", () => {
     await expect(store.list()).rejects.toMatchObject({ code: "DEV_ENV_ROOT_CHANGED" });
   });
 
+  it("rejects executable directories that cannot be represented safely in PATH", async () => {
+    const stateRoot = await temporaryRoot("path-separator-state");
+    const toolchain = await temporaryRoot("path-separator-toolchain");
+    await safeDirectory(join(toolchain, "bin:alt"));
+    const store = new DeveloperEnvironmentStore(stateRoot);
+
+    await expect(
+      store.add({
+        root: toolchain,
+        executableDirs: ["bin:alt"],
+        label: "unsafe PATH entry",
+        source: "operator",
+        trustedWorkspaceRoots: []
+      })
+    ).rejects.toMatchObject({ code: "DEV_ENV_REGISTRY_INVALID" });
+  });
+
   it("bounds registry entries and executable directories", async () => {
     const stateRoot = await temporaryRoot("bounds-state");
     const store = new DeveloperEnvironmentStore(stateRoot);

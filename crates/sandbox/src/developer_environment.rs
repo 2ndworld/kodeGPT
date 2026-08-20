@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::fs;
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
@@ -59,12 +61,19 @@ impl std::error::Error for DeveloperEnvironmentError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeveloperEnvironmentRegistry {
     entries: Vec<ValidatedDeveloperEnvironmentEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub(crate) struct DeveloperEnvironmentMount {
+    pub(crate) root_fd: OwnedFd,
+    pub(crate) root_canonical_path: PathBuf,
+    pub(crate) executable_dirs: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ValidatedDeveloperEnvironmentEntry {
     canonical_root: PathBuf,
     executable_dirs: Vec<PathBuf>,
@@ -194,6 +203,29 @@ impl DeveloperEnvironmentRegistry {
         self.entries.is_empty()
     }
 
+    pub(crate) fn open_mounts(
+        &self,
+    ) -> Result<Vec<DeveloperEnvironmentMount>, DeveloperEnvironmentError> {
+        let mut mounts = Vec::with_capacity(self.entries.len());
+        for entry in &self.entries {
+            let root = revalidate_entry(entry)?;
+            let root_file =
+                fs::File::open(&entry.canonical_root).map_err(DeveloperEnvironmentError::Io)?;
+            let metadata = root_file
+                .metadata()
+                .map_err(DeveloperEnvironmentError::Io)?;
+            if !metadata.is_dir() || metadata.dev() != root.device || metadata.ino() != root.inode {
+                return Err(DeveloperEnvironmentError::RootChanged);
+            }
+            mounts.push(DeveloperEnvironmentMount {
+                root_fd: OwnedFd::from(root_file),
+                root_canonical_path: entry.canonical_root.clone(),
+                executable_dirs: entry.executable_dirs.clone(),
+            });
+        }
+        Ok(mounts)
+    }
+
     pub fn resolve_registered(
         &self,
         name: &str,
@@ -268,7 +300,7 @@ fn revalidate_entry(
 }
 
 fn normalize_executable_dir(value: &str) -> Result<PathBuf, DeveloperEnvironmentError> {
-    if value.is_empty() || value.len() > 4096 || value.contains('\0') {
+    if value.is_empty() || value.len() > 4096 || value.contains('\0') || value.contains(':') {
         return Err(DeveloperEnvironmentError::RegistryInvalid);
     }
     if value == "." {

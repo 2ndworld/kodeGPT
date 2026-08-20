@@ -126,6 +126,23 @@ fn rejects_unknown_schema_unknown_fields_and_registry_limits() {
 }
 
 #[test]
+fn rejects_executable_directories_with_path_separator() {
+    let state_root = temporary_root("path-separator-state");
+    let toolchain = temporary_root("path-separator-toolchain");
+    let bad_dir = toolchain.join("bin:alt");
+    fs::create_dir_all(&bad_dir).expect("unsafe PATH directory fixture");
+    write_registry(&state_root, vec![entry(1, &toolchain, json!(["bin:alt"]))]);
+
+    assert!(matches!(
+        DeveloperEnvironmentRegistry::load(&state_root),
+        Err(DeveloperEnvironmentError::RegistryInvalid)
+    ));
+
+    fs::remove_dir_all(state_root).expect("state cleanup");
+    fs::remove_dir_all(toolchain).expect("toolchain cleanup");
+}
+
+#[test]
 fn rejects_relative_directory_escape_and_root_identity_drift() {
     let state_root = temporary_root("boundary-state");
     let toolchain = temporary_root("boundary-toolchain");

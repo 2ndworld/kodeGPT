@@ -70,7 +70,6 @@ pub(crate) struct ExecutableRootIdentity {
 pub(crate) struct ExplicitExecutableMount {
     pub(crate) root_fd: OwnedFd,
     pub(crate) root_canonical_path: PathBuf,
-    pub(crate) relative_program: PathBuf,
 }
 
 #[derive(Debug)]
@@ -174,15 +173,13 @@ impl TrustedExecutable {
             .identity
             .canonical_path
             .strip_prefix(&root.canonical_path)
-            .map_err(|_| TrustedExecutableError::IdentityChanged)?
-            .to_path_buf();
+            .map_err(|_| TrustedExecutableError::IdentityChanged)?;
         if relative_program.as_os_str().is_empty() {
             return Err(TrustedExecutableError::IdentityChanged);
         }
         Ok(Some(ExplicitExecutableMount {
             root_fd: OwnedFd::from(root_file),
             root_canonical_path: root.canonical_path.clone(),
-            relative_program,
         }))
     }
 

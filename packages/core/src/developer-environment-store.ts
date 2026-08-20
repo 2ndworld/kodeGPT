@@ -541,6 +541,7 @@ function validateExecutableDirs(values: string[]): string[] {
       value.length === 0 ||
       value.length > 4096 ||
       value.includes("\0") ||
+      value.includes(delimiter) ||
       isAbsolute(value) ||
       value.split(/[\\/]/).some((component) => component === "..")
     ) {

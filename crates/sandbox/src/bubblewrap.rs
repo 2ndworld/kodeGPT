@@ -14,6 +14,9 @@ use std::time::Duration;
 use rustix::io::{FdFlags, fcntl_setfd};
 
 use crate::PROCESS_SPAWN_LOCK;
+use crate::developer_environment::{
+    DeveloperEnvironmentError, DeveloperEnvironmentMount, DeveloperEnvironmentRegistry,
+};
 use crate::executable::{
     ExplicitExecutableMount, SANDBOX_MARKER_ENV, TrustedExecutable, TrustedExecutableError,
     open_explicit_directory_from_env, resolve_bubblewrap,
@@ -82,6 +85,7 @@ impl fmt::Debug for PrivateGitConfig {
 pub struct SandboxLaunchSpec {
     pub program: TrustedExecutable,
     pub auxiliary_programs: Vec<TrustedExecutable>,
+    pub developer_environment: Option<DeveloperEnvironmentRegistry>,
     pub args: Vec<OsString>,
     pub env: BTreeMap<String, String>,
     pub cwd: PathBuf,
@@ -99,6 +103,7 @@ impl SandboxLaunchSpec {
         Self {
             program,
             auxiliary_programs: Vec::new(),
+            developer_environment: None,
             args: Vec::new(),
             env: BTreeMap::new(),
             cwd: PathBuf::from(CHILD_WORKSPACE),
@@ -127,6 +132,7 @@ impl SandboxLaunchSpec {
 #[derive(Debug)]
 pub enum SandboxError {
     TrustedExecutable(TrustedExecutableError),
+    DeveloperEnvironment(DeveloperEnvironmentError),
     Io(std::io::Error),
     InvalidCwd,
     InvalidPrivateGitConfig,
@@ -140,6 +146,7 @@ impl fmt::Display for SandboxError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TrustedExecutable(error) => write!(formatter, "{error}"),
+            Self::DeveloperEnvironment(error) => write!(formatter, "{error}"),
             Self::Io(error) => write!(formatter, "sandbox I/O failed: {error}"),
             Self::InvalidCwd => formatter.write_str("sandbox cwd must remain beneath /workspace"),
             Self::InvalidPrivateGitConfig => {
@@ -168,6 +175,33 @@ impl From<std::io::Error> for SandboxError {
 impl From<TrustedExecutableError> for SandboxError {
     fn from(error: TrustedExecutableError) -> Self {
         Self::TrustedExecutable(error)
+    }
+}
+
+impl From<DeveloperEnvironmentError> for SandboxError {
+    fn from(error: DeveloperEnvironmentError) -> Self {
+        Self::DeveloperEnvironment(error)
+    }
+}
+
+enum ToolMountRef<'a> {
+    Developer(&'a DeveloperEnvironmentMount),
+    Explicit(&'a ExplicitExecutableMount),
+}
+
+impl ToolMountRef<'_> {
+    fn root_fd(&self) -> &OwnedFd {
+        match self {
+            Self::Developer(mount) => &mount.root_fd,
+            Self::Explicit(mount) => &mount.root_fd,
+        }
+    }
+
+    fn root_canonical_path(&self) -> &Path {
+        match self {
+            Self::Developer(mount) => &mount.root_canonical_path,
+            Self::Explicit(mount) => &mount.root_canonical_path,
+        }
     }
 }
 
@@ -252,6 +286,17 @@ impl BubblewrapProvider {
                 .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
         }
 
+        let developer_mounts = spec
+            .developer_environment
+            .as_ref()
+            .map(DeveloperEnvironmentRegistry::open_mounts)
+            .transpose()?
+            .unwrap_or_default();
+        for mount in &developer_mounts {
+            fcntl_setfd(&mount.root_fd, FdFlags::empty())
+                .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        }
+
         let mut explicit_mounts = Vec::new();
         for program in std::iter::once(&spec.program).chain(spec.auxiliary_programs.iter()) {
             let Some(mount) = program.open_explicit_mount()? else {
@@ -316,6 +361,7 @@ impl BubblewrapProvider {
                 .map(AsRawFd::as_raw_fd),
             Some(status_writer.as_raw_fd()),
             linked_git_metadata.as_ref(),
+            &developer_mounts,
             &explicit_mounts,
             corepack_mount.as_ref().map(AsRawFd::as_raw_fd),
             resolver_mount.as_ref().map(AsRawFd::as_raw_fd),
@@ -401,6 +447,7 @@ impl BubblewrapProvider {
         workspace_alias_fd: Option<i32>,
         status_fd: Option<i32>,
         linked_git_metadata: Option<&LinkedWorktreeGitMetadata>,
+        developer_mounts: &[DeveloperEnvironmentMount],
         explicit_mounts: &[ExplicitExecutableMount],
         corepack_fd: Option<i32>,
         resolver_fd: Option<i32>,
@@ -516,13 +563,27 @@ impl BubblewrapProvider {
                 .arg(&metadata.common_dir_path);
         }
 
-        if !explicit_mounts.is_empty() {
+        let mut tool_mounts = developer_mounts
+            .iter()
+            .map(ToolMountRef::Developer)
+            .collect::<Vec<_>>();
+        for explicit in explicit_mounts {
+            if tool_mounts
+                .iter()
+                .any(|mount| mount.root_canonical_path() == explicit.root_canonical_path)
+            {
+                continue;
+            }
+            tool_mounts.push(ToolMountRef::Explicit(explicit));
+        }
+
+        if !tool_mounts.is_empty() {
             command.args(["--dir", "/opt"]);
         }
-        for (index, mount) in explicit_mounts.iter().enumerate() {
+        for (index, mount) in tool_mounts.iter().enumerate() {
             command.args([
                 "--ro-bind-fd",
-                &mount.root_fd.as_raw_fd().to_string(),
+                &mount.root_fd().as_raw_fd().to_string(),
                 &child_tool_root(index),
             ]);
         }
@@ -558,17 +619,27 @@ impl BubblewrapProvider {
             command.arg(bind_flag).arg(alias_fd.to_string()).arg(target);
         }
 
-        let child_path = if explicit_mounts.is_empty() {
-            FIXED_PATH.to_owned()
-        } else {
-            explicit_mounts
-                .iter()
-                .enumerate()
-                .map(|(index, _)| format!("{}/bin", child_tool_root(index)))
-                .chain(std::iter::once(FIXED_PATH.to_owned()))
-                .collect::<Vec<_>>()
-                .join(":")
-        };
+        let mut child_path_entries = Vec::new();
+        for (index, mount) in tool_mounts.iter().enumerate() {
+            let child_root = child_tool_root(index);
+            match mount {
+                ToolMountRef::Developer(mount) => {
+                    for executable_dir in &mount.executable_dirs {
+                        if executable_dir == Path::new(".") {
+                            child_path_entries.push(child_root.clone());
+                        } else {
+                            child_path_entries
+                                .push(format!("{child_root}/{}", executable_dir.display()));
+                        }
+                    }
+                }
+                ToolMountRef::Explicit(_) => {
+                    child_path_entries.push(format!("{child_root}/bin"));
+                }
+            }
+        }
+        child_path_entries.push(FIXED_PATH.to_owned());
+        let child_path = child_path_entries.join(":");
         command.args([
             "--setenv",
             "HOME",
@@ -591,14 +662,20 @@ impl BubblewrapProvider {
         }
 
         command.arg("--chdir").arg(&spec.cwd);
-        let child_program = explicit_mounts
-            .first()
-            .filter(|mount| {
-                spec.program
+        let child_program = tool_mounts
+            .iter()
+            .enumerate()
+            .find_map(|(index, mount)| {
+                let relative = spec
+                    .program
                     .canonical_path()
-                    .starts_with(&mount.root_canonical_path)
+                    .strip_prefix(mount.root_canonical_path())
+                    .ok()?;
+                if relative.as_os_str().is_empty() {
+                    return None;
+                }
+                Some(Path::new(&child_tool_root(index)).join(relative))
             })
-            .map(|mount| Path::new(&child_tool_root(0)).join(&mount.relative_program))
             .unwrap_or_else(|| spec.program.canonical_path().to_path_buf());
         command.arg("--").arg(child_program).args(&spec.args);
         Ok(command)
@@ -742,7 +819,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, File};
     use std::os::fd::OwnedFd;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -752,7 +829,9 @@ mod tests {
         WorkspaceAccess, WorkspaceAlias, cwd_is_beneath_workspace,
     };
     use crate::executable::{SANDBOX_MARKER_ENV, resolve_explicit_root_executable};
-    use crate::resolve_trusted_executable;
+    use crate::{
+        DeveloperEnvironmentRegistry, resolve_dynamic_executable, resolve_trusted_executable,
+    };
 
     fn temporary_root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -765,6 +844,47 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("temporary root");
         root
+    }
+
+    fn device_identity(path: &Path) -> serde_json::Value {
+        let metadata = fs::metadata(path).expect("developer root metadata");
+        let device = metadata.dev();
+        let major =
+            ((device & 0x0000_0000_000f_ff00) >> 8) | ((device & 0xffff_f000_0000_0000) >> 32);
+        let minor = (device & 0xff) | ((device & 0x0000_0fff_fff0_0000) >> 12);
+        serde_json::json!({
+            "deviceMajor": major,
+            "deviceMinor": minor,
+            "inode": metadata.ino().to_string()
+        })
+    }
+
+    fn write_developer_registry(state_root: &Path, entries: Vec<(&Path, &[&str])>) {
+        let directory = state_root.join("developer-environments");
+        fs::create_dir_all(&directory).expect("developer registry directory");
+        let values = entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (root, executable_dirs))| {
+                serde_json::json!({
+                    "id": format!("denv_{:032x}", index + 1),
+                    "label": format!("fixture-{}", index + 1),
+                    "source": "operator",
+                    "canonicalRoot": fs::canonicalize(root).expect("canonical developer root"),
+                    "executableDirs": executable_dirs,
+                    "identity": device_identity(root)
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            directory.join("registry.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": 1,
+                "entries": values
+            }))
+            .expect("developer registry JSON"),
+        )
+        .expect("developer registry written");
     }
 
     fn git(root: &Path, args: &[&str]) {
@@ -886,7 +1006,7 @@ mod tests {
         spec.set_private_git_config("fixture-private-config\n".to_owned())
             .expect("bounded private Git config");
         let command = provider
-            .build_command(3, None, None, None, &[], None, None, None, &spec)
+            .build_command(3, None, None, None, &[], &[], None, None, None, &spec)
             .expect("private-config command construction");
         let args = command
             .get_args()
@@ -915,7 +1035,7 @@ mod tests {
         spec.workspace_access = WorkspaceAccess::ReadWrite;
         spec.workspace_alias = WorkspaceAlias::Canonical(PathBuf::from("/home/example/repo"));
         let command = provider
-            .build_command(17, Some(18), None, None, &[], None, None, None, &spec)
+            .build_command(17, Some(18), None, None, &[], &[], None, None, None, &spec)
             .expect("canonical workspace alias command construction");
         let args = command
             .get_args()
@@ -993,7 +1113,7 @@ mod tests {
         );
         spec.network = SandboxNetworkMode::Unrestricted;
         let command = provider
-            .build_command(3, None, None, None, &[], None, Some(9), None, &spec)
+            .build_command(3, None, None, None, &[], &[], None, Some(9), None, &spec)
             .expect("unrestricted command construction");
         let args = command
             .get_args()
@@ -1016,6 +1136,75 @@ mod tests {
         assert!(!args.windows(3).any(|window| {
             matches!(window, [flag, source, target] if flag == "--ro-bind" && source == "/run" && target == "/run")
         }));
+    }
+
+    #[test]
+    fn developer_environment_mounts_are_read_only_ordered_and_drive_program_translation() {
+        let state_root = temporary_root("developer-command-state");
+        let first = temporary_root("developer-command-first");
+        let second = temporary_root("developer-command-second");
+        let second_bin = second.join("bin");
+        fs::create_dir_all(&second_bin).expect("second developer bin");
+        let fixture = second_bin.join("fixture-tool");
+        fs::write(&fixture, b"#!/bin/sh\nexit 0\n").expect("fixture executable");
+        fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755))
+            .expect("fixture executable mode");
+        write_developer_registry(
+            &state_root,
+            vec![(first.as_path(), &["."]), (second.as_path(), &["bin"])],
+        );
+
+        let registry = DeveloperEnvironmentRegistry::load(&state_root).expect("developer registry");
+        let program = resolve_dynamic_executable(&state_root, "fixture-tool")
+            .expect("registered fixture resolves");
+        let mut spec = SandboxLaunchSpec::new(program);
+        spec.developer_environment = Some(registry.clone());
+        let developer_mounts = registry.open_mounts().expect("developer mounts open");
+        let provider = BubblewrapProvider::discover().expect("trusted Bubblewrap prerequisite");
+        let command = provider
+            .build_command(
+                3,
+                None,
+                None,
+                None,
+                &developer_mounts,
+                &[],
+                None,
+                None,
+                None,
+                &spec,
+            )
+            .expect("developer environment command construction");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        for target in ["/opt/kodegpt-toolchain", "/opt/kodegpt-toolchain-1"] {
+            assert!(
+                args.windows(3)
+                    .any(|window| { window[0] == "--ro-bind-fd" && window[2] == target })
+            );
+        }
+        assert!(args.windows(3).any(|window| {
+            window == [
+                "--setenv",
+                "PATH",
+                "/opt/kodegpt-toolchain:/opt/kodegpt-toolchain-1/bin:/usr/local/bin:/usr/bin:/bin",
+            ]
+        }));
+        let separator = args
+            .iter()
+            .position(|arg| arg == "--")
+            .expect("program separator");
+        assert_eq!(
+            args.get(separator + 1).map(String::as_str),
+            Some("/opt/kodegpt-toolchain-1/bin/fixture-tool")
+        );
+
+        fs::remove_dir_all(state_root).expect("state cleanup");
+        fs::remove_dir_all(first).expect("first root cleanup");
+        fs::remove_dir_all(second).expect("second root cleanup");
     }
 
     #[test]
@@ -1247,7 +1436,7 @@ mod tests {
         for network in [SandboxNetworkMode::Localhost, SandboxNetworkMode::Allowlist] {
             spec.network = network;
             assert!(matches!(
-                provider.build_command(3, None, None, None, &[], None, None, None, &spec),
+                provider.build_command(3, None, None, None, &[], &[], None, None, None, &spec),
                 Err(SandboxError::NetworkPolicyUnavailable)
             ));
         }
