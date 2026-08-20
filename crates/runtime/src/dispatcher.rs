@@ -18,7 +18,7 @@ use kodegpt_protocol::{
     WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceRegisterParams,
     WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
 };
-use kodegpt_sandbox::{BubblewrapProvider, resolve_trusted_executable};
+use kodegpt_sandbox::BubblewrapProvider;
 use kodegpt_workspace_io::{
     FilesystemIdentity, PatchFileAction, SEARCH_MAX_MATCHES, SKILL_SOURCE_TREE_MAX_ENTRIES,
     SkillSourceRegistry, SkillSourceRegistryError, TREE_MAX_ENTRIES, TraversalScope,
@@ -48,7 +48,7 @@ use crate::git_history::{
 };
 use crate::process::{
     ProcessError, ProcessLaunchRequest, ProcessOperationRegistry, next_process_operation_id,
-    run_process,
+    process_executable_available, run_process,
 };
 use crate::rpc::{error_response, error_response_with_data_code, parse_request, success_response};
 use crate::spool::{RawSpoolError, RawSpoolStore};
@@ -2955,16 +2955,18 @@ async fn dispatch_process_inspect_executable(
     params: ProcessInspectExecutableParams,
 ) -> Value {
     let capability_id = params.capability_id.clone();
-    let registry_ready = match registry.lock() {
-        Ok(registry) => registry.clone_ready_policy(&capability_id),
+    let policy = match registry.lock() {
+        Ok(registry) => match registry.clone_ready_policy(&capability_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let (code, message) = workspace_registry_error_contract(&error);
+                return error_response(Some(request_id), code, message);
+            }
+        },
         Err(_) => {
             return error_response(Some(request_id), -32026, "WORKSPACE_REGISTRY_UNAVAILABLE");
         }
     };
-    if let Err(error) = registry_ready {
-        let (code, message) = workspace_registry_error_contract(&error);
-        return error_response(Some(request_id), code, message);
-    }
 
     let operation_suffix = request_id.strip_prefix("req_").unwrap_or("redacted");
     let context = AuditContext {
@@ -2984,7 +2986,8 @@ async fn dispatch_process_inspect_executable(
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
     }
 
-    let executable_available = resolve_trusted_executable(&params.logical_executable).is_ok();
+    let executable_available =
+        process_executable_available(audit.state_root(), &policy, &params.logical_executable);
     let sandbox_available = BubblewrapProvider::discover().is_ok();
     if audit.outcome(&context, AuditOutcome::Success).is_err() {
         return error_response(Some(request_id), -32010, "AUDIT_UNAVAILABLE");
@@ -3515,6 +3518,7 @@ fn audited_skill_source_failure(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::Command as TestCommand;
     use std::sync::Arc;
@@ -3545,6 +3549,36 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("dispatcher canonical fixture root");
         root
+    }
+
+    fn write_developer_registry(state_root: &Path, tool_root: &Path, executable_dirs: &[&str]) {
+        let metadata = fs::metadata(tool_root).expect("developer root metadata");
+        let device = metadata.dev();
+        let major =
+            ((device & 0x0000_0000_000f_ff00) >> 8) | ((device & 0xffff_f000_0000_0000) >> 32);
+        let minor = (device & 0xff) | ((device & 0x0000_0fff_fff0_0000) >> 12);
+        let directory = state_root.join("developer-environments");
+        fs::create_dir_all(&directory).expect("developer registry directory");
+        fs::write(
+            directory.join("registry.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": 1,
+                "entries": [{
+                    "id": "denv_00000000000000000000000000000001",
+                    "label": "dispatcher runtime fixture",
+                    "source": "operator",
+                    "canonicalRoot": fs::canonicalize(tool_root).expect("canonical developer root"),
+                    "executableDirs": executable_dirs,
+                    "identity": {
+                        "deviceMajor": major,
+                        "deviceMinor": minor,
+                        "inode": metadata.ino().to_string()
+                    }
+                }]
+            }))
+            .expect("developer registry JSON"),
+        )
+        .expect("developer registry written");
     }
 
     fn request(id: &str, method: &str, params: Value) -> Value {
@@ -4113,6 +4147,7 @@ mod tests {
             "name": "observe",
             "allowWrite": false,
             "allowProcess": false,
+            "allowDynamicExecutables": false,
             "network": "deny",
             "allowedExecutableNames": [],
             "inheritEnv": false,
@@ -4125,6 +4160,7 @@ mod tests {
             "name": "develop",
             "allowWrite": allow_write,
             "allowProcess": true,
+            "allowDynamicExecutables": false,
             "network": "deny",
             "allowedExecutableNames": ["node", "python3"],
             "inheritEnv": false,
@@ -4137,6 +4173,7 @@ mod tests {
             "name": "trusted",
             "allowWrite": true,
             "allowProcess": true,
+            "allowDynamicExecutables": true,
             "network": "unrestricted",
             "allowedExecutableNames": ["git", "node", "python3"],
             "inheritEnv": false,
@@ -4544,6 +4581,62 @@ mod tests {
         fs::remove_dir_all(denied_workspace).expect("denied workspace cleanup");
         fs::remove_dir_all(trusted_workspace).expect("trusted workspace cleanup");
         fs::remove_dir_all(audit_root).expect("audit root cleanup");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn process_inspect_executable_uses_dynamic_registry_without_exposing_paths() {
+        let (audit, audit_root) = audit_sink("process-inspect-dynamic-executable");
+        let workspace = audit_root.with_extension("process-inspect-dynamic-workspace");
+        let tool_root = canonical_fixture_root("process-inspect-dynamic-tool");
+        let bin = tool_root.join("bin");
+        fs::create_dir_all(&workspace).expect("workspace created");
+        fs::create_dir_all(&bin).expect("developer bin created");
+        let fixture = bin.join("fixture-tool");
+        fs::write(&fixture, b"#!/bin/sh\nexit 0\n").expect("developer fixture written");
+        fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755))
+            .expect("developer fixture executable mode");
+        write_developer_registry(&audit_root, &tool_root, &["bin"]);
+
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (response_tx, mut response_rx) = mpsc::unbounded_channel();
+        let dispatcher = tokio::spawn(run_dispatcher(
+            request_rx,
+            response_tx,
+            false,
+            Arc::clone(&audit),
+        ));
+        let capability_id = register_ready_workspace(
+            &request_tx,
+            &mut response_rx,
+            &workspace,
+            trusted_policy(),
+            "inspect_dynamic_executable",
+        )
+        .await;
+
+        let response = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_process_inspect_dynamic_executable",
+            "process.inspect_executable",
+            json!({
+                "capabilityId": capability_id,
+                "logicalExecutable": "fixture-tool"
+            }),
+        )
+        .await;
+        assert_eq!(response["result"]["schemaVersion"], 1);
+        assert_eq!(response["result"]["executableAvailable"], true);
+        assert!(response["result"]["sandboxAvailable"].is_boolean());
+        let serialized = response["result"].to_string();
+        assert!(!serialized.contains(tool_root.to_string_lossy().as_ref()));
+        assert!(!serialized.contains("canonicalPath"));
+
+        drop(request_tx);
+        dispatcher.await.expect("dispatcher joins");
+        fs::remove_dir_all(workspace).expect("workspace removed");
+        fs::remove_dir_all(tool_root).expect("tool root removed");
+        fs::remove_dir_all(audit_root).expect("audit root removed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
