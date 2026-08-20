@@ -29,6 +29,7 @@ import {
 } from "./contracts.js";
 import { buildSkillCapabilityPlan } from "./capability-plan.js";
 import { analyzeSkillCompatibility } from "./compatibility.js";
+import { buildSkillRequirementGraph } from "./requirement-graph.js";
 import { SkillError } from "./errors.js";
 import { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 import { SkillDocumentParseError, parseSkillDocument } from "./parser.js";
@@ -633,6 +634,7 @@ function inspectionFromBundle(bundle: BuiltBundle, pinned: boolean): SkillCatalo
       pinned
     },
     capabilityPlan: buildSkillCapabilityPlan(bundle.parsed, descriptor.compatibility),
+    requirementGraph: buildSkillRequirementGraph(bundle.parsed, descriptor.compatibility),
     frontmatter: frontmatterFrom(bundle.parsed),
     resources: bundle.inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: Buffer.byteLength(bundle.parsed.instructions, "utf8"),
@@ -655,6 +657,7 @@ function inspectionFromPinned(pinned: SkillPinnedRawLoad): SkillCatalogInspectio
   return {
     skill,
     capabilityPlan: buildSkillCapabilityPlan(parsed, skill.compatibility),
+    requirementGraph: buildSkillRequirementGraph(parsed, skill.compatibility),
     frontmatter: frontmatterFrom(parsed),
     resources,
     instructionBytes: Buffer.byteLength(parsed.instructions, "utf8"),

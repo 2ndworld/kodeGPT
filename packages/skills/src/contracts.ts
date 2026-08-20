@@ -1,4 +1,4 @@
-import type { NativeCapabilityId } from "@kodegpt/capabilities";
+import type { NativeCapabilityId, PublicActionId } from "@kodegpt/capabilities";
 
 export const SKILL_STATE_SCHEMA_VERSION = 1 as const;
 export const MAX_SOURCES = 16;
@@ -172,6 +172,7 @@ export interface SkillCatalogRawLoad extends SkillLiveRawLoad {
 export interface SkillCatalogInspection {
   skill: SkillCatalogEntry;
   capabilityPlan: SkillCapabilityPlan;
+  requirementGraph: SkillRequirementGraph;
   frontmatter: SkillValidatedFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
@@ -198,6 +199,7 @@ export interface SkillInspectResult {
   schemaVersion: typeof SKILL_STATE_SCHEMA_VERSION;
   skill: SkillCatalogEntry;
   capabilityPlan: SkillCapabilityPlan;
+  requirementGraph: SkillRequirementGraph;
   frontmatter: SkillInspectFrontmatter;
   resources: SkillResourceInventoryEntry[];
   instructionBytes: number;
@@ -255,6 +257,44 @@ export interface SkillCompatibilityReport {
   requiredProviders: string[];
   reasons: string[];
   analysisBasis: SkillCompatibilityAnalysisBasis;
+}
+
+export type PublicActionRequirement =
+  | {
+      readonly id: PublicActionId;
+      readonly known: true;
+      readonly source: "declared" | "static" | "declared+static";
+    }
+  | {
+      readonly id: string;
+      readonly known: false;
+      readonly source: "declared";
+    };
+
+export interface SkillRequirementStage {
+  readonly id: string;
+  readonly description?: string;
+  readonly classification: SkillCompatibility;
+  readonly actions: readonly PublicActionRequirement[];
+  readonly missingActions: readonly string[];
+  readonly requiredCapabilities: readonly string[];
+  readonly requiredProviders: readonly string[];
+}
+
+export type SkillRequirementGraphTruncationReason = "CORE_ACTION_LIMIT";
+
+export interface SkillRequirementGraph {
+  readonly schemaVersion: 1;
+  readonly core: {
+    readonly classification: SkillCompatibility;
+    readonly actions: readonly PublicActionRequirement[];
+    readonly inferredActions: readonly PublicActionId[];
+    readonly missingActions: readonly string[];
+  };
+  readonly stages: readonly SkillRequirementStage[];
+  readonly analysisBasis: SkillCompatibilityAnalysisBasis;
+  readonly truncated: boolean;
+  readonly truncationReasons: readonly SkillRequirementGraphTruncationReason[];
 }
 
 export interface SkillCapabilityGuidanceStep {

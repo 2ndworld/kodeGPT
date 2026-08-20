@@ -205,6 +205,9 @@ describe("SkillCatalog live discovery", () => {
       externalRequirements: [],
       blockedSemantics: []
     });
+    expect(inspected.requirementGraph.schemaVersion).toBe(1);
+    expect(inspected.requirementGraph.core.actions.length).toBeGreaterThan(0);
+    expect(inspected.requirementGraph.stages).toEqual([]);
     expect(inspected.capabilityPlan.nativeCapabilities).toEqual(
       expect.arrayContaining([
         "context.build",

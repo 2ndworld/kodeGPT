@@ -15,6 +15,7 @@ import {
   type SkillListResult,
   type SkillListTruncationReason,
   type SkillLoadResult,
+  type SkillRequirementGraph,
   type SkillLoadTextResource
 } from "./contracts.js";
 import { SkillError } from "./errors.js";
@@ -109,10 +110,31 @@ function publicInspection(inspection: SkillCatalogInspection): SkillInspectResul
       guidance: inspection.capabilityPlan.guidance.map((step) => ({ ...step })),
       truncationReasons: [...inspection.capabilityPlan.truncationReasons]
     },
+    requirementGraph: cloneRequirementGraph(inspection.requirementGraph),
     frontmatter: publicFrontmatter(inspection.frontmatter),
     resources: inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: inspection.instructionBytes,
     bundleBytes: inspection.bundleBytes
+  };
+}
+
+function cloneRequirementGraph(graph: SkillRequirementGraph): SkillRequirementGraph {
+  return {
+    ...graph,
+    core: {
+      ...graph.core,
+      actions: graph.core.actions.map((action) => ({ ...action })),
+      inferredActions: [...graph.core.inferredActions],
+      missingActions: [...graph.core.missingActions]
+    },
+    stages: graph.stages.map((stage) => ({
+      ...stage,
+      actions: stage.actions.map((action) => ({ ...action })),
+      missingActions: [...stage.missingActions],
+      requiredCapabilities: [...stage.requiredCapabilities],
+      requiredProviders: [...stage.requiredProviders]
+    })),
+    truncationReasons: [...graph.truncationReasons]
   };
 }
 

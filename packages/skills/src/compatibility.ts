@@ -8,9 +8,8 @@ import type {
   SkillCompatibilityAnalysisBasis,
   SkillCompatibilityReport
 } from "./contracts.js";
+import { readKodegptDeclaredRequirements } from "./declared-requirements.js";
 
-const MAX_DECLARED_REQUIREMENTS = 64;
-const MAX_REQUIREMENT_BYTES = 256;
 const NATIVE_CAPABILITIES = new Set<string>(NATIVE_CAPABILITY_IDS);
 const INLINE_CODE_PATTERN = /`([^`\r\n]{1,512})`/g;
 const INLINE_COMMAND_PREFIX_PATTERN = /(?:\b(?:run|execute|invoke|launch)\s*|\b(?:command|cli)\s*:\s*)$/i;
@@ -21,20 +20,12 @@ const CODEX_PROSE_COMMAND_PATTERN = /\b(?:run|use|invoke|execute|call)\s+codex(?
 const SUBAGENT_SESSION_PATTERN = /\bsub[- ]?agent\b[^\n.]{0,80}\bsession\b|\bsession\b[^\n.]{0,80}\bsub[- ]?agent\b/i;
 const SUBAGENT_REQUIREMENT_PATTERN = /\b(?:use|spawn|create|start)\s+(?:an?\s+)?sub[- ]?agent\b|\bdelegate\b[^\n.]{0,80}\bto\s+(?:an?\s+)?sub[- ]?agent\b/i;
 
-interface DeclaredRequirements {
-  present: boolean;
-  valid: boolean;
-  capabilities: string[];
-  providers: string[];
-  unsupported: string[];
-}
-
 export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillCompatibilityReport {
   const requiredCapabilities = new Set<string>();
   const missingCapabilities = new Set<string>();
   const requiredProviders = new Set<string>();
   const reasons = new Set<string>();
-  const declared = readDeclaredRequirements(skill.metadata);
+  const declared = readKodegptDeclaredRequirements(skill.metadata);
   let hasStaticFinding = false;
   let unsupported = false;
   let partial = false;
@@ -154,75 +145,6 @@ export function analyzeSkillCompatibility(skill: ParsedSkillDocument): SkillComp
   };
 }
 
-function readDeclaredRequirements(metadata: Record<string, unknown> | undefined): DeclaredRequirements {
-  if (metadata === undefined || !Object.hasOwn(metadata, "kodegpt")) {
-    return { present: false, valid: true, capabilities: [], providers: [], unsupported: [] };
-  }
-  if (!isRecord(metadata.kodegpt)) {
-    return { present: true, valid: false, capabilities: [], providers: [], unsupported: [] };
-  }
-
-  const kodegpt = metadata.kodegpt;
-  let valid = true;
-  let capabilities: string[] = [];
-  let providers: string[] = [];
-  let unsupported: string[] = [];
-
-  if (kodegpt.requires !== undefined) {
-    if (!isRecord(kodegpt.requires)) {
-      valid = false;
-    } else {
-      const parsedCapabilities = stringArray(kodegpt.requires.capabilities);
-      const parsedProviders = stringArray(kodegpt.requires.providers);
-      if (kodegpt.requires.capabilities !== undefined && parsedCapabilities === undefined) valid = false;
-      if (kodegpt.requires.providers !== undefined && parsedProviders === undefined) valid = false;
-      capabilities = parsedCapabilities ?? [];
-      providers = parsedProviders ?? [];
-    }
-  }
-
-  if (kodegpt.providers !== undefined) {
-    const legacyProviders = stringArray(kodegpt.providers);
-    if (legacyProviders === undefined) {
-      valid = false;
-    } else {
-      providers.push(...legacyProviders);
-    }
-  }
-  if (kodegpt.unsupported !== undefined) {
-    const parsedUnsupported = stringArray(kodegpt.unsupported);
-    if (parsedUnsupported === undefined) {
-      valid = false;
-    } else {
-      unsupported = parsedUnsupported;
-    }
-  }
-
-  return {
-    present: true,
-    valid,
-    capabilities: uniqueStrings(capabilities),
-    providers: uniqueStrings(providers),
-    unsupported: uniqueStrings(unsupported)
-  };
-}
-
-function stringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value) || value.length > MAX_DECLARED_REQUIREMENTS) return undefined;
-  const result: string[] = [];
-  for (const item of value) {
-    if (
-      typeof item !== "string" ||
-      item.length === 0 ||
-      Buffer.byteLength(item, "utf8") > MAX_REQUIREMENT_BYTES
-    ) {
-      return undefined;
-    }
-    result.push(item);
-  }
-  return result;
-}
-
 function containsCapabilityReference(instructions: string, capability: string): boolean {
   const escaped = capability.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^a-zA-Z0-9_.-])${escaped}([^a-zA-Z0-9_.-]|$)`, "u").test(instructions);
@@ -289,18 +211,10 @@ function analysisBasis(declared: boolean, staticFinding: boolean): SkillCompatib
   return "static";
 }
 
-function uniqueStrings(values: string[]): string[] {
-  return sortedUnique(new Set(values));
-}
-
 function sortedUnique(values: Set<string>): string[] {
   return [...values].sort(compareUtf8);
 }
 
 function compareUtf8(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

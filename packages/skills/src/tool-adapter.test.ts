@@ -139,6 +139,34 @@ describe("SkillCatalogToolAdapter", () => {
   });
 
   it("returns provenance-safe inspect metadata without raw metadata values or host paths", async () => {
+    const requirementGraph = {
+      schemaVersion: 1 as const,
+      core: {
+        classification: "NATIVE" as const,
+        actions: [{ id: "file.read" as const, known: true as const, source: "declared" as const }],
+        inferredActions: [],
+        missingActions: []
+      },
+      stages: [
+        {
+          id: "visual",
+          classification: "NATIVE" as const,
+          actions: [
+            {
+              id: "visual.captureMatrix" as const,
+              known: true as const,
+              source: "declared" as const
+            }
+          ],
+          missingActions: [],
+          requiredCapabilities: [],
+          requiredProviders: []
+        }
+      ],
+      analysisBasis: "declared" as const,
+      truncated: false,
+      truncationReasons: []
+    };
     const adapter = createSkillCatalogToolAdapter({
       inspect: async () => ({
         skill: entry(),
@@ -153,6 +181,7 @@ describe("SkillCatalogToolAdapter", () => {
           truncated: false,
           truncationReasons: []
         },
+        requirementGraph,
         frontmatter: {
           name: "portable",
           description: "Portable skill",
@@ -193,9 +222,21 @@ describe("SkillCatalogToolAdapter", () => {
         truncated: false,
         truncationReasons: []
       },
+      requirementGraph: {
+        schemaVersion: 1,
+        core: { classification: "NATIVE", missingActions: [] },
+        stages: [{ id: "visual", classification: "NATIVE" }],
+        analysisBasis: "declared",
+        truncated: false,
+        truncationReasons: []
+      },
       instructionBytes: 27,
       bundleBytes: 128
     });
+    expect(result.requirementGraph).not.toBe(requirementGraph);
+    expect(result.requirementGraph.core.actions).not.toBe(requirementGraph.core.actions);
+    expect(result.requirementGraph.stages).not.toBe(requirementGraph.stages);
+    expect(result.requirementGraph.stages[0]?.actions).not.toBe(requirementGraph.stages[0]?.actions);
     expect(result.frontmatter).not.toHaveProperty("metadata");
     expect(JSON.stringify(result)).not.toContain("/private/skill-source");
   });
