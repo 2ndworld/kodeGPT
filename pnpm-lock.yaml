@@ -42,9 +42,6 @@ importers:
       '@kodegpt/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@kodegpt/extensions':
-        specifier: workspace:*
-        version: link:../../packages/extensions
       '@kodegpt/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
@@ -104,8 +101,6 @@ importers:
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
-
-  packages/extensions: {}
 
   packages/mcp-server:
     dependencies:

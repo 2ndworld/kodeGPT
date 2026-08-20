@@ -139,10 +139,6 @@ function baseDependencies(events: string[]) {
       events.push("connector-verifier");
       return { authenticate: async () => true };
     },
-    prepareExtensionRegistry: async () => {
-      events.push("extensions");
-      return { listEnabled: () => [] };
-    },
     startKernel: async () => {
       events.push("kernel.start");
       return kernel;
@@ -211,7 +207,6 @@ describe("production skill catalog lifecycle", () => {
       "state-root",
       "audit",
       "connector-verifier",
-      "extensions",
       "kernel.start",
       "kernel.hello",
       "trust-profile",

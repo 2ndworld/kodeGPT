@@ -21,7 +21,6 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
-  { name: "extension.list", required: [] },
   {
     name: "file.edit",
     required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
@@ -71,6 +70,7 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "verify.list", required: ["workspaceId"] },
   { name: "verify.run", required: ["workspaceId", "recipeId"] },
   { name: "workspace.close", required: ["workspaceId"] },
+  { name: "workspace.checkpoint", required: ["workspaceId", "operation"] },
   { name: "workspace.info", required: ["workspaceId"] },
   { name: "workspace.inspect", required: ["workspaceId"] },
   { name: "workspace.list", required: [] },

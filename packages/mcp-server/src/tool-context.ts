@@ -68,7 +68,6 @@ import type {
   WorkspaceInfo,
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
-import type { ExtensionRegistry, PublicExtensionMetadata } from "../../extensions/src/index.js";
 import {
   resolveSkillCapabilityPlan,
   type SkillCatalogToolAdapter,
@@ -204,10 +203,6 @@ export interface ArtifactToolContext {
   read(input: { uri: string; offset?: number; maxBytes?: number }): MaybePromise<ArtifactReadResult>;
 }
 
-export interface ExtensionToolContext {
-  list(input: { limit?: number }): MaybePromise<PublicExtensionMetadata[]>;
-}
-
 export interface ProfileToolContext {
   current(input: { workspaceId: string }): MaybePromise<ProfileCurrentResult>;
   inspect(input: { name: "observe" | "develop" | "trusted" }): MaybePromise<JsonObject>;
@@ -276,7 +271,6 @@ export interface KodegptToolContext {
   browser: BrowserToolContext;
   visual: VisualToolContext;
   artifact: ArtifactToolContext;
-  extension: ExtensionToolContext;
   profile: ProfileToolContext;
   system: SystemToolContext;
   code: CodeToolContext;
@@ -315,7 +309,6 @@ export type WorkspaceManagerToolAdapter = Pick<
 
 export type ExecutionManagerToolAdapter = Pick<ExecutionManager, "run" | "status" | "cancel">;
 export type ArtifactStoreToolAdapter = Pick<ArtifactStore, "read">;
-export type ExtensionRegistryToolAdapter = Pick<ExtensionRegistry, "listEnabled">;
 
 export interface NativeCapabilityToolAdapter {
   inspectWorkspace(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
@@ -360,7 +353,6 @@ export function createKodegptToolContext(options: {
   browser?: BrowserToolContext;
   visual?: VisualToolContext;
   artifactStore: ArtifactStoreToolAdapter;
-  extensionRegistry: ExtensionRegistryToolAdapter;
   nativeCapabilities?: NativeCapabilityToolAdapter;
   remoteCi?: CiToolContext;
   githubRead?: GitHubReadToolAdapter;
@@ -464,9 +456,6 @@ export function createKodegptToolContext(options: {
     },
     artifact: {
       read: ({ uri, offset, maxBytes }) => options.artifactStore.read(uri, { offset, maxBytes })
-    },
-    extension: {
-      list: ({ limit }) => options.extensionRegistry.listEnabled(limit)
     },
     profile: {
       current: ({ workspaceId }) => ({

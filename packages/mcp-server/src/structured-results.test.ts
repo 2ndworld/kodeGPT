@@ -415,9 +415,6 @@ function makeContext(): KodegptToolContext {
     artifact: {
       read: async () => ({} as never)
     },
-    extension: {
-      list: async () => []
-    },
     profile: {
       current: async () => ({} as never),
       inspect: async () => ({})

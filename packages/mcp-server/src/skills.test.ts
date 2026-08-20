@@ -257,7 +257,6 @@ describe("MCP skill surface", () => {
       } as never,
       executionManager: {} as never,
       artifactStore: {} as never,
-      extensionRegistry: {} as never,
       skillCatalog,
       inspectProfile: () => ({}),
       capabilities: () => ({}),
@@ -402,7 +401,6 @@ describe("MCP skill surface", () => {
       workspaceManager: {} as never,
       executionManager: {} as never,
       artifactStore: {} as never,
-      extensionRegistry: {} as never,
       inspectProfile: () => ({}),
       capabilities: () => ({}),
       health: () => ({})

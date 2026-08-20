@@ -339,14 +339,13 @@ This produces language/toolchain flexibility without a language registry.
 
 Do not evolve extensions into an executable plugin runtime merely to achieve feature-parity branding with Codex plugins.
 
-The capability roles remain:
+The capability role is intentionally singular:
 
 ```text
-skills      = reusable instructions/resources + compatibility requirements
-extensions  = narrow declarative metadata/restrictions where still useful
+skills = reusable instructions/resources + compatibility requirements
 ```
 
-No `extension.run`, dynamic handler loader, plugin VM, arbitrary code import, or runtime MCP tool registration is introduced.
+Phase 4 source/live audit found no production writer for the legacy declarative extension registry, no runtime consumer for `profileRestrictions`, and an empty live `extension.list`. The unreleased `0.17` candidate therefore removes `extension.list`, its startup registry wiring, and `packages/extensions` instead of preserving dead metadata or expanding it into a plugin runtime. No `extension.run`, dynamic handler loader, plugin VM, arbitrary code import, or runtime MCP tool registration is introduced.
 
 ## Workspace-local skill discovery
 
@@ -399,18 +398,17 @@ Skills remain instructions/data only. They never grant process/network/write aut
 
 # Part E — Extension Cleanup
 
-After the preceding skill/environment changes are proven, audit `packages/extensions` for actual remaining value.
+After the preceding skill/environment changes were proven, Phase 4 audited `packages/extensions` for actual remaining value.
 
-Allowed outcomes:
+The evidence-based compatibility decision is **remove**:
 
-1. keep it narrow if profile-restriction metadata has active consumers and remains useful;
-2. simplify or deprecate it if it is effectively an unused empty registry whose semantics are already represented elsewhere.
+- the live registry is empty;
+- `ExtensionRegistry.enable/disable` have no production callers;
+- `profileRestrictions` have no runtime/profile consumer;
+- production startup opened the registry only to expose `extension.list`;
+- Agent Skills already provide the reusable development-extension path with stronger discovery, compatibility, and workspace semantics.
 
-Forbidden outcome:
-
-- expanding it into a plugin runtime merely because the current ecosystem score is lower than Codex.
-
-Any removal/deprecation must be a separate compatibility decision based on live consumer evidence, not assumed by this spec.
+Therefore the unreleased `0.17` candidate removes `extension.list`, the registry startup path, and `packages/extensions`. This is a cleanup of unused declarative metadata, not a replacement plugin subsystem. The forbidden outcome remains expanding it into a plugin runtime merely because an ecosystem comparison score is lower than Codex.
 
 # Part F — Workspace Continuity Checkpoint
 
@@ -575,7 +573,7 @@ The preferred public-surface change is minimal:
 - the additive `allowDynamicExecutables` effective-policy field on `profile.current` / `profile.inspect`;
 - optional `workspaceId` inputs on `skill.list` and `skill.load` for repository-local skill scope.
 
-Ship the completed program as one semantic surface bump from `0.16` to `0.17`, bringing the public MCP tool count from `75` to `76`. External MCP protocol negotiation remains `2026-07-28` and the product runtime version remains `0.1`. The internal TypeScript↔Rust request/policy schema may change in lockstep to carry developer-environment authority, but those internal contract changes update runtime schemas/fixtures without changing the external MCP protocol identifier.
+Ship the completed program as one semantic surface bump from `0.16` to `0.17` while keeping the public MCP tool count at exactly `75`: add `workspace.checkpoint` and remove the unused `extension.list` one-for-one. External MCP protocol negotiation remains `2026-07-28` and the product runtime version remains `0.1`. The internal TypeScript↔Rust request/policy schema may change in lockstep to carry developer-environment authority, but those internal contract changes update runtime schemas/fixtures without changing the external MCP protocol identifier.
 
 # Data Flow
 

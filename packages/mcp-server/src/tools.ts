@@ -337,7 +337,6 @@ const SURFACE_TOOLS = Object.freeze([
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
-  { name: "extension.list", required: [] },
   {
     name: "file.edit",
     required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
@@ -433,18 +432,6 @@ export function registerKodegptTools(
         structuredContent
       };
     }
-  );
-
-  server.registerTool(
-    "extension.list",
-    {
-      description: "List bounded enabled declarative extensions without exposing manifest host paths or contents.",
-      inputSchema: {
-        limit: z.number().int().positive().max(100).safe().optional()
-      },
-      annotations: READ_ONLY_TOOL_ANNOTATIONS
-    },
-    async ({ limit }) => structuredToolResult(await context.extension.list({ limit }))
   );
 
   server.registerTool(

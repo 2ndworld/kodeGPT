@@ -89,7 +89,6 @@ describe("bridge command unit tests", () => {
     const dependencies = {
       prepareStateRoot: async () => {},
       prepareAudit: async () => {},
-      prepareExtensionRegistry: async () => ({ listEnabled: () => [] }),
       startKernel: async () => ({
         request: async <T>() => ({}) as T,
         hello: async () => ({

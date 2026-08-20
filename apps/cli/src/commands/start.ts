@@ -35,14 +35,12 @@ import {
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
-import { ExtensionRegistry } from "@kodegpt/extensions";
 import {
   MCP_SURFACE_VERSION,
   createKodegptNodeHandler,
   createKodegptToolContext,
   listSurfaceTools,
   type BearerAuthenticator,
-  type ExtensionRegistryToolAdapter,
   type KodegptToolContext,
   type WorkspaceManagerToolAdapter
 } from "@kodegpt/mcp-server";
@@ -187,7 +185,6 @@ export interface ProductionServiceStackDependencies {
     stateRoot: string,
     options: { allowMissingCredential: boolean }
   ): Promise<BearerAuthenticator>;
-  prepareExtensionRegistry(stateRoot: string): Promise<ExtensionRegistryToolAdapter>;
   startKernel(options: { runtimePath: string; stateRoot: string }): Promise<StartKernel>;
   prepareSkillCatalog(options: {
     stateRoot: string;
@@ -213,7 +210,6 @@ export interface ProductionServiceStack {
   bearerAuthenticator?: BearerAuthenticator;
   toolContext: KodegptToolContext;
   remoteCi: RemoteCiToolAdapter;
-  extensionRegistry: ExtensionRegistryToolAdapter;
   close(): Promise<void>;
 }
 
@@ -238,8 +234,6 @@ export async function createProductionServiceStack(
           allowMissingCredential: options.allowMissingConnectorCredential ?? false
         })
       : undefined;
-    const extensionRegistry = await dependencies.prepareExtensionRegistry(stateRoot);
-
     kernel = await dependencies.startKernel({ runtimePath: options.runtimePath, stateRoot });
     const hello = await kernel.hello();
     validateKernelCapabilities(hello);
@@ -478,7 +472,6 @@ export async function createProductionServiceStack(
       remoteCi,
       githubRead: createGitHubReadToolAdapter(providerRuntime),
       githubWrite: createGitHubWriteToolAdapter(providerRuntime),
-      extensionRegistry,
       skillCatalog,
       inspectProfile: trustProfile.inspectProfile,
       capabilities: async () => systemCapabilities(await kernel!.hello()),
@@ -494,7 +487,6 @@ export async function createProductionServiceStack(
       bearerAuthenticator,
       toolContext,
       remoteCi,
-      extensionRegistry,
       async close(): Promise<void> {
         if (closed) return;
         closed = true;
@@ -645,7 +637,6 @@ export const defaultStartDependencies: StartDependencies = {
     }
     return new ConnectorBearerAuthenticator(store);
   },
-  prepareExtensionRegistry: (stateRoot) => ExtensionRegistry.open(stateRoot),
   startKernel: (options) => KernelClient.start(options),
   prepareSkillCatalog: async ({ stateRoot, kernel, workspaceAuthority }) => {
     const sourceStore = new SkillSourceStore(stateRoot);

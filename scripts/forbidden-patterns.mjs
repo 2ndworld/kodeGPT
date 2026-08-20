@@ -55,10 +55,6 @@ function scanFile(path, source) {
     }
   }
 
-  if (path.startsWith("packages/extensions/src/")) {
-    forbid(path, source, "dynamic-extension-execution", /\bimport\s*\(|\beval\s*\(|\bnew\s+Function\b/);
-  }
-
   if (path.startsWith("packages/") || path.startsWith("apps/")) {
     if (
       /from\s+["']node:child_process["']/.test(source) &&

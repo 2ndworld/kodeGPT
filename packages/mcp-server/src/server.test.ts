@@ -27,7 +27,6 @@ const LOCKED_SURFACE = [
   { name: "code.search", required: ["workspaceId", "query"] },
   { name: "console.state", required: [] },
   { name: "context.build", required: ["workspaceId", "intent"] },
-  { name: "extension.list", required: [] },
   {
     name: "file.edit",
     required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
@@ -93,7 +92,7 @@ describe("KodeGPT MCP semantic surface", () => {
     expect(MCP_SURFACE_VERSION).toBe("0.17");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(76);
+    expect(surface).toHaveLength(75);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
@@ -159,9 +158,6 @@ describe("KodeGPT MCP semantic surface", () => {
       },
       artifact: {
         read: async () => ({})
-      },
-      extension: {
-        list: async () => []
       },
       profile: {
         current: async () => ({}),

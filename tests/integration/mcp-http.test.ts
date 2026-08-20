@@ -52,9 +52,6 @@ const toolContext: KodegptToolContext = {
   artifact: {
     read: async () => ({})
   },
-  extension: {
-    list: async () => []
-  },
   profile: {
     current: async () => ({ name: "observe" }),
     inspect: async ({ name }) => ({ name })
