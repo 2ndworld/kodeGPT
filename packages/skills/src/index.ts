@@ -60,7 +60,9 @@ export {
   type SkillSourceTreeEntry,
   type SkillSourceTreeEntryKind,
   type SkillSourceTreeResult,
-  type SkillValidatedFrontmatter
+  type SkillValidatedFrontmatter,
+  type WorkspaceSkillSourceAuthority,
+  type WorkspaceSkillSourceDescriptor
 } from "./contracts.js";
 export { SkillCatalog, type SkillCatalogOptions } from "./catalog.js";
 export { buildSkillCapabilityPlan, resolveSkillCapabilityPlan } from "./capability-plan.js";
@@ -70,6 +72,7 @@ export { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprin
 export { parseSkillDocument } from "./parser.js";
 export { SkillPinStore, type SkillPinStoreOptions } from "./pin-store.js";
 export { SkillSourceManager } from "./source-manager.js";
+export { WorkspaceSkillSourceProvider } from "./workspace-source.js";
 export { createSkillSourceRuntimeAdapter } from "./source-runtime.js";
 export { SkillSourceStore } from "./source-store.js";
 export {

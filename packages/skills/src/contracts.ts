@@ -348,6 +348,27 @@ export interface SkillSourceReadBytesResult {
   eof: boolean;
 }
 
+export interface WorkspaceSkillSourceDescriptor {
+  sourceId: string;
+  label: string;
+  kind: "agent-skills";
+}
+
+export interface WorkspaceSkillSourceAuthority {
+  listReady(): Promise<Array<{ workspaceId: string; trustId: string }>>;
+  pathIdentity(
+    workspaceId: string,
+    path: string
+  ): Promise<{ exists: boolean; kind?: "file" | "directory" | "symlink" | "other" }>;
+  tree(workspaceId: string, path: string, maxEntries: number): Promise<SkillSourceTreeResult>;
+  readBytes(
+    workspaceId: string,
+    path: string,
+    offset: number,
+    maxBytes: number
+  ): Promise<SkillSourceReadBytesResult>;
+}
+
 export interface SkillSourceRuntimeAdapter {
   inspectRoot(path: string): Promise<SkillSourceRootInspection>;
   register(input: {
