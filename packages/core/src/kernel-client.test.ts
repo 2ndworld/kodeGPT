@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { DeveloperEnvironmentStore } from "./developer-environment-store.js";
 import {
   KernelClient,
   KernelRpcError,
@@ -162,42 +163,15 @@ describe("KernelClient persistent runtime", () => {
     await client.stop();
   }, 10_000);
 
-  it("passes the current Node installation root to the hardened runtime as a private bootstrap hint", async () => {
-    const root = await stateRoot("kodegpt-node-root-hint-");
-    const wrapperPath = join(root, "runtime-wrapper.sh");
-    const observedPath = join(root, "node-root.txt");
-    await writeFile(
-      wrapperPath,
-      `#!/bin/sh\nprintf '%s\\n' "$KODEGPT_HOST_NODE_ROOT" > "$KODEGPT_STATE_ROOT/node-root.txt"\nexec ${shellQuote(FEATURE_RUNTIME)}\n`,
-      { mode: 0o755 }
-    );
-    await chmod(wrapperPath, 0o755);
-
-    const client = await KernelClient.start({
-      runtimePath: wrapperPath,
-      stateRoot: root,
-      enableTestMethods: true
-    });
-
-    try {
-      expect((await client.hello()).testMethods).toBe(true);
-      await expect(readFile(observedPath, "utf8")).resolves.toBe(
-        `${dirname(dirname(process.execPath))}\n`
-      );
-    } finally {
-      await client.stop();
-    }
-  }, 10_000);
-
-  it("passes the stable Rust toolchain root without exposing cargo shims or host PATH", async () => {
+  it("bootstraps Node and Rust developer roots without passing resolver-specific env vars", async () => {
     expect(process.platform).toBe("linux");
     expect(process.arch).toBe("x64");
-    const root = await stateRoot("kodegpt-rust-root-hint-");
+    const root = await stateRoot("kodegpt-developer-bootstrap-");
     const wrapperPath = join(root, "runtime-wrapper.sh");
-    const observedPath = join(root, "rust-root.txt");
+    const observedPath = join(root, "resolver-env.txt");
     await writeFile(
       wrapperPath,
-      `#!/bin/sh\nprintf '%s\\n' "$KODEGPT_HOST_RUST_TOOLCHAIN_ROOT" > "$KODEGPT_STATE_ROOT/rust-root.txt"\nexec ${shellQuote(FEATURE_RUNTIME)}\n`,
+      `#!/bin/sh\nprintf '%s|%s\\n' "\${KODEGPT_HOST_NODE_ROOT-unset}" "\${KODEGPT_HOST_RUST_TOOLCHAIN_ROOT-unset}" > "$KODEGPT_STATE_ROOT/resolver-env.txt"\nexec ${shellQuote(FEATURE_RUNTIME)}\n`,
       { mode: 0o755 }
     );
     await chmod(wrapperPath, 0o755);
@@ -210,9 +184,36 @@ describe("KernelClient persistent runtime", () => {
 
     try {
       expect((await client.hello()).testMethods).toBe(true);
-      await expect(readFile(observedPath, "utf8")).resolves.toBe(
-        `${join(homedir(), ".rustup", "toolchains", "stable-x86_64-unknown-linux-gnu")}\n`
+      await expect(readFile(observedPath, "utf8")).resolves.toBe("unset|unset\n");
+      const entries = await new DeveloperEnvironmentStore(root).list();
+      const expectedBootstrap = [
+        {
+          label: "Node runtime",
+          source: "bootstrap",
+          canonicalRoot: dirname(dirname(process.execPath)),
+          executableDirs: ["bin"]
+        }
+      ];
+      const rustRoot = join(
+        homedir(),
+        ".rustup",
+        "toolchains",
+        "stable-x86_64-unknown-linux-gnu"
       );
+      if (await stat(rustRoot).then((metadata) => metadata.isDirectory()).catch(() => false)) {
+        expectedBootstrap.push({
+          label: "Rust stable toolchain",
+          source: "bootstrap",
+          canonicalRoot: rustRoot,
+          executableDirs: ["bin"]
+        });
+      }
+      expect(entries.map(({ label, source, canonicalRoot, executableDirs }) => ({
+        label,
+        source,
+        canonicalRoot,
+        executableDirs
+      }))).toEqual(expectedBootstrap);
     } finally {
       await client.stop();
     }
