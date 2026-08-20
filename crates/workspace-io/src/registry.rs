@@ -14,8 +14,9 @@ use crate::mountinfo::{
 use crate::path_identity::{PathIdentityError, PathIdentityResult, path_identity_beneath};
 use crate::profile::{ProjectProfileReadError, read_project_profile};
 use crate::read::{
-    ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult, WorkspaceReadError,
-    read_file_beneath, search_utf8_beneath_scoped, tree_beneath_scoped_with_metadata,
+    ReadBytesResult, ReadFileResult, SEARCH_MAX_SNIPPET_BYTES, SearchResult, TreeResult,
+    WorkspaceReadError, read_bytes_beneath, read_file_beneath, search_utf8_beneath_scoped,
+    tree_beneath_scoped_with_metadata,
 };
 use crate::semantic_scope::TraversalScope;
 use crate::write::{
@@ -295,6 +296,18 @@ impl<P> WorkspaceRegistry<P> {
     ) -> Result<ReadFileResult, WorkspaceRegistryError> {
         let context = self.ready_context(capability_id)?;
         read_file_beneath(&context.root_fd, relative_path, offset, max_bytes)
+            .map_err(map_workspace_read_error)
+    }
+
+    pub fn read_file_bytes(
+        &self,
+        capability_id: &str,
+        relative_path: &Path,
+        offset: u64,
+        max_bytes: u64,
+    ) -> Result<ReadBytesResult, WorkspaceRegistryError> {
+        let context = self.ready_context(capability_id)?;
+        read_bytes_beneath(&context.root_fd, relative_path, offset, max_bytes)
             .map_err(map_workspace_read_error)
     }
 

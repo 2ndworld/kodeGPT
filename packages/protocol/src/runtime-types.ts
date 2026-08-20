@@ -202,7 +202,8 @@ const fileReadParamsSchema = z
     capabilityId: z.string().min(1),
     path: z.string(),
     offset: z.number().int().nonnegative(),
-    maxBytes: z.number().int().nonnegative()
+    maxBytes: z.number().int().nonnegative(),
+    encoding: z.literal("base64").optional()
   })
   .strict();
 

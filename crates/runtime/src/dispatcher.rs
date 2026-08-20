@@ -12,12 +12,12 @@ use kodegpt_protocol::{
     NetworkMode, PersistentFilesystemIdentity as ProtocolFilesystemIdentity,
     ProcessInspectExecutableParams, ProcessOperationParams, ProcessRunParams, ProfileName,
     ProviderAuditOperation, ProviderAuditParams, ProviderAuditPhase, ProviderErrorCode,
-    RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
-    SkillSourceReadEncoding, SkillSourceReadParams, SkillSourceRegisterParams,
-    SkillSourceTreeParams, TrustAuditAction, TrustAuditParams, TrustAuditPhase, VerifyRunParams,
-    WorkspaceActivateParams, WorkspaceCapabilityParams, WorkspaceCheckpointAuditAction,
-    WorkspaceCheckpointAuditParams, WorkspaceCheckpointAuditPhase, WorkspaceRegisterParams,
-    WorkspaceRestrictPolicyParams, WorkspaceTraversalScope as ProtocolTraversalScope,
+    ReadEncoding, RuntimePolicy, SkillSourceCapabilityParams, SkillSourceInspectRootParams,
+    SkillSourceReadParams, SkillSourceRegisterParams, SkillSourceTreeParams, TrustAuditAction,
+    TrustAuditParams, TrustAuditPhase, VerifyRunParams, WorkspaceActivateParams,
+    WorkspaceCapabilityParams, WorkspaceCheckpointAuditAction, WorkspaceCheckpointAuditParams,
+    WorkspaceCheckpointAuditPhase, WorkspaceRegisterParams, WorkspaceRestrictPolicyParams,
+    WorkspaceTraversalScope as ProtocolTraversalScope,
 };
 use kodegpt_sandbox::BubblewrapProvider;
 use kodegpt_workspace_io::{
@@ -626,7 +626,7 @@ async fn dispatch_one(
                 Some(audit_capability_id),
                 AuditAction::SkillSourceRead,
                 move |registry| match params.encoding {
-                    Some(SkillSourceReadEncoding::Base64) => {
+                    Some(ReadEncoding::Base64) => {
                         let result = registry.read_bytes(
                             &capability_id,
                             &path,
@@ -824,14 +824,29 @@ async fn dispatch_one(
                 request.id,
                 Some(audit_capability_id),
                 AuditAction::FileRead,
-                move |registry| {
-                    let result = registry.read_file(
-                        &capability_id,
-                        &path,
-                        params.offset,
-                        params.max_bytes,
-                    )?;
-                    Ok(json!(result))
+                move |registry| match params.encoding {
+                    Some(ReadEncoding::Base64) => {
+                        let result = registry.read_file_bytes(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!({
+                            "contentBase64": BASE64_STANDARD.encode(result.bytes),
+                            "bytesRead": result.bytes_read,
+                            "eof": result.eof
+                        }))
+                    }
+                    None => {
+                        let result = registry.read_file(
+                            &capability_id,
+                            &path,
+                            params.offset,
+                            params.max_bytes,
+                        )?;
+                        Ok(json!(result))
+                    }
                 },
             )
         }
@@ -6270,6 +6285,27 @@ mod tests {
         .await;
         assert_eq!(read["result"]["contents"], "original contents\n");
         assert_eq!(read["result"]["eof"], true);
+
+        let binary_read = next_response(
+            &request_tx,
+            &mut response_rx,
+            "req_file_read_base64",
+            "file.read",
+            json!({
+                "capabilityId": capability_id,
+                "path": "inside.txt",
+                "offset": 0,
+                "maxBytes": 1024,
+                "encoding": "base64"
+            }),
+        )
+        .await;
+        assert_eq!(
+            binary_read["result"]["contentBase64"],
+            "b3JpZ2luYWwgY29udGVudHMK"
+        );
+        assert_eq!(binary_read["result"]["bytesRead"], 18);
+        assert_eq!(binary_read["result"]["eof"], true);
 
         let tree = next_response(
             &request_tx,
