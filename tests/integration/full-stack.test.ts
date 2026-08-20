@@ -299,8 +299,8 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(
           port,
           credential.token,
-          "file.search",
-          { workspaceId: openedA.id, query: "hello" },
+          "code.search",
+          { workspaceId: openedA.id, query: "hello", mode: "text" },
           "req_full_search"
         )
       );
@@ -321,8 +321,8 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
         await callTool(
           port,
           credential.token,
-          "file.search",
-          { workspaceId: openedA.id, query: "dependency-marker", path: "node_modules" },
+          "code.search",
+          { workspaceId: openedA.id, query: "dependency-marker", mode: "text", path: "node_modules" },
           "req_full_literal_dependency_search"
         )
       );

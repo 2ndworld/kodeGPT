@@ -275,16 +275,6 @@ describe("kodegpt start orchestration", () => {
               providerInstanceId: "prv_abcdef0123456789abcdef0123456789",
               adapterId: "github.write.v1",
               enabled: true
-            },
-            {
-              providerInstanceId: "prv_11111111111111111111111111111111",
-              adapterId: "netlify.deploy.v1",
-              enabled: true,
-              nonSecretAdapterConfig: {
-                siteId: "site_123",
-                repository: "2ndworld/kodeGPT",
-                productionBranch: "main"
-              }
             }
           ]
         },
@@ -294,14 +284,7 @@ describe("kodegpt start orchestration", () => {
             return {
               semanticCapabilityId: execution.semanticCapabilityId,
               providerInstanceId: execution.providerInstanceId,
-              value: execution.semanticCapabilityId === "netlify.deploy.preview.create"
-                ? {
-                    deploymentId: "deploy_123",
-                    branch: "feat/typed-preview",
-                    sourceOid: "a".repeat(40),
-                    createdAt: "2026-08-19T00:00:00Z"
-                  }
-                : execution.semanticCapabilityId === "github.pr.create"
+              value: execution.semanticCapabilityId === "github.pr.create"
                 ? {
                     repository: "2ndworld/kodeGPT",
                     number: 23,
@@ -360,8 +343,7 @@ describe("kodegpt start orchestration", () => {
       expect(Object.keys(stack.toolContext)).toContain("github");
       expect(providerInput!.manifests.map(({ adapterId }) => adapterId)).toEqual([
         "github.read.v1",
-        "github.write.v1",
-        "netlify.deploy.v1"
+        "github.write.v1"
       ]);
       expect(providerInput!.workspaceRoots()).toEqual(["/workspace"]);
       await expect(providerInput!.workspaceAuthority.resolve("ws_test")).resolves.toEqual({
@@ -383,12 +365,6 @@ describe("kodegpt start orchestration", () => {
         number: 23,
         expectedHeadOid: "a".repeat(40)
       })).resolves.toMatchObject({ repository: "2ndworld/kodeGPT", number: 23, merged: true });
-      await expect(stack.toolContext.deploy.previewCreate({ workspaceId: "ws_test" })).resolves.toEqual({
-        deploymentId: "deploy_123",
-        branch: "feat/typed-preview",
-        sourceOid: "a".repeat(40),
-        createdAt: "2026-08-19T00:00:00Z"
-      });
       expect(providerExecutions).toEqual([
         {
           semanticCapabilityId: "github.repository.inspect",
@@ -411,16 +387,6 @@ describe("kodegpt start orchestration", () => {
           input: {
             repository: "2ndworld/kodeGPT",
             number: 23,
-            expectedHeadOid: "a".repeat(40)
-          }
-        },
-        {
-          semanticCapabilityId: "netlify.deploy.preview.create",
-          providerInstanceId: "prv_11111111111111111111111111111111",
-          workspaceId: "ws_test",
-          input: {
-            siteId: "site_123",
-            branch: "feat/typed-preview",
             expectedHeadOid: "a".repeat(40)
           }
         }

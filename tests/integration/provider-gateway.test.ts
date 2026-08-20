@@ -245,8 +245,7 @@ describe("Provider Gateway conformance boundary", () => {
     expect(() => createProviderGatewayFixture({ maxProviderRequests: PROVIDER_MAX_REQUESTS + 1 })).toThrow();
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
-      "github.write.v1",
-      "netlify.deploy.v1"
+      "github.write.v1"
     ]);
     expect(PRODUCTION_PROVIDER_MANIFESTS[0]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.repository.inspect",
@@ -259,14 +258,10 @@ describe("Provider Gateway conformance boundary", () => {
       "github.pr.create",
       "github.pr.merge"
     ]);
-    expect(PRODUCTION_PROVIDER_MANIFESTS[2]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
-      "netlify.deploy.preview.create",
-      "netlify.deploy.preview.inspect"
-    ]);
 
     const names = listSurfaceTools().map(({ name }) => name);
     expect(MCP_SURFACE_VERSION).toBe("0.16");
-    expect(names).toHaveLength(78);
+    expect(names).toHaveLength(75);
     expect(names.filter((name) => name.startsWith("github."))).toEqual([
       "github.issue.inspect",
       "github.issue.list",
@@ -276,11 +271,7 @@ describe("Provider Gateway conformance boundary", () => {
       "github.pr.merge",
       "github.repository.inspect"
     ]);
-    expect(names.filter((name) => name.startsWith("deploy."))).toEqual([
-      "deploy.preview.create",
-      "deploy.preview.inspect"
-    ]);
-    expect(names).not.toContain("deploy.preview.logs");
+    expect(names.filter((name) => name.startsWith("deploy."))).toEqual([]);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(names.some((name) => /github\..*(update|delete|comment|label)/.test(name))).toBe(false);
   });
