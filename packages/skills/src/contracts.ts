@@ -233,13 +233,15 @@ export interface SkillCatalogToolAdapter {
     sourceId?: string;
     compatibility?: SkillCompatibility;
     pinned?: boolean;
+    workspaceId?: string;
   }): Promise<SkillListResult>;
-  inspect(input: { skillId: string; fingerprint?: string }): Promise<SkillInspectResult>;
+  inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {
     skillId: string;
     fingerprint?: string;
     resources?: string[];
     maxBytes?: number;
+    workspaceId?: string;
   }): Promise<SkillLoadResult>;
 }
 

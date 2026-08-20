@@ -350,8 +350,8 @@ class FakeKernel implements KernelTransport {
       case "file.tree":
         return {
           entries: [
-            { path: "src", kind: "directory" },
-            { path: "src/index.ts", kind: "file" }
+            { path: "src", kind: "directory", sizeBytes: 0 },
+            { path: "src/index.ts", kind: "file", sizeBytes: 19 }
           ],
           truncated: false
         } as T;
@@ -1089,8 +1089,8 @@ describe("WorkspaceManager", () => {
     ]);
     expect(boundedTree).toEqual({
       entries: [
-        { path: "src", kind: "directory" },
-        { path: "src/index.ts", kind: "file" }
+        { path: "src", kind: "directory", sizeBytes: 0 },
+        { path: "src/index.ts", kind: "file", sizeBytes: 19 }
       ],
       truncated: false
     });

@@ -402,8 +402,12 @@ export interface WorkspaceTreeEntry {
   kind: WorkspaceTreeEntryKind;
 }
 
+export interface WorkspaceTreeMetadataEntry extends WorkspaceTreeEntry {
+  sizeBytes: number;
+}
+
 export interface WorkspaceTreeResult {
-  entries: WorkspaceTreeEntry[];
+  entries: WorkspaceTreeMetadataEntry[];
   truncated: boolean;
 }
 
@@ -1243,7 +1247,10 @@ export class WorkspaceManager {
   }
 
   async tree(workspaceId: string, path = "."): Promise<WorkspaceTreeEntry[]> {
-    return (await this.treeBounded(workspaceId, path, 2_000)).entries;
+    return (await this.treeBounded(workspaceId, path, 2_000)).entries.map(({ path: entryPath, kind }) => ({
+      path: entryPath,
+      kind
+    }));
   }
 
   async treeBounded(
@@ -1696,18 +1703,20 @@ function validateInspectResult(value: unknown): asserts value is InspectRootResu
   }
 }
 
-function validateTreeEntry(value: unknown): WorkspaceTreeEntry {
+function validateTreeEntry(value: unknown): WorkspaceTreeMetadataEntry {
   if (
     !isRecord(value) ||
     typeof value.path !== "string" ||
-    !isTreeEntryKind(value.kind)
+    !isTreeEntryKind(value.kind) ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    (value.sizeBytes as number) < 0
   ) {
     throw new WorkspaceManagerError(
       "RUNTIME_PROTOCOL_INVALID",
       "file.tree returned an invalid entry"
     );
   }
-  return { path: value.path, kind: value.kind };
+  return { path: value.path, kind: value.kind, sizeBytes: value.sizeBytes as number };
 }
 
 function validateGitCheckpoint(value: unknown): WorkspaceGitCheckpointResult {

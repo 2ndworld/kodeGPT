@@ -251,6 +251,7 @@ export interface SkillToolContext {
     sourceId?: string;
     compatibility?: SkillCompatibility;
     pinned?: boolean;
+    workspaceId?: string;
   }): Promise<SkillListResult>;
   inspect(input: { skillId: string; fingerprint?: string; workspaceId?: string }): Promise<SkillInspectResult>;
   load(input: {
@@ -258,6 +259,7 @@ export interface SkillToolContext {
     fingerprint?: string;
     resources?: string[];
     maxBytes?: number;
+    workspaceId?: string;
   }): Promise<SkillLoadResult>;
 }
 
@@ -501,7 +503,11 @@ export function createKodegptToolContext(options: {
     skill: {
       list: (input) => skill.list(input),
       inspect: async ({ skillId, fingerprint, workspaceId }) => {
-        const inspection = await skill.inspect({ skillId, fingerprint });
+        const inspection = await skill.inspect({
+          skillId,
+          fingerprint,
+          ...(workspaceId === undefined ? {} : { workspaceId })
+        });
         if (workspaceId === undefined) return inspection;
         const ready = options.workspaceManager.requireReady(workspaceId);
         const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {

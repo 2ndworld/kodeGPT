@@ -48,6 +48,44 @@ function skillDocument(body = "Use the safe instructions.\n"): Uint8Array {
 }
 
 describe("SkillCatalogToolAdapter", () => {
+  it("forwards optional workspace scope to catalog list and raw load", async () => {
+    const received: unknown[] = [];
+    const adapter = createSkillCatalogToolAdapter({
+      list: async (input: unknown) => {
+        received.push(input);
+        return { skills: [], truncated: false, truncationReasons: [] };
+      },
+      loadRaw: async (input: unknown) => {
+        received.push(input);
+        return {
+          descriptor: {
+            skillId: SKILL_ID,
+            name: "portable",
+            description: "Portable skill",
+            sourceId: SOURCE_ID,
+            sourceKind: "agent-skills" as const,
+            descriptorFingerprint: "f".repeat(64),
+            nameCollision: false,
+            compatibility,
+            unknownMetadataKeys: []
+          },
+          bundleFingerprint: FINGERPRINT,
+          skillDocument: skillDocument(),
+          resources: [],
+          availability: "live" as const,
+          pinned: false
+        };
+      }
+    } as never);
+
+    await adapter.list({ workspaceId: "ws_1" } as never);
+    await adapter.load({ skillId: SKILL_ID, workspaceId: "ws_1" } as never);
+    expect(received).toEqual([
+      { workspaceId: "ws_1" },
+      { skillId: SKILL_ID, fingerprint: undefined, resources: [], workspaceId: "ws_1" }
+    ]);
+  });
+
   it("filters and caps list output deterministically with explicit result truncation", async () => {
     const adapter = createSkillCatalogToolAdapter({
       list: async () => ({

@@ -1266,17 +1266,20 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.list",
     {
-      description: "List bounded live and pinned skill metadata with static/source compatibility; use skill.inspect with workspaceId for workspace-aware effective CLI readiness.",
+      description: "List bounded registered/pinned skill metadata with static/source compatibility; with workspaceId, additionally discover conventional Agent Skills beneath that READY workspace.",
       inputSchema: {
         limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
         sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
         compatibility: z.enum(["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"]).optional(),
-        pinned: z.boolean().optional()
+        pinned: z.boolean().optional(),
+        workspaceId: z.string().min(1).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ limit, sourceId, compatibility, pinned }) =>
-      skillToolResult(() => context.skill.list({ limit, sourceId, compatibility, pinned }))
+    async ({ limit, sourceId, compatibility, pinned, workspaceId }) =>
+      skillToolResult(() =>
+        context.skill.list({ limit, sourceId, compatibility, pinned, workspaceId })
+      )
   );
 
   server.registerTool(
@@ -1297,17 +1300,20 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.load",
     {
-      description: "Load a bounded skill instruction body and explicitly requested UTF-8 resources as data/text only; returned resources are not executed.",
+      description: "Load a bounded skill instruction body and explicitly requested UTF-8 resources as data/text only; workspace-local skills require the matching workspaceId and returned resources are not executed.",
       inputSchema: {
         skillId: z.string().regex(/^sk_[a-f0-9]{64}$/),
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
         resources: z.array(z.string().min(1)).max(SKILL_TOOL_LOAD_RESOURCE_MAX).optional(),
-        maxBytes: z.number().int().positive().max(SKILL_TOOL_LOAD_MAX_BYTES).safe().optional()
+        maxBytes: z.number().int().positive().max(SKILL_TOOL_LOAD_MAX_BYTES).safe().optional(),
+        workspaceId: z.string().min(1).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ skillId, fingerprint, resources, maxBytes }) =>
-      skillToolResult(() => context.skill.load({ skillId, fingerprint, resources, maxBytes }))
+    async ({ skillId, fingerprint, resources, maxBytes, workspaceId }) =>
+      skillToolResult(() =>
+        context.skill.load({ skillId, fingerprint, resources, maxBytes, workspaceId })
+      )
   );
 
   server.registerTool(

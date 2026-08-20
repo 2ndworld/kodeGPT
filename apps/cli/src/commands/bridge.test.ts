@@ -136,6 +136,7 @@ describe("bridge command unit tests", () => {
           closeWorkspace: async () => undefined,
           requireReady: () => readyWorkspace,
           readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+          readFileBytes: async () => ({ bytes: new Uint8Array(), bytesRead: 0, eof: true }),
           pathIdentity: async () => ({
             schemaVersion: 1 as const,
             exists: false,

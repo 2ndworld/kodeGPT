@@ -51,9 +51,11 @@ import {
   SkillPinStore,
   SkillSourceManager,
   SkillSourceStore,
+  WorkspaceSkillSourceProvider,
   createSkillCatalogToolAdapter,
   createSkillSourceRuntimeAdapter,
-  type SkillCatalogToolAdapter
+  type SkillCatalogToolAdapter,
+  type WorkspaceSkillSourceAuthority
 } from "@kodegpt/skills";
 import { WorkspaceTrustStore } from "@kodegpt/trust";
 
@@ -99,6 +101,7 @@ export interface ManagerBundle {
       | "inspectGitRepositoryIdentity"
       | "auditRemoteCi"
       | "pathIdentity"
+      | "readFileBytes"
       | "commitPatchFile"
       | "inspectExecutable"
       | "runVerificationProcess"
@@ -188,6 +191,7 @@ export interface ProductionServiceStackDependencies {
   prepareSkillCatalog(options: {
     stateRoot: string;
     kernel: StartKernel;
+    workspaceAuthority: WorkspaceSkillSourceAuthority;
   }): Promise<SkillCatalogToolAdapter & { close(): Promise<void> }>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
   createManagers(options: {
@@ -238,10 +242,14 @@ export async function createProductionServiceStack(
     const hello = await kernel.hello();
     validateKernelCapabilities(hello);
 
-    skillCatalog = await dependencies.prepareSkillCatalog({ stateRoot, kernel });
-
     const trustProfile = dependencies.createTrustProfile(stateRoot);
     const managers = dependencies.createManagers({ kernel, trustProfile });
+    const workspaceSkillAuthority = createWorkspaceSkillSourceAuthority(managers.workspaceManager);
+    skillCatalog = await dependencies.prepareSkillCatalog({
+      stateRoot,
+      kernel,
+      workspaceAuthority: workspaceSkillAuthority
+    });
     const providerAudit = new ProviderAuditClient({
       request: (method, params) => kernel!.request(method, params as Record<string, unknown>)
     });
@@ -571,6 +579,54 @@ export async function startKodegpt(
   }
 }
 
+function createWorkspaceSkillSourceAuthority(
+  workspaceManager: ManagerBundle["workspaceManager"]
+): WorkspaceSkillSourceAuthority {
+  return {
+    async listReady() {
+      const trusted = await workspaceManager.listTrustedWorkspaces();
+      const trustByRoot = new Map(trusted.map((entry) => [entry.canonicalRoot, entry.id]));
+      return workspaceManager
+        .listWorkspaces()
+        .map((workspace) => {
+          const trustId = trustByRoot.get(workspace.canonicalRoot);
+          if (trustId === undefined) {
+            throw new Error(`READY workspace trust binding is unavailable: ${workspace.id}`);
+          }
+          return { workspaceId: workspace.id, trustId };
+        })
+        .sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
+    },
+    async pathIdentity(workspaceId, path) {
+      const identity = await workspaceManager.pathIdentity(workspaceId, path, {
+        includeSha256: false
+      });
+      return {
+        exists: identity.exists,
+        ...(identity.kind === undefined ? {} : { kind: identity.kind })
+      };
+    },
+    async tree(workspaceId, path, maxEntries) {
+      const tree = await workspaceManager.treeBounded(
+        workspaceId,
+        path,
+        maxEntries,
+        "literal"
+      );
+      return {
+        entries: tree.entries.map((entry) => ({
+          path: entry.path,
+          kind: entry.kind,
+          sizeBytes: entry.sizeBytes
+        })),
+        truncated: tree.truncated
+      };
+    },
+    readBytes: (workspaceId, path, offset, maxBytes) =>
+      workspaceManager.readFileBytes(workspaceId, path, { offset, maxBytes })
+  };
+}
+
 export const defaultStartDependencies: StartDependencies = {
   prepareStateRoot: async (stateRoot) => {
     await ensurePrivateDirectory(stateRoot);
@@ -589,11 +645,12 @@ export const defaultStartDependencies: StartDependencies = {
   },
   prepareExtensionRegistry: (stateRoot) => ExtensionRegistry.open(stateRoot),
   startKernel: (options) => KernelClient.start(options),
-  prepareSkillCatalog: async ({ stateRoot, kernel }) => {
+  prepareSkillCatalog: async ({ stateRoot, kernel, workspaceAuthority }) => {
     const sourceStore = new SkillSourceStore(stateRoot);
     const sourceManager = new SkillSourceManager(
       sourceStore,
-      createSkillSourceRuntimeAdapter(kernel)
+      createSkillSourceRuntimeAdapter(kernel),
+      new WorkspaceSkillSourceProvider(workspaceAuthority)
     );
     const pinStore = new SkillPinStore(stateRoot);
     const catalog = new SkillCatalog(sourceManager, { pins: pinStore });

@@ -169,11 +169,18 @@ describe("MCP skill surface", () => {
     expect(list.config.inputSchema?.limit?.safeParse(501).success).toBe(false);
     expect(list.config.inputSchema?.sourceId?.safeParse(SOURCE_ID).success).toBe(true);
     expect(list.config.inputSchema?.sourceId?.safeParse("/private/source").success).toBe(false);
+    expect(list.config.inputSchema?.workspaceId?.safeParse(WORKSPACE_ID).success).toBe(true);
     for (const classification of ["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"] as const) {
       expect(list.config.inputSchema?.compatibility?.safeParse(classification).success).toBe(true);
     }
     expect(list.config.inputSchema?.compatibility?.safeParse("UNKNOWN").success).toBe(false);
-    await list.handler({ limit: 10, sourceId: SOURCE_ID, compatibility: "NATIVE", pinned: true });
+    await list.handler({
+      limit: 10,
+      sourceId: SOURCE_ID,
+      compatibility: "NATIVE",
+      pinned: true,
+      workspaceId: WORKSPACE_ID
+    });
 
     const inspect = required(tools, "skill.inspect");
     expect(inspect.config.inputSchema?.skillId?.safeParse(SKILL_ID).success).toBe(true);
@@ -185,19 +192,42 @@ describe("MCP skill surface", () => {
     expect(load.config.inputSchema?.maxBytes?.safeParse(512 * 1024).success).toBe(true);
     expect(load.config.inputSchema?.maxBytes?.safeParse(512 * 1024 + 1).success).toBe(false);
     expect(load.config.inputSchema?.resources?.safeParse(Array.from({ length: 33 }, () => "x")).success).toBe(false);
-    await load.handler({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
+    expect(load.config.inputSchema?.workspaceId?.safeParse(WORKSPACE_ID).success).toBe(true);
+    await load.handler({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT,
+      resources: ["references/guide.md"],
+      maxBytes: 1024,
+      workspaceId: WORKSPACE_ID
+    });
 
-    expect(seen).toContainEqual({ limit: 10, sourceId: SOURCE_ID, compatibility: "NATIVE", pinned: true });
+    expect(seen).toContainEqual({
+      limit: 10,
+      sourceId: SOURCE_ID,
+      compatibility: "NATIVE",
+      pinned: true,
+      workspaceId: WORKSPACE_ID
+    });
     expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, workspaceId: WORKSPACE_ID });
-    expect(seen).toContainEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT, resources: ["references/guide.md"], maxBytes: 1024 });
+    expect(seen).toContainEqual({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT,
+      resources: ["references/guide.md"],
+      maxBytes: 1024,
+      workspaceId: WORKSPACE_ID
+    });
   });
 
   it("resolves external CLI requirements against an explicitly supplied READY workspace", async () => {
     let probes = 0;
     let readyChecks = 0;
+    const catalogInputs: unknown[] = [];
     const skillCatalog: SkillCatalogToolAdapter = {
       list: async () => listResult(),
-      inspect: async () => externalCliInspectResult(),
+      inspect: async (input) => {
+        catalogInputs.push(input);
+        return externalCliInspectResult();
+      },
       load: async () => loadResult()
     };
     const context = createKodegptToolContext({
@@ -241,6 +271,11 @@ describe("MCP skill surface", () => {
 
     expect(readyChecks).toBe(1);
     expect(probes).toBe(1);
+    expect(catalogInputs[0]).toEqual({
+      skillId: SKILL_ID,
+      fingerprint: FINGERPRINT,
+      workspaceId: WORKSPACE_ID
+    });
     expect(resolved.skill.compatibility.classification).toBe("PARTIAL");
     expect(resolved.capabilityPlan.classification).toBe("NATIVE");
     expect(resolved.capabilityPlan.missingCapabilities).toEqual([]);
@@ -257,6 +292,7 @@ describe("MCP skill surface", () => {
     const generic = await context.skill.inspect({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
     expect(readyChecks).toBe(1);
     expect(probes).toBe(1);
+    expect(catalogInputs[1]).toEqual({ skillId: SKILL_ID, fingerprint: FINGERPRINT });
     expect(generic.capabilityPlan.classification).toBe("PARTIAL");
     expect(generic.capabilityPlan.externalCliRequirements).toBeUndefined();
   });
