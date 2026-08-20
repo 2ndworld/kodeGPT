@@ -2,6 +2,16 @@
 
 This index points to the current repository authorities for KodeGPT v0.1. It does not recreate missing blueprint prose, does not override locked security decisions, and does not treat historical unchecked plan boxes as implementation truth.
 
+## Current capability map
+
+| Layer | Current behavior |
+| --- | --- |
+| Public MCP | Workspace/context/code, bounded file/process/verify, Git/GitHub/CI, preview/browser/visual, skills, profiles, artifacts, health/capabilities. Exact names come from `listSurfaceTools()` / `system.capabilities.publicTools`. |
+| Trusted escape hatch | Existing sandboxed `process.run`; trusted profile additionally admits `bash`/`sh` with controlled PATH/environment and existing write/network authority. |
+| Operator CLI | Workspace trust, provider admission/inspection, skill source/pin lifecycle, local service lifecycle, managed exposure. These are not public MCP actions. |
+| Private internals | Provider Gateway, credential bridge, retained lexical search, runtime source/root authorities, and other implementation-only helpers. |
+| Deliberately absent | `workflow.run`, `skill.run`, generic provider invocation, autonomous scheduler/session runtime, arbitrary browser navigation/computer-use, generic deployment abstraction. |
+
 ## Current authorities
 
 | Responsibility | Current authority |

@@ -39,6 +39,7 @@ import {
   MCP_SURFACE_VERSION,
   createKodegptNodeHandler,
   createKodegptToolContext,
+  listSurfaceTools,
   type BearerAuthenticator,
   type ExtensionRegistryToolAdapter,
   type KodegptToolContext,
@@ -628,12 +629,30 @@ function validateKernelCapabilities(hello: KernelHello): void {
   }
 }
 
+function publicToolInventory(): {
+  count: number;
+  families: Record<string, string[]>;
+} {
+  const names = listSurfaceTools()
+    .map(({ name }) => name)
+    .sort();
+  const families: Record<string, string[]> = {};
+
+  for (const name of names) {
+    const family = name.slice(0, name.indexOf("."));
+    (families[family] ??= []).push(name);
+  }
+
+  return { count: names.length, families };
+}
+
 function systemCapabilities(hello: KernelHello): Record<string, unknown> {
   return {
     runtimeVersion: hello.runtimeVersion,
     filesystemBoundaryAvailable: hello.filesystemBoundaryAvailable,
     mcpProtocolVersion: MCP_PROTOCOL_VERSION,
-    mcpSurfaceVersion: MCP_SURFACE_VERSION
+    mcpSurfaceVersion: MCP_SURFACE_VERSION,
+    publicTools: publicToolInventory()
   };
 }
 

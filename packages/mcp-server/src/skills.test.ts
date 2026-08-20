@@ -156,8 +156,11 @@ describe("MCP skill surface", () => {
     for (const name of READ_ONLY_SKILL_TOOLS) {
       expect(required(tools, name).config.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
     }
+    expect(required(tools, "skill.list").config.description?.toLowerCase()).toContain("static");
     expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("advisory");
-    expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("native capabilities");
+    expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("workspace-aware");
+    expect(required(tools, "skill.inspect").config.description?.toLowerCase()).toContain("without executing");
+    expect(required(tools, "system.capabilities").config.description?.toLowerCase()).toContain("public mcp");
     expect(required(tools, "skill.load").config.description?.toLowerCase()).toContain("data");
     expect(required(tools, "skill.load").config.description?.toLowerCase()).toContain("not executed");
 
