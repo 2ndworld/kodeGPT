@@ -1,6 +1,98 @@
 ---
 name: kodegpt-application-development-workflow
 description: Use when developing or fixing an application with KodeGPT from repository understanding through verified PR and CI evidence.
+metadata:
+  kodegpt:
+    requires:
+      actions:
+        - context.build
+        - workspace.inspect
+        - code.search
+        - code.impact
+        - file.read
+        - file.edit
+        - file.patch
+        - file.write
+        - git.status
+        - git.diff
+        - git.changes
+        - verify.list
+        - verify.run
+    stages:
+      - id: continuity
+        description: Resume and reconcile bounded prior development state when continuation is requested.
+        actions:
+          - workspace.info
+          - workspace.checkpoint
+          - git.status
+          - git.log
+      - id: repository-understanding
+        description: Build target-scoped repository context and impact evidence.
+        actions:
+          - context.build
+          - workspace.inspect
+          - code.search
+          - code.impact
+      - id: implementation
+        description: Read and modify bounded workspace files.
+        actions:
+          - file.read
+          - file.edit
+          - file.patch
+          - file.write
+      - id: verification
+        description: Discover and run deterministic checks or approved local development commands.
+        actions:
+          - verify.list
+          - verify.run
+          - process.run
+          - process.status
+          - process.cancel
+      - id: preview
+        description: Start, inspect, and stop a bounded local application preview when relevant.
+        actions:
+          - preview.start
+          - preview.inspect
+          - preview.stop
+      - id: browser
+        description: Gather preview-scoped browser interaction and diagnostic evidence when relevant.
+        actions:
+          - browser.openPreview
+          - browser.inspect
+          - browser.console
+          - browser.networkFailures
+          - browser.click
+          - browser.type
+          - browser.screenshot
+      - id: visual
+        description: Gather responsive visual evidence and compare explicit captures when relevant.
+        actions:
+          - visual.captureMatrix
+          - visual.compare
+      - id: git-delivery
+        description: Isolate, review, commit, and publish repository changes when delivery requires it.
+        actions:
+          - git.branchCreate
+          - git.branchSwitch
+          - git.worktreeCreate
+          - git.worktreeRemove
+          - git.stage
+          - git.commit
+          - git.push
+      - id: pull-request
+        description: Create and inspect a pull request when remote review is required.
+        actions:
+          - github.pr.create
+          - github.pr.inspect
+      - id: ci
+        description: Inspect and reconcile remote CI after delivery.
+        actions:
+          - ci.status
+          - ci.runs
+          - ci.run
+          - ci.failure
+          - ci.cancel
+          - ci.rerun
 ---
 
 # KodeGPT Application Development Workflow

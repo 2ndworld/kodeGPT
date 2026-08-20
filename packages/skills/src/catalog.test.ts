@@ -207,7 +207,25 @@ describe("SkillCatalog live discovery", () => {
     });
     expect(inspected.requirementGraph.schemaVersion).toBe(1);
     expect(inspected.requirementGraph.core.actions.length).toBeGreaterThan(0);
-    expect(inspected.requirementGraph.stages).toEqual([]);
+    expect(inspected.requirementGraph.stages.map((stage) => stage.id)).toEqual([
+      "browser",
+      "ci",
+      "continuity",
+      "git-delivery",
+      "implementation",
+      "preview",
+      "pull-request",
+      "repository-understanding",
+      "verification",
+      "visual"
+    ]);
+    const stage = (id: string) => inspected.requirementGraph.stages.find((item) => item.id === id)!;
+    expect(stage("continuity").actions.map((action) => action.id)).toContain("workspace.info");
+    expect(stage("preview").actions.map((action) => action.id)).toContain("preview.start");
+    expect(stage("browser").actions.map((action) => action.id)).toContain("browser.openPreview");
+    expect(stage("visual").actions.map((action) => action.id)).toContain("visual.captureMatrix");
+    expect(stage("pull-request").actions.map((action) => action.id)).toContain("github.pr.create");
+    expect(stage("ci").actions.map((action) => action.id)).toContain("ci.status");
     expect(inspected.capabilityPlan.nativeCapabilities).toEqual(
       expect.arrayContaining([
         "context.build",
