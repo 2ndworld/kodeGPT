@@ -22,6 +22,20 @@ export type {
   DeveloperExecutableDiagnosticStatus
 } from "./developer-environment-store.js";
 
+export {
+  WORKSPACE_CHECKPOINT_MAX_BYTES,
+  WORKSPACE_CHECKPOINT_SCHEMA_VERSION,
+  WorkspaceCheckpointError,
+  WorkspaceCheckpointStore
+} from "./workspace-checkpoint-store.js";
+export type {
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointBody,
+  WorkspaceCheckpointErrorCode,
+  WorkspaceCheckpointEvidenceKind,
+  WorkspaceCheckpointStatus
+} from "./workspace-checkpoint-store.js";
+
 export { ExecutionManager } from "./execution-manager.js";
 export type { ProcessRunInput } from "./execution-manager.js";
 
