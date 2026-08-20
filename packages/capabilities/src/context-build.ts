@@ -66,6 +66,8 @@ const TIER_BASE: Record<CandidateKind, number> = {
   search: 3_000,
   tests: 2_000
 };
+const TARGET_FILE_BUDGET_SHARE = 0.5;
+const NON_TARGET_FILE_BUDGET_SHARE = 0.25;
 
 export interface ContextBuildAdapter {
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
@@ -136,7 +138,7 @@ export async function buildContext(
     try {
       const read = await adapter.readFile(input.workspaceId, candidate.path, {
         offset: 0,
-        maxBytes: remaining
+        maxBytes: candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined)
       });
       const actualBytes = Buffer.byteLength(read.contents, "utf8");
       if (actualBytes !== read.bytesRead || actualBytes > remaining) {
@@ -187,6 +189,17 @@ export async function buildContext(
     totalBytes,
     truncated
   };
+}
+
+function candidateReadLimit(
+  candidate: Candidate,
+  maxBytes: number,
+  remaining: number,
+  targetScoped: boolean
+): number {
+  if (!targetScoped) return remaining;
+  const share = candidate.kind === "target" ? TARGET_FILE_BUDGET_SHARE : NON_TARGET_FILE_BUDGET_SHARE;
+  return Math.min(remaining, Math.max(1, Math.floor(maxBytes * share)));
 }
 
 async function collectGitEvidence(
