@@ -31,6 +31,7 @@ import {
   PlaywrightBrowserDriver,
   PreviewManager,
   VisualVerificationManager,
+  WorkspaceCheckpointStore,
   WorkspaceManager,
   type KernelHello
 } from "@kodegpt/core";
@@ -195,6 +196,7 @@ export interface ProductionServiceStackDependencies {
   }): Promise<SkillCatalogToolAdapter & { close(): Promise<void> }>;
   createTrustProfile(stateRoot: string): TrustProfileBundle;
   createManagers(options: {
+    stateRoot: string;
     kernel: StartKernel;
     trustProfile: TrustProfileBundle;
   }): ManagerBundle;
@@ -243,7 +245,7 @@ export async function createProductionServiceStack(
     validateKernelCapabilities(hello);
 
     const trustProfile = dependencies.createTrustProfile(stateRoot);
-    const managers = dependencies.createManagers({ kernel, trustProfile });
+    const managers = dependencies.createManagers({ stateRoot, kernel, trustProfile });
     const workspaceSkillAuthority = createWorkspaceSkillSourceAuthority(managers.workspaceManager);
     skillCatalog = await dependencies.prepareSkillCatalog({
       stateRoot,
@@ -664,10 +666,11 @@ export const defaultStartDependencies: StartDependencies = {
     trust: new WorkspaceTrustStore(stateRoot),
     inspectProfile: (name) => getProfilePreset(name)
   }),
-  createManagers: ({ kernel, trustProfile }) => ({
+  createManagers: ({ stateRoot, kernel, trustProfile }) => ({
     workspaceManager: new WorkspaceManager({
       kernel,
-      trust: trustProfile.trust as WorkspaceTrustStore
+      trust: trustProfile.trust as WorkspaceTrustStore,
+      checkpointStore: new WorkspaceCheckpointStore(stateRoot)
     })
   }),
   createRemoteCi: (options) => createGitHubRemoteCiToolAdapter(options),

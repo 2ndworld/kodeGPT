@@ -16,6 +16,10 @@ import type {
 } from "@kodegpt/trust";
 
 import { KernelRpcError } from "./kernel-client.js";
+import type {
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointBody
+} from "./workspace-checkpoint-store.js";
 
 export interface KernelTransport {
   request<T>(method: RuntimeMethod, params: Record<string, unknown>): Promise<T>;
@@ -41,6 +45,46 @@ export interface OpenWorkspace {
   effectivePolicy: ProfilePolicy;
 }
 
+export interface WorkspaceInfo extends OpenWorkspace {
+  checkpoint?: WorkspaceCheckpoint;
+}
+
+export type WorkspaceCheckpointMutationInput =
+  | {
+      workspaceId: string;
+      operation: "upsert";
+      expectedRevision?: number;
+      checkpoint: WorkspaceCheckpointBody;
+    }
+  | {
+      workspaceId: string;
+      operation: "clear";
+      expectedRevision: number;
+    };
+
+export type WorkspaceCheckpointMutationResult =
+  | {
+      schemaVersion: 1;
+      operation: "upsert";
+      checkpoint: WorkspaceCheckpoint;
+    }
+  | {
+      schemaVersion: 1;
+      operation: "clear";
+      cleared: true;
+    };
+
+interface WorkspaceCheckpointStorage {
+  read(trustId: string): Promise<WorkspaceCheckpoint | undefined>;
+  upsert(input: {
+    trustId: string;
+    body: WorkspaceCheckpointBody;
+    expectedRevision?: number;
+  }): Promise<WorkspaceCheckpoint>;
+  clear(trustId: string, expectedRevision: number): Promise<void>;
+  purge(trustId: string): Promise<void>;
+}
+
 export interface TrustedWorkspaceSummary {
   id: string;
   canonicalRoot: string;
@@ -50,6 +94,8 @@ export interface TrustedWorkspaceSummary {
 
 type TrustAuditAction = "trust" | "profile_update" | "untrust";
 type TrustAuditPhase = "decision" | "success" | "failed";
+type CheckpointAuditAction = "upsert" | "clear";
+type CheckpointAuditPhase = "decision" | "success" | "failed";
 
 export interface WorkspaceFileReadResult {
   contents: string;
@@ -500,6 +546,7 @@ export class ProjectProfileInvalidError extends WorkspaceManagerError {
 export class WorkspaceManager {
   readonly #kernel: KernelTransport;
   readonly #trust: TrustResolver;
+  readonly #checkpointStore: WorkspaceCheckpointStorage | undefined;
   readonly #idFactory: () => string;
   readonly #auditOperationIdFactory: () => string;
   readonly #closeTimeoutMs: number;
@@ -508,12 +555,14 @@ export class WorkspaceManager {
   constructor(options: {
     kernel: KernelTransport;
     trust: TrustResolver;
+    checkpointStore?: WorkspaceCheckpointStorage;
     idFactory?: () => string;
     auditOperationIdFactory?: () => string;
     closeTimeoutMs?: number;
   }) {
     this.#kernel = options.kernel;
     this.#trust = options.trust;
+    this.#checkpointStore = options.checkpointStore;
     this.#idFactory =
       options.idFactory ?? (() => `ws_${randomUUID().replaceAll("-", "")}`);
     this.#auditOperationIdFactory =
@@ -545,6 +594,14 @@ export class WorkspaceManager {
     phase: TrustAuditPhase
   ): Promise<void> {
     await this.#requestOk("trust.audit", { operationId, action, phase });
+  }
+
+  async #auditCheckpoint(
+    operationId: string,
+    action: CheckpointAuditAction,
+    phase: CheckpointAuditPhase
+  ): Promise<void> {
+    await this.#requestOk("workspace.checkpoint_audit", { operationId, action, phase });
   }
 
   async openWorkspace(rootPath: string): Promise<OpenWorkspace> {
@@ -695,6 +752,7 @@ export class WorkspaceManager {
       for (const state of bound) {
         await this.closeWorkspace(state.id);
       }
+      await this.#checkpointStore?.purge(trustId);
       removed = await this.#trust.untrust(trustId);
     } catch (error) {
       try {
@@ -706,6 +764,58 @@ export class WorkspaceManager {
     }
     await this.#auditTrust(operationId, "untrust", "success");
     return removed;
+  }
+
+  async workspaceInfo(workspaceId: string): Promise<WorkspaceInfo> {
+    const state = this.#requireReadyState(workspaceId);
+    const workspace = publicWorkspace(state);
+    if (this.#checkpointStore === undefined) return workspace;
+    const trustId = requireReadyTrustId(state);
+    const checkpoint = await this.#checkpointStore.read(trustId);
+    return checkpoint === undefined ? workspace : { ...workspace, checkpoint };
+  }
+
+  async checkpointWorkspace(
+    input: WorkspaceCheckpointMutationInput
+  ): Promise<WorkspaceCheckpointMutationResult> {
+    const state = this.#requireReadyState(input.workspaceId);
+    const checkpointStore = this.#checkpointStore;
+    if (checkpointStore === undefined) {
+      throw new WorkspaceManagerError(
+        "CHECKPOINT_UNAVAILABLE",
+        "Workspace checkpoint storage is unavailable"
+      );
+    }
+    const trustId = requireReadyTrustId(state);
+    const operationId = this.#auditOperationIdFactory();
+    await this.#auditCheckpoint(operationId, input.operation, "decision");
+
+    let result: WorkspaceCheckpointMutationResult;
+    try {
+      if (input.operation === "upsert") {
+        const checkpoint = await checkpointStore.upsert({
+          trustId,
+          body: input.checkpoint,
+          ...(input.expectedRevision === undefined
+            ? {}
+            : { expectedRevision: input.expectedRevision })
+        });
+        result = { schemaVersion: 1, operation: "upsert", checkpoint };
+      } else {
+        await checkpointStore.clear(trustId, input.expectedRevision);
+        result = { schemaVersion: 1, operation: "clear", cleared: true };
+      }
+    } catch (error) {
+      try {
+        await this.#auditCheckpoint(operationId, input.operation, "failed");
+      } catch (auditError) {
+        throw auditError;
+      }
+      throw error;
+    }
+
+    await this.#auditCheckpoint(operationId, input.operation, "success");
+    return result;
   }
 
   requireReady(workspaceId: string): OpenWorkspace {
@@ -1676,6 +1786,13 @@ function publicWorkspace(state: WorkspaceState): OpenWorkspace {
       envAllowlist: [...state.effectivePolicy.envAllowlist]
     }
   };
+}
+
+function requireReadyTrustId(state: WorkspaceState): string {
+  if (state.phase !== "READY" || state.trustId === undefined) {
+    throw new WorkspaceNotReadyError(state.id);
+  }
+  return state.trustId;
 }
 
 function publicTrustedWorkspace(entry: TrustedWorkspaceEntry): TrustedWorkspaceSummary {
