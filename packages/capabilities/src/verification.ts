@@ -14,6 +14,7 @@ import {
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
 import { isSemanticDiscoveryPath } from "./semantic-scope.js";
+import { readVerificationConfig } from "./verification-config.js";
 
 const PACKAGE_JSON = "package.json";
 const CARGO_TOML = "Cargo.toml";
@@ -135,6 +136,7 @@ export async function listVerifications(
     allowDynamicExecutables: effectivePolicy.allowDynamicExecutables,
     allowedExecutableNames: new Set(effectivePolicy.allowedExecutableNames)
   };
+  const configuredRecipes = await readVerificationConfig(workspace, input.workspaceId);
   const recipes: VerificationRecipe[] = [];
   const packagePaths = scopedManifestPaths(
     "package",
@@ -190,6 +192,19 @@ export async function listVerifications(
     const projectDir = manifestDirectory(manifestPath);
     recipes.push(...(await cargoProjectRecipes(input.workspaceId, projectDir, policy, availability)));
   }
+
+  recipes.push(
+    ...(await Promise.all(
+      configuredRecipes.map((recipe) =>
+        withStaticAvailability(
+          input.workspaceId,
+          { ...recipe, argv: [...recipe.argv] },
+          policy,
+          availability
+        )
+      )
+    ))
+  );
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,

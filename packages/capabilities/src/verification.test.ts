@@ -11,6 +11,7 @@ import { NativeCapabilityService } from "./native-capability-service.js";
 import { createTestCapabilityDependencies } from "./test-support.js";
 
 const PACKAGE_JSON = "package.json";
+const VERIFICATION_CONFIG = ".kodegpt/verify.json";
 
 function presentFile(): CapabilityPathIdentityResult {
   return { exists: true, kind: "file", sizeBytes: 1, hashTruncated: false };
@@ -24,6 +25,7 @@ function service(options: {
   packageJson?: Record<string, unknown>;
   packageJsonText?: string;
   packageJsonByPath?: Record<string, Record<string, unknown> | string>;
+  verificationConfig?: Record<string, unknown> | string | (() => string | undefined);
   files?: string[];
   treeEntries?: CapabilityTreeEntry[];
   treeTruncated?: boolean;
@@ -46,6 +48,12 @@ function service(options: {
     files.add(path);
     packageJsonByPath.set(path, typeof value === "string" ? value : JSON.stringify(value));
   }
+  const currentVerificationConfig = (): string | undefined => {
+    const value = typeof options.verificationConfig === "function"
+      ? options.verificationConfig()
+      : options.verificationConfig;
+    return value === undefined ? undefined : typeof value === "string" ? value : JSON.stringify(value);
+  };
   const defaultTreeEntries = [...new Set([
     ...packageJsonByPath.keys(),
     ...[...files].filter((path) => path === "Cargo.toml" || path.endsWith("/Cargo.toml"))
@@ -53,7 +61,9 @@ function service(options: {
   const workspace = {
     readFile: async (_workspaceId: string, path: string) => {
       options.onRead?.(path);
-      const contents = packageJsonByPath.get(path);
+      const contents = path === VERIFICATION_CONFIG
+        ? currentVerificationConfig()
+        : packageJsonByPath.get(path);
       if (contents === undefined) throw new Error(`unexpected read: ${path}`);
       return { contents, bytesRead: Buffer.byteLength(contents), eof: true };
     },
@@ -66,6 +76,17 @@ function service(options: {
     },
     pathIdentity: async (_workspaceId: string, path: string) => {
       options.onPathIdentity?.(path);
+      if (path === VERIFICATION_CONFIG) {
+        const contents = currentVerificationConfig();
+        return contents === undefined
+          ? missing()
+          : {
+              exists: true,
+              kind: "file" as const,
+              sizeBytes: Buffer.byteLength(contents, "utf8"),
+              hashTruncated: false
+            };
+      }
       return files.has(path) ? presentFile() : missing();
     },
     effectivePolicy: () => ({
@@ -207,7 +228,8 @@ describe("safe verification recipes", () => {
       "npm-shrinkwrap.json",
       "yarn.lock",
       "bun.lock",
-      "bun.lockb"
+      "bun.lockb",
+      ".kodegpt/verify.json"
     ]);
   });
 
@@ -457,6 +479,131 @@ describe("safe verification recipes", () => {
         allowed: true
       }
     ]);
+  });
+
+  it("discovers repository-configured verification recipes through dynamic availability", async () => {
+    const capability = service({
+      verificationConfig: {
+        schemaVersion: 1,
+        recipes: {
+          pytest: {
+            label: "Python tests",
+            category: "test",
+            logicalExecutable: "pytest",
+            argv: ["-q"],
+            cwd: "python"
+          }
+        }
+      },
+      allowDynamicExecutables: true,
+      allowedExecutables: [],
+      availability: { pytest: { executableAvailable: true, sandboxAvailable: true } }
+    });
+
+    const result = await capability.listVerifications({ workspaceId: "ws_config" });
+    expect(result.recipes).toContainEqual({
+      id: "config:pytest",
+      label: "Python tests",
+      category: "test",
+      logicalExecutable: "pytest",
+      argv: ["-q"],
+      cwd: "python",
+      source: "kodegpt-config",
+      allowed: true
+    });
+  });
+
+  it("runs a configured recipe through the existing execution adapter with exact launch fields", async () => {
+    const calls: unknown[] = [];
+    const capability = service({
+      verificationConfig: {
+        schemaVersion: 1,
+        recipes: {
+          pytest: {
+            label: "Python tests",
+            category: "test",
+            logicalExecutable: "pytest",
+            argv: ["-q", "tests/unit"],
+            cwd: "python"
+          }
+        }
+      },
+      allowDynamicExecutables: true,
+      allowedExecutables: [],
+      run: async (input) => {
+        calls.push(input);
+        return {
+          schemaVersion: 1,
+          operationId: "op_config_verify",
+          state: "completed",
+          exitCode: 0,
+          stdoutPreview: "ok",
+          stderrPreview: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          sourceTruncated: false,
+          bytesSpooled: 2,
+          artifact: {
+            schemaVersion: 1,
+            uri: "artifact://ka_config_verify",
+            mediaType: "application/vnd.kodegpt.execution-stream",
+            sizeBytes: 2,
+            sourceTruncated: false
+          }
+        };
+      }
+    });
+
+    const result = await capability.runVerification({
+      workspaceId: "ws_config_run",
+      recipeId: "config:pytest",
+      background: true
+    });
+    expect(result.operation.operationId).toBe("op_config_verify");
+    expect(calls).toEqual([
+      {
+        workspaceId: "ws_config_run",
+        recipeId: "config:pytest",
+        logicalExecutable: "pytest",
+        argv: ["-q", "tests/unit"],
+        cwd: "python",
+        background: true
+      }
+    ]);
+  });
+
+  it("re-reads repository config before run and never executes stale listed launch data", async () => {
+    let config = JSON.stringify({
+      schemaVersion: 1,
+      recipes: {
+        pytest: {
+          label: "Python tests",
+          category: "test",
+          logicalExecutable: "pytest",
+          argv: ["-q"],
+          cwd: "."
+        }
+      }
+    });
+    const calls: unknown[] = [];
+    const capability = service({
+      verificationConfig: () => config,
+      allowDynamicExecutables: true,
+      allowedExecutables: [],
+      run: async (input) => {
+        calls.push(input);
+        throw new Error("stale recipe must not execute");
+      }
+    });
+
+    const listed = await capability.listVerifications({ workspaceId: "ws_config_fresh" });
+    expect(listed.recipes.some((recipe) => recipe.id === "config:pytest")).toBe(true);
+
+    config = JSON.stringify({ schemaVersion: 1, recipes: {} });
+    await expect(
+      capability.runVerification({ workspaceId: "ws_config_fresh", recipeId: "config:pytest" })
+    ).rejects.toMatchObject({ code: "VERIFICATION_NOT_FOUND" });
+    expect(calls).toEqual([]);
   });
 
   it("re-resolves discovery before run and executes only stored recipe fields including recipeId", async () => {
