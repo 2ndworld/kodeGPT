@@ -241,6 +241,27 @@ function dependencies(
 }
 
 describe("kodegpt start orchestration", () => {
+  it("self-describes trusted execution features independently from workspace policy", async () => {
+    const events: string[] = [];
+    const stack = await createProductionServiceStack(
+      { runtimePath: "/runtime", stateRoot: "/state" },
+      dependencies(events)
+    );
+    try {
+      const capabilities = await stack.toolContext.system.capabilities();
+      expect(capabilities.execution).toEqual({
+        processRun: true,
+        explicitTrustedShell: true,
+        dynamicExecutableResolution: true,
+        developerEnvironmentRegistry: true,
+        inheritsHostEnvironment: false
+      });
+      expect(capabilities.publicTools).toBeDefined();
+    } finally {
+      await stack.close();
+    }
+  });
+
   it("keeps Provider Gateway private and startup-idle while wiring only GitHub contexts", async () => {
     const events: string[] = [];
     const providerExecutions: Array<Record<string, unknown>> = [];

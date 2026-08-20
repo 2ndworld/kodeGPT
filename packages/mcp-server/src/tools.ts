@@ -1120,7 +1120,7 @@ export function registerKodegptTools(
   server.registerTool(
     "process.run",
     {
-      description: "Run a policy-approved logical executable in the retained-root sandbox without a shell.",
+      description: "Run a policy-approved logical executable directly in the retained-root sandbox; KodeGPT does not implicitly wrap it in a shell. On profiles that admit bash or sh, callers may explicitly run bash -lc or sh -lc. Structured tools remain preferred when they match the operation.",
       inputSchema: {
         workspaceId: z.string().min(1),
         logicalExecutable: z.string().min(1),

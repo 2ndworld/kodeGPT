@@ -652,6 +652,13 @@ function systemCapabilities(hello: KernelHello): Record<string, unknown> {
     filesystemBoundaryAvailable: hello.filesystemBoundaryAvailable,
     mcpProtocolVersion: MCP_PROTOCOL_VERSION,
     mcpSurfaceVersion: MCP_SURFACE_VERSION,
+    execution: {
+      processRun: true,
+      explicitTrustedShell: true,
+      dynamicExecutableResolution: true,
+      developerEnvironmentRegistry: true,
+      inheritsHostEnvironment: false
+    },
     publicTools: publicToolInventory()
   };
 }

@@ -1166,6 +1166,22 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
+  it("describes process.run as direct execution with explicit trusted-shell escape hatch", () => {
+    const definitions = new Map<string, Record<string, unknown>>();
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>) {
+        definitions.set(name, definition);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, makeContext());
+    const description = definitions.get("process.run")?.description;
+    expect(typeof description).toBe("string");
+    expect(description).toMatch(/logical executable.*direct/i);
+    expect(description).toMatch(/bash.*sh.*explicit/i);
+    expect(description).toMatch(/structured tools.*preferred/i);
+  });
+
   it("keeps verify.run schemas, process annotations, and structured fallback aligned", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
