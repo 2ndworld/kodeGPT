@@ -473,6 +473,15 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(contextBuild.selectedFiles).toContainEqual(
         expect.objectContaining({ path: "package.json", reason: "governing-manifest" })
       );
+      expect(contextBuild.workspace.manifests).not.toContainEqual(
+        expect.objectContaining({ path: "frontend/package.json" })
+      );
+      expect(contextBuild.workspace.areas).not.toContainEqual(
+        expect.objectContaining({ path: "frontend" })
+      );
+      expect(contextBuild.verifications).not.toContainEqual(
+        expect.objectContaining({ id: "package:frontend:test" })
+      );
       expect(contextBuild.totalBytes).toBeLessThanOrEqual(4_096);
       const serializedContextBuild = JSON.stringify(contextBuild);
       expect(serializedContextBuild).not.toContain(workspaceA);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_CONTEXT_MAX_BYTES,
+  type CodeSearchInput,
   type CodeSearchResult,
   type GitChangesResult,
   type VerifyListResult,
@@ -13,6 +14,10 @@ import { CapabilityError } from "./errors.js";
 type SourceOptions = {
   extraSearchMatches?: CodeSearchResult["matches"];
   relationships?: WorkspaceInspectResult["relationships"];
+  workspaceEntrypoints?: WorkspaceInspectResult["entrypoints"];
+  workspaceAreas?: WorkspaceInspectResult["areas"];
+  workspaceSymbols?: WorkspaceInspectResult["symbols"];
+  verificationRecipes?: VerifyListResult["recipes"];
   workspaceWarnings?: string[];
   workspaceTruncated?: boolean;
   gitTruncated?: boolean;
@@ -31,8 +36,8 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
     root: ".",
     projectTypes: ["node-pnpm"],
     languages: [{ name: "TypeScript", fileCount: 8 }],
-    entrypoints: [],
-    areas: [
+    entrypoints: options.workspaceEntrypoints ?? [],
+    areas: options.workspaceAreas ?? [
       { path: "packages/core", kind: "package" },
       { path: "packages/other", kind: "package" }
     ],
@@ -41,7 +46,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
       { path: "packages/core/package.json", kind: "node-package" },
       { path: "packages/other/package.json", kind: "node-package" }
     ],
-    symbols: [],
+    symbols: options.workspaceSymbols ?? [],
     relationships: options.relationships ?? [],
     warnings: options.workspaceWarnings ?? [],
     truncated: options.workspaceTruncated ?? false
@@ -74,7 +79,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
   const verify: VerifyListResult = {
     schemaVersion: 1,
     workspaceId: "ws_1",
-    recipes: [
+    recipes: options.verificationRecipes ?? [
       {
         id: "package:test",
         label: "Package test",
@@ -88,6 +93,7 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
     ]
   };
   const readCalls: string[] = [];
+  const searchCalls: CodeSearchInput[] = [];
   return {
     adapter: {
       inspect: async () => {
@@ -98,7 +104,8 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         if (options.gitFailure !== undefined) throw options.gitFailure;
         return git;
       },
-      search: async () => {
+      search: async (input: CodeSearchInput) => {
+        searchCalls.push(input);
         if (options.searchFailure !== undefined) throw options.searchFailure;
         return search;
       },
@@ -121,13 +128,242 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
         };
       }
     },
-    readCalls
+    readCalls,
+    searchCalls
   };
 }
 
 const TARGET = "packages/core/src/workspace-manager.ts";
 
 describe("context.build", () => {
+  it("preserves repository-wide evidence when no target is supplied", async () => {
+    const fixture = sources(
+      {
+        "packages/core/src/helper.ts": "core-change\n",
+        "packages/other/src/unrelated.ts": "other-change\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/other/package.json": "other-manifest\n"
+      },
+      {
+        workspaceEntrypoints: [
+          { path: "packages/core/src/index.ts", kind: "source-index" },
+          { path: "packages/other/src/index.ts", kind: "source-index" }
+        ],
+        verificationRecipes: [
+          {
+            id: "package:packages/core:test",
+            label: "Core test",
+            category: "test",
+            cwd: "packages/core",
+            source: "package-script",
+            allowed: true
+          },
+          {
+            id: "package:packages/other:test",
+            label: "Other test",
+            category: "test",
+            cwd: "packages/other",
+            source: "package-script",
+            allowed: true
+          }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      maxBytes: 4096
+    });
+
+    expect(result.workspace.areas.map((area) => area.path)).toEqual(["packages/core", "packages/other"]);
+    expect(result.workspace.entrypoints.map((entrypoint) => entrypoint.path)).toEqual([
+      "packages/core/src/index.ts",
+      "packages/other/src/index.ts"
+    ]);
+    expect(result.verifications.map((recipe) => recipe.id)).toEqual([
+      "package:packages/core:test",
+      "package:packages/other:test"
+    ]);
+    expect(fixture.searchCalls).toEqual([]);
+  });
+
+  it("scopes lexical search to the resolved target area", async () => {
+    const fixture = sources({
+      [TARGET]: "target\n",
+      "packages/core/src/helper.ts": "changed\n",
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n",
+      "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+      "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+    });
+
+    await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: TARGET,
+      maxBytes: 1024
+    });
+
+    expect(fixture.searchCalls).toEqual([
+      {
+        workspaceId: "ws_1",
+        query: "workspace-manager",
+        mode: "path",
+        path: "packages/core",
+        maxResults: 100
+      }
+    ]);
+  });
+
+  it("uses the containing semantic area instead of a config-file area as the search root", async () => {
+    const configTarget = "packages/core/tsconfig.json";
+    const fixture = sources(
+      {
+        [configTarget]: "{}\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        workspaceAreas: [
+          { path: "packages/core", kind: "package" },
+          { path: configTarget, kind: "config" },
+          { path: "packages/other", kind: "package" }
+        ]
+      }
+    );
+
+    await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "understand",
+      target: configTarget,
+      maxBytes: 1024
+    });
+
+    expect(fixture.searchCalls[0]?.path).toBe("packages/core");
+  });
+
+  it("compacts public workspace evidence around the target and candidate paths", async () => {
+    const helper = "packages/core/src/helper.ts";
+    const unrelated = "packages/other/src/unrelated.ts";
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        [helper]: "helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      {
+        workspaceEntrypoints: [
+          { path: "package.json", kind: "node-manifest" },
+          { path: "packages/core/src/index.ts", kind: "source-index" },
+          { path: "packages/other/src/index.ts", kind: "source-index" }
+        ],
+        workspaceSymbols: [
+          { name: "buildTarget", kind: "function", path: TARGET, line: 1, exported: true },
+          { name: "helper", kind: "function", path: helper, line: 1, exported: true },
+          { name: "unrelated", kind: "function", path: unrelated, line: 1, exported: true }
+        ],
+        relationships: [
+          { from: TARGET, to: helper, kind: "imports" },
+          { from: unrelated, to: "packages/other/src/other.ts", kind: "imports" }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "debug",
+      target: TARGET,
+      maxBytes: 4096
+    });
+
+    expect(result.workspace.areas).toEqual([{ path: "packages/core", kind: "package" }]);
+    expect(result.workspace.manifests).toEqual([
+      { path: "package.json", kind: "node-package" },
+      { path: "packages/core/package.json", kind: "node-package" }
+    ]);
+    expect(result.workspace.entrypoints).toEqual([
+      { path: "package.json", kind: "node-manifest" },
+      { path: "packages/core/src/index.ts", kind: "source-index" }
+    ]);
+    expect(result.workspace.symbols.map(({ path }) => path)).toEqual([TARGET, helper]);
+    expect(result.workspace.relationships).toEqual([{ from: TARGET, to: helper, kind: "imports" }]);
+  });
+
+  it("keeps repository and target-area verification recipes while dropping unrelated package recipes", async () => {
+    const fixture = sources(
+      {
+        [TARGET]: "target\n",
+        "packages/core/src/helper.ts": "helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n",
+        "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+        "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+      },
+      {
+        verificationRecipes: [
+          {
+            id: "package:test",
+            label: "Root test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: ".",
+            source: "package-script",
+            allowed: true
+          },
+          {
+            id: "package:packages:test",
+            label: "Packages test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: "packages",
+            source: "package-script",
+            allowed: true
+          },
+          {
+            id: "package:packages/core:test",
+            label: "Core test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: "packages/core",
+            source: "package-script",
+            allowed: true
+          },
+          {
+            id: "package:packages/other:test",
+            label: "Other test",
+            category: "test",
+            logicalExecutable: "pnpm",
+            argv: ["run", "test"],
+            cwd: "packages/other",
+            source: "package-script",
+            allowed: true
+          }
+        ]
+      }
+    );
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target: TARGET,
+      maxBytes: 4096
+    });
+
+    expect(result.verifications.map((recipe) => recipe.id)).toEqual([
+      "package:packages/core:test",
+      "package:packages:test",
+      "package:test"
+    ]);
+  });
+
   it("selects deterministic priority tiers with lexical ties and reuses existing capability evidence", async () => {
     const fixture = sources({
       [TARGET]: "target\n",
