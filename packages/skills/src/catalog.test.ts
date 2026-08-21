@@ -221,6 +221,9 @@ describe("SkillCatalog live discovery", () => {
     ]);
     const stage = (id: string) => inspected.requirementGraph.stages.find((item) => item.id === id)!;
     expect(stage("continuity").actions.map((action) => action.id)).toContain("workspace.info");
+    expect(stage("verification").actions.map((action) => action.id)).toEqual(
+      expect.arrayContaining(["verify.run", "process.status", "process.cancel"])
+    );
     expect(stage("preview").actions.map((action) => action.id)).toContain("preview.start");
     expect(stage("browser").actions.map((action) => action.id)).toContain("browser.openPreview");
     expect(stage("visual").actions.map((action) => action.id)).toContain("visual.captureMatrix");
@@ -257,6 +260,10 @@ describe("SkillCatalog live discovery", () => {
       "do not invent a new phase",
       "before `context.build`",
       "never blind retry",
+      "Focused proof first",
+      "`background: true`",
+      "`process.status` with bounded `waitMs`",
+      "Do not automatically cancel sibling verification",
       "final diff review",
       "CI failure evidence",
       "never busy-poll",
