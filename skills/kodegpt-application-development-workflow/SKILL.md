@@ -41,7 +41,7 @@ metadata:
           - file.patch
           - file.write
       - id: verification
-        description: Discover and run deterministic checks or approved local development commands.
+        description: Run focused proof first, then host-orchestrated parallel broader verification through existing background operations.
         actions:
           - verify.list
           - verify.run
@@ -117,7 +117,11 @@ Use this order, skipping conditional stages that do not add relevant evidence:
 
 1. **Understand.** Start with `context.build`; refine with `workspace.inspect`, `code.search`, `code.impact`, `file.read`, and relevant `git.status`, `git.log`, `git.show`, `git.range`, or `git.diffHistory`. Gather enough evidence to identify the smallest change.
 2. **Implement.** Prefer test-first edits using `file.edit`, `file.patch`, or `file.write`. Keep the diff narrow.
-3. **Verify.** Start with the smallest targeted check. Prefer `verify.list` and `verify.run`; use bounded `process.run` only when no suitable typed or discovered recipe exists. On failure, diagnose returned evidence and make a targeted correction; **never blind retry**.
+3. **Verify. Focused proof first.** Start with the smallest targeted check and run it synchronously. Prefer `verify.list` and `verify.run`; use bounded `process.run` only when no suitable typed or discovered recipe exists. If focused proof fails, diagnose returned evidence and make a targeted correction; **never blind retry**.
+
+   After focused proof succeeds, when multiple independent broader recipes such as test, typecheck, lint, or build are relevant, fan them out as distinct `verify.run` calls with `background: true`. Keep every returned `operationId` in host conversation state; KodeGPT does not own a verification workflow or scheduler. Collect each operation through `process.status` with bounded `waitMs`; do not busy-poll or create an automatic retry loop. Interpret each result separately.
+
+   A failed broader gate does not make sibling evidence useless. **Do not automatically cancel sibling verification** when one gate fails; let independent siblings finish unless their work is now provably obsolete, unsafe, or the user asks to stop. Use `process.cancel` only for that evidence-backed case. Repair the smallest affected scope and rerun only verification invalidated by the repair.
 4. **Preview only when relevant.** For previewable or runtime-relevant work, use `preview.start`, confirm readiness with `preview.inspect`, and eventually `preview.stop`. Skip preview for work whose behavior is fully established by non-runtime verification.
 5. **Browser only when behavior matters.** With a live preview, use `browser.openPreview`, then `browser.inspect`, `browser.console`, `browser.networkFailures`, and targeted `browser.click`, `browser.type`, or `browser.screenshot` only as needed. Do not add browser work to unrelated changes.
 6. **Visual only for UI/layout impact.** Prefer `visual.captureMatrix`; use `visual.compare` only with an explicit trusted reference artifact. A UI change should not stop at unit tests when visual evidence is material.
