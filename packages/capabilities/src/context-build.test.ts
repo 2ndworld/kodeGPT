@@ -274,6 +274,61 @@ describe("context.build", () => {
     );
   });
 
+  it("uses an exact-target inspection when full-workspace structural aggregation omits the focused symbol", async () => {
+    const targetLines = [
+      "// prelude",
+      "// prelude 2",
+      "export function workspaceManager() {",
+      "  return 1;",
+      "}",
+      "// distant"
+    ];
+    const fixture = sources({
+      [TARGET]: targetLines.join("\n"),
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n"
+    }, { workspaceWarnings: ["INSPECT_SYMBOL_LIMIT_REACHED"] });
+    const originalInspect = fixture.adapter.inspect;
+    const inspectCalls: WorkspaceInspectInput[] = [];
+    fixture.adapter.inspect = async (input) => {
+      inspectCalls.push(input);
+      const result = await originalInspect(input);
+      if (input.path !== TARGET) return result;
+      return {
+        ...result,
+        root: TARGET,
+        symbols: [
+          {
+            name: "workspaceManager",
+            kind: "function" as const,
+            path: TARGET,
+            line: 3,
+            exported: true,
+            region: { startLine: 3, endLine: 5 }
+          }
+        ],
+        warnings: []
+      };
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "implement",
+      target: TARGET,
+      focus: "workspaceManager",
+      maxBytes: 1024
+    });
+
+    expect(inspectCalls).toContainEqual({ workspaceId: "ws_1", path: TARGET, maxEntries: 1 });
+    expect(result.selectedFiles.find((file) => file.path === TARGET)).toMatchObject({
+      path: TARGET,
+      reason: "exact-target",
+      region: { startLine: 3, endLine: 5 },
+      content: "export function workspaceManager() {\n  return 1;\n}\n",
+      truncated: false
+    });
+  });
+
   it("rejects focus without an explicit target path", async () => {
     const fixture = sources({});
     await expect(

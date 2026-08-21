@@ -91,6 +91,10 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
+  const focusedTargetWorkspace =
+    input.focus === undefined || input.target === undefined
+      ? undefined
+      : await adapter.inspect({ workspaceId: input.workspaceId, path: input.target, maxEntries: 1 });
   const targetArea =
     input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
@@ -148,7 +152,7 @@ export async function buildContext(
 
     try {
       const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
-      const region = selectFocusRegion(candidate, workspace, input, focusEvidence);
+      const region = selectFocusRegion(candidate, workspace, focusedTargetWorkspace, input, focusEvidence);
       const sourceReadLimit =
         region === undefined
           ? readLimit
@@ -351,6 +355,7 @@ function scopeSearchEvidence(
 function selectFocusRegion(
   candidate: Candidate,
   workspace: WorkspaceInspectResult,
+  focusedTargetWorkspace: WorkspaceInspectResult | undefined,
   input: ContextBuildInput,
   focusEvidence: EvidenceResult<CodeSearchResult> | undefined
 ): SourceRegion | undefined {
@@ -358,7 +363,7 @@ function selectFocusRegion(
 
   if (candidate.path === input.target) {
     return uniqueRegion(
-      workspace.symbols
+      (focusedTargetWorkspace ?? workspace).symbols
         .filter(
           (symbol) =>
             symbol.path === candidate.path &&
