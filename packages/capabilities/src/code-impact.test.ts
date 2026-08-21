@@ -121,6 +121,43 @@ describe("code.impact", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("uses structural nested definitions and excludes comment/string false-positive dependents", async () => {
+    const capability = impactService(
+      {
+        "packages/core/src/math.ts": [
+          "export function outer() {",
+          "  function helper() { return 1; }",
+          "  return helper();",
+          "}"
+        ].join("\n"),
+        "packages/app/src/use.ts": [
+          "// helper should not count",
+          "const note = \"helper should not count\";",
+          "export function use() { return helper(); }"
+        ].join("\n"),
+        "packages/core/src/math.test.ts": "test(\"helper\", () => helper());\n"
+      },
+      [
+        { path: "packages/core", kind: "directory" },
+        { path: "packages/app", kind: "directory" }
+      ]
+    );
+
+    const result = await capability.impactCode({
+      workspaceId: "ws_structural_impact",
+      target: "helper",
+      kind: "symbol"
+    });
+
+    expect(result.target.resolvedPaths).toEqual(["packages/core/src/math.ts"]);
+    expect(result.dependents).toEqual([
+      { path: "packages/app/src/use.ts", relationship: "reference", line: 3 },
+      { path: "packages/core/src/math.test.ts", relationship: "reference", line: 1 },
+      { path: "packages/core/src/math.ts", relationship: "reference", line: 3 }
+    ]);
+    expect(result.relatedTests).toEqual(["packages/core/src/math.test.ts"]);
+  });
+
   it("reports stable section and upstream truncation reasons", async () => {
     const files = Object.fromEntries([
       ["packages/core/src/helper.ts", "export function helper() {}\n"],
