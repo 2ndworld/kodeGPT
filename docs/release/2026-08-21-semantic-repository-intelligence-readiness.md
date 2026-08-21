@@ -1,12 +1,16 @@
-# Semantic Repository Intelligence Readiness
+# Semantic Repository Intelligence Readiness and Final Closure
 
 Date: 2026-08-21
 
-Candidate branch: `feat/semantic-repository-intelligence`
+Feature branch (merged and deleted): `feat/semantic-repository-intelligence`
 
-Candidate semantic contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.19 / 76 public tools`
+Released semantic contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.19 / 76 public tools`
 
-Live installed baseline before release closure: `surface 0.18 / 76 public tools` on `rel_fda9290d7ee09062dd6a656b56292683`.
+Pre-release live baseline: `surface 0.18 / 76 public tools` on `rel_fda9290d7ee09062dd6a656b56292683`.
+
+Final code merge: `8211584b1a4d2c4622aa4afd69afa974da265fe5` after feature PR #60 plus focused-context hotfix PR #61. Both exact-head and merged-main gates passed; final merged-main CI is `32473346644`.
+
+Final installed service: active immutable release `rel_f8ed46a490b83951f30a3bc6a01f4c0c` at `0.19 / 76`, with known-good `0.18` release `rel_fda9290d7ee09062dd6a656b56292683` retained as rollback. The defective initial `0.19` release was pruned after the hotfix cutover.
 
 ## Scope
 
@@ -49,9 +53,9 @@ A temporary, uncommitted filesystem-backed dogfood harness exercised the candida
 
 Representative `buildContext` evidence:
 
-- `code.search(query:"buildContext",mode:"definition",path:"packages/capabilities/src")` returned `precision:"structural"` with the exact definition in `packages/capabilities/src/context-build.ts` at line 86;
+- pre-hotfix candidate dogfood found the exact `buildContext` definition structurally; final exact-active-release dogfood on the merged hotfix returned `precision:"structural"` at line 87 in `packages/capabilities/src/context-build.ts`;
 - structural reference search returned 23 actual references in the bounded capability scope;
-- `code.search(query:"calculateInvoice",mode:"reference")`, where that identifier appears only inside test fixture strings/comments in the real source scope, returned 0 structural references;
+- final exact-active-release `code.search(query:"calculateInvoice",mode:"reference",path:"packages/capabilities/src")`, where that identifier appears only as non-reference fixture/comment/string evidence in that supported TS scope, returned `precision:"structural"` with 0 matches;
 - `code.impact(target:"buildContext",kind:"symbol")` resolved the target to `packages/capabilities/src/context-build.ts`, identified related tests, affected area `packages/capabilities`, and truthfully reported truncation when the configured dependent/search bound was reached;
 - the full workspace carried `INSPECT_ANALYSIS_FILE_LIMIT_REACHED`, `INSPECT_ANALYSIS_FILE_SKIPPED`, and `INSPECT_SYMBOL_LIMIT_REACHED`, so aggregate symbol metadata alone could not reliably supply the focused target region despite structural search succeeding;
 - the first regression attempt (`a480ea5`) used an exact-file `workspace.inspect` call and passed adapter-level dogfood, but exact-active-release dogfood after the initial `0.19` cutover exposed that native tree inspection does not accept a file as its root and returned `CAPABILITY_INTERNAL`;
@@ -61,7 +65,7 @@ Representative `buildContext` evidence:
 
 ## Focused and package verification
 
-Fresh passing evidence on the candidate includes:
+Passing feature/hotfix verification evidence includes:
 
 - `pnpm --filter @kodegpt/capabilities test` -> 46 files, 434 tests passed;
 - `pnpm --filter @kodegpt/capabilities typecheck` -> PASS;
@@ -86,7 +90,7 @@ Likewise, invoking `pnpm test:rust` from inside the retained sandbox causes expe
 
 ## Release boundary review
 
-Confirmed before PR creation:
+Confirmed through final closure:
 
 - no public tool was added or removed; count remains exactly 76;
 - required MCP inputs remain unchanged;
@@ -97,20 +101,19 @@ Confirmed before PR creation:
 - context slicing never expands `maxBytes`;
 - whole-file fallback remains available when no trustworthy region exists;
 - no LSP/vector/model/background-index/plugin/workflow/agent runtime was introduced;
-- current live service remains `0.18 / 76` until merged-main artifacts are built and explicitly cut over.
+- live service is now `0.19 / 76` on `rel_f8ed46a490b83951f30a3bc6a01f4c0c`, with known-good `0.18` rollback `rel_fda9290d7ee09062dd6a656b56292683`.
 
-## Merge and deployment gate
+## Final merge and deployment closure
 
-This document is pre-merge readiness evidence, not a live-release claim. Release closure requires:
+Release closure completed as follows:
 
-1. clean candidate worktree and committed readiness docs;
-2. push branch and create/update the PR;
-3. exact-head GitHub CI SUCCESS;
-4. guarded merge of that exact passing head;
-5. merged-main CI SUCCESS;
-6. build/package provenance from merged main;
-7. stage immutable service release while preserving the current active `0.18` release as rollback;
-8. explicit restart/cutover;
-9. post-cutover status/health plus exact-active-release MCP dogfood showing `0.19 / 76`, structural search, and focused region output;
-10. refreshed ChatGPT action snapshot before any `0.19` host-compatibility claim;
-11. worktree/branch cleanup only after closure evidence is complete.
+1. feature PR #60 exact-head CI passed and guarded merge produced `53bb657f4e93da8e66ce0eb638a3856eb509a473`; merged-main CI `32471256244` passed;
+2. the initial `0.19` cutover exposed one real exact-active-release defect: focused context attempted file-root `workspace.inspect` and returned `CAPABILITY_INTERNAL`;
+3. hotfix PR #61 at exact head `30c81393da067e1145a041a8cdf3ee93532ce52b` passed CI `32472827974`, was guarded-merged as `8211584b1a4d2c4622aa4afd69afa974da265fe5`, and merged-main CI `32473346644` passed;
+4. final build provenance recorded `sourceRevision:8211584b1a4d2c4622aa4afd69afa974da265fe5` with `sourceDirty:false`;
+5. lifecycle promotion intentionally restored known-good `0.18` first, then promoted the hotfix, leaving active `rel_f8ed46a490b83951f30a3bc6a01f4c0c` and rollback `rel_fda9290d7ee09062dd6a656b56292683`; the defective initial `0.19` release was pruned;
+6. live `system.capabilities` observed `0.19 / 76`; live `system.health` reported healthy audit and filesystem boundary; exact-active-release MCP dogfood passed structural definition, structural false-positive suppression, and focused region `87-244` at 6,160 of 23,126 bytes while preserving the 32 KiB aggregate budget;
+7. canonical `main == origin/main`, the feature/hotfix linked worktree was removed, and local plus remote feature/hotfix branches were deleted;
+8. development continuity checkpoint revision 4 records this release complete with no repository/runtime next actions.
+
+The current conversation's approved ChatGPT action definition for `context.build` still reflects the older cached schema and does not expose optional `focus`, even though the live server and exact-active MCP surface do. A fresh/rescanned ChatGPT action snapshot is therefore still required before claiming **host-schema** acceptance for `context.build.focus`; this is a host snapshot freshness condition, not a remaining repository/runtime release blocker.
