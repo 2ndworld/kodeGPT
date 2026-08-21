@@ -30,7 +30,7 @@ const SCORE = Object.freeze({
 const MAX_QUERY_TOKENS = 64;
 const MAX_MATCH_REASONS = 8;
 const DEFAULT_LIMIT = 8;
-const MAX_LIMIT = 75;
+const MAX_LIMIT = listPublicActionDescriptors().length;
 
 export function normalizeDiscoveryQuery(value: string): NormalizedDiscoveryQuery {
   const normalized = value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();

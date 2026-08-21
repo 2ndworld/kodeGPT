@@ -38,6 +38,11 @@ describe("public action search", () => {
     expect(searchPublicActions("zxqv completely unrelated tokens", { limit: 8 })).toEqual([]);
   });
 
+  it("can return the complete current public catalog when every action family matches", () => {
+    const allFamilies = "artifact browser visual ci code console context file git github process preview profile skill system trust verify workspace";
+    expect(searchPublicActions(allFamilies, { limit: 76 })).toHaveLength(76);
+  });
+
   it("returns bounded immutable scoring evidence", () => {
     const matches = searchPublicActions("git status", { limit: 3 });
     expect(matches.length).toBeGreaterThan(0);
