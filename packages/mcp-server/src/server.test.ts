@@ -75,6 +75,7 @@ const LOCKED_SURFACE = [
   { name: "skill.inspect", required: ["skillId"] },
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
+  { name: "system.discover", required: ["query"] },
   { name: "system.health", required: [] },
   { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
@@ -106,10 +107,10 @@ describe("KodeGPT MCP semantic surface", () => {
   });
 
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.17");
+    expect(MCP_SURFACE_VERSION).toBe("0.18");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(75);
+    expect(surface).toHaveLength(76);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",

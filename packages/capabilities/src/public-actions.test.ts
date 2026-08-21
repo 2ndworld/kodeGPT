@@ -15,13 +15,14 @@ describe("public action catalog", () => {
     expect((capabilities as Record<string, unknown>).listPublicActionDescriptors).toBe(listPublicActionDescriptors);
   });
 
-  it("contains the current 75 public actions exactly once before system.discover is published", () => {
-    expect(PUBLIC_ACTION_IDS).toHaveLength(75);
-    expect(new Set(PUBLIC_ACTION_IDS).size).toBe(75);
+  it("contains the published 76-action discovery surface exactly once", () => {
+    expect(PUBLIC_ACTION_IDS).toHaveLength(76);
+    expect(new Set(PUBLIC_ACTION_IDS).size).toBe(76);
     expect(PUBLIC_ACTION_IDS).toContain("workspace.info");
     expect(PUBLIC_ACTION_IDS).toContain("visual.captureMatrix");
     expect(PUBLIC_ACTION_IDS).toContain("github.pr.create");
-    expect(PUBLIC_ACTION_IDS).not.toContain("system.discover");
+    expect(PUBLIC_ACTION_IDS).toContain("system.discover");
+    expect(getPublicActionDescriptor("system.discover").requiredInputs).toEqual(["query"]);
   });
 
   it("provides complete immutable discovery metadata", () => {

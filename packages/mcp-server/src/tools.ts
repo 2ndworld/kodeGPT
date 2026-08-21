@@ -1421,6 +1421,20 @@ export function registerKodegptTools(
   );
 
   server.registerTool(
+    "system.discover",
+    {
+      description: "Deterministically find relevant KodeGPT actions, Agent Skills, and declared workflow stages for an intent without executing them.",
+      inputSchema: {
+        query: z.string().min(1).max(512),
+        workspaceId: z.string().min(1).optional(),
+        limit: z.number().int().positive().max(20).safe().optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) => structuredToolResult(await context.system.discover(input))
+  );
+
+  server.registerTool(
     "system.health",
     {
       description: "Report KodeGPT process health without mutating host state.",

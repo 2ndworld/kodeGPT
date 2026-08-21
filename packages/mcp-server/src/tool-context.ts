@@ -1,4 +1,5 @@
 import type { ArtifactReadResult, ArtifactStore } from "../../artifacts/src/index.js";
+import { searchPublicActions } from "@kodegpt/capabilities";
 import type {
   CiCancelInput,
   CiDispatchInput,
@@ -69,6 +70,7 @@ import type {
   WorkspaceTreeEntry
 } from "../../core/src/index.js";
 import {
+  rankSkillsForQuery,
   resolveSkillCapabilityPlan,
   type SkillCatalogToolAdapter,
   type SkillCompatibility,
@@ -77,6 +79,11 @@ import {
   type SkillLoadResult
 } from "@kodegpt/skills";
 import { SkillError } from "@kodegpt/skills/errors";
+import {
+  discoverKodegpt,
+  type SystemDiscoverInput,
+  type SystemDiscoverResult
+} from "./discovery.js";
 
 export type JsonObject = Record<string, unknown>;
 export type MaybePromise<T> = Promise<T> | T;
@@ -210,6 +217,7 @@ export interface ProfileToolContext {
 
 export interface SystemToolContext {
   capabilities(): MaybePromise<JsonObject>;
+  discover(input: SystemDiscoverInput): Promise<SystemDiscoverResult>;
   health(): MaybePromise<JsonObject>;
 }
 
@@ -371,6 +379,29 @@ export function createKodegptToolContext(options: {
   const browser = options.browser ?? unavailableBrowser();
   const visual = options.visual ?? unavailableVisual();
   const skill = options.skillCatalog ?? unavailableSkillCatalog();
+  const inspectSkill: SkillToolContext["inspect"] = async ({ skillId, fingerprint, workspaceId }) => {
+    const inspection = await skill.inspect({
+      skillId,
+      fingerprint,
+      ...(workspaceId === undefined ? {} : { workspaceId })
+    });
+    if (workspaceId === undefined) return inspection;
+    const ready = options.workspaceManager.requireReady(workspaceId);
+    const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {
+      workspaceId,
+      allowProcess: ready.effectivePolicy.allowProcess,
+      allowDynamicExecutables: ready.effectivePolicy.allowDynamicExecutables,
+      allowedExecutableNames: ready.effectivePolicy.allowedExecutableNames,
+      inspectExecutable: async (executable) => {
+        const availability = await options.workspaceManager.inspectExecutable(workspaceId, executable);
+        return {
+          executableAvailable: availability.executableAvailable,
+          sandboxAvailable: availability.sandboxAvailable
+        };
+      }
+    });
+    return { ...inspection, capabilityPlan };
+  };
   return {
     workspace: {
       list: () => options.workspaceManager.listWorkspaces(),
@@ -467,6 +498,14 @@ export function createKodegptToolContext(options: {
     },
     system: {
       capabilities: async () => requireJsonObject(await options.capabilities(), "system.capabilities"),
+      discover: (input) =>
+        discoverKodegpt(input, {
+          searchActions: searchPublicActions,
+          rankSkills: rankSkillsForQuery,
+          listSkills: (listInput) => skill.list(listInput),
+          inspectSkill,
+          workspaceInfo: ({ workspaceId }) => options.workspaceManager.workspaceInfo(workspaceId)
+        }),
       health: async () => requireJsonObject(await options.health(), "system.health")
     },
     code: {
@@ -499,29 +538,7 @@ export function createKodegptToolContext(options: {
     },
     skill: {
       list: (input) => skill.list(input),
-      inspect: async ({ skillId, fingerprint, workspaceId }) => {
-        const inspection = await skill.inspect({
-          skillId,
-          fingerprint,
-          ...(workspaceId === undefined ? {} : { workspaceId })
-        });
-        if (workspaceId === undefined) return inspection;
-        const ready = options.workspaceManager.requireReady(workspaceId);
-        const capabilityPlan = await resolveSkillCapabilityPlan(inspection.capabilityPlan, {
-          workspaceId,
-          allowProcess: ready.effectivePolicy.allowProcess,
-          allowDynamicExecutables: ready.effectivePolicy.allowDynamicExecutables,
-          allowedExecutableNames: ready.effectivePolicy.allowedExecutableNames,
-          inspectExecutable: async (executable) => {
-            const availability = await options.workspaceManager.inspectExecutable(workspaceId, executable);
-            return {
-              executableAvailable: availability.executableAvailable,
-              sandboxAvailable: availability.sandboxAvailable
-            };
-          }
-        });
-        return { ...inspection, capabilityPlan };
-      },
+      inspect: inspectSkill,
       load: (input) => skill.load(input)
     }
   };

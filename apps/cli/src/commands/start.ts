@@ -711,6 +711,12 @@ function systemCapabilities(hello: KernelHello): Record<string, unknown> {
       developerEnvironmentRegistry: true,
       inheritsHostEnvironment: false
     },
+    discovery: {
+      systemDiscover: true,
+      publicActionCatalogVersion: 1,
+      skillRequirementGraphVersion: 1,
+      deterministicRanking: true
+    },
     publicTools: publicToolInventory()
   };
 }

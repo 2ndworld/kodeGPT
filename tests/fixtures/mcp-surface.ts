@@ -65,6 +65,7 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "skill.inspect", required: ["skillId"] },
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
+  { name: "system.discover", required: ["query"] },
   { name: "system.health", required: [] },
   { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },

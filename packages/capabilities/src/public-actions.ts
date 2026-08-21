@@ -73,6 +73,7 @@ export const PUBLIC_ACTION_IDS = Object.freeze([
   "skill.inspect",
   "skill.load",
   "system.capabilities",
+  "system.discover",
   "system.health",
   "trust.list",
   "verify.list",
@@ -638,6 +639,20 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
     "introspection",
     "global",
     []
+  ),
+  "system.discover": define(
+    "Find relevant KodeGPT actions, skills, and declared skill stages for a development intent without executing them.",
+    [
+      "discover capabilities",
+      "find tools",
+      "find what kodegpt can do",
+      "route development intent",
+      "search capabilities"
+    ],
+    ["discovery", "capabilities", "routing", "skills", "tools"],
+    "introspection",
+    "global",
+    ["query"]
   ),
   "system.health": define(
     "Report KodeGPT runtime health and bounded recent diagnostic evidence.",
