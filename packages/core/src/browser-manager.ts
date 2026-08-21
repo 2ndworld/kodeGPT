@@ -1,4 +1,8 @@
-import type { PreviewLookupInput, PreviewStatusResult } from "./preview-manager.js";
+import type {
+  EvidenceSourceStateRef,
+  PreviewLookupInput,
+  PreviewStatusResult
+} from "./preview-manager.js";
 
 export const MAX_BROWSER_SESSIONS = 8;
 export const BROWSER_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
@@ -136,6 +140,7 @@ export interface BrowserOpenResult {
   previewId: string;
   url: string;
   viewport: BrowserViewport;
+  sourceState: EvidenceSourceStateRef;
 }
 
 export interface BrowserInspectResult extends BrowserOpenResult {
@@ -163,6 +168,7 @@ export interface BrowserConsoleResult {
   previewId: string;
   entries: BrowserConsoleEntry[];
   truncated: boolean;
+  sourceState: EvidenceSourceStateRef;
 }
 
 export interface BrowserNetworkFailuresResult {
@@ -170,12 +176,14 @@ export interface BrowserNetworkFailuresResult {
   previewId: string;
   entries: BrowserNetworkFailureEntry[];
   truncated: boolean;
+  sourceState: EvidenceSourceStateRef;
 }
 
 export interface BrowserActionResult {
   schemaVersion: 1;
   previewId: string;
   ok: true;
+  sourceState: EvidenceSourceStateRef;
 }
 
 export interface BrowserScreenshotResult {
@@ -183,6 +191,7 @@ export interface BrowserScreenshotResult {
   previewId: string;
   artifact: BrowserArtifactMetadata;
   viewport: BrowserViewport;
+  sourceState: EvidenceSourceStateRef;
 }
 
 interface SessionRecord {
@@ -191,6 +200,7 @@ interface SessionRecord {
   url: string;
   origin: string;
   viewport: BrowserViewport;
+  sourceState: EvidenceSourceStateRef;
   driver: BrowserDriverSession;
   consoleEntries: BrowserConsoleEntry[];
   consoleTruncated: boolean;
@@ -376,6 +386,7 @@ export class BrowserManager {
       url: parsed.url,
       origin: parsed.origin,
       viewport,
+      sourceState: { ...live.sourceState },
       driver: driverSession,
       consoleEntries,
       get consoleTruncated() {
@@ -429,7 +440,8 @@ export class BrowserManager {
       bodyText: body.value,
       ariaSnapshot: aria.value,
       truncated: reasons.length > 0,
-      truncationReasons: reasons
+      truncationReasons: reasons,
+      sourceState: { ...record.sourceState }
     };
   }
 
@@ -453,7 +465,12 @@ export class BrowserManager {
     } catch (error) {
       throw new BrowserManagerError("BROWSER_ACTION_FAILED", `browser click failed: ${String(error)}`);
     }
-    return { schemaVersion: 1, previewId: record.previewId, ok: true };
+    return {
+      schemaVersion: 1,
+      previewId: record.previewId,
+      ok: true,
+      sourceState: { ...record.sourceState }
+    };
   }
 
   async type(input: BrowserTypeInput): Promise<BrowserActionResult> {
@@ -467,7 +484,12 @@ export class BrowserManager {
     } catch (error) {
       throw new BrowserManagerError("BROWSER_ACTION_FAILED", `browser type failed: ${String(error)}`);
     }
-    return { schemaVersion: 1, previewId: record.previewId, ok: true };
+    return {
+      schemaVersion: 1,
+      previewId: record.previewId,
+      ok: true,
+      sourceState: { ...record.sourceState }
+    };
   }
 
   async screenshot(input: BrowserScreenshotInput): Promise<BrowserScreenshotResult> {
@@ -498,7 +520,8 @@ export class BrowserManager {
       schemaVersion: 1,
       previewId: record.previewId,
       artifact,
-      viewport: { ...record.viewport }
+      viewport: { ...record.viewport },
+      sourceState: { ...record.sourceState }
     };
   }
 
@@ -508,7 +531,8 @@ export class BrowserManager {
       schemaVersion: 1,
       previewId: record.previewId,
       entries: record.consoleEntries.map((entry) => ({ ...entry })),
-      truncated: record.consoleTruncated
+      truncated: record.consoleTruncated,
+      sourceState: { ...record.sourceState }
     };
   }
 
@@ -518,7 +542,8 @@ export class BrowserManager {
       schemaVersion: 1,
       previewId: record.previewId,
       entries: record.networkFailures.map((entry) => ({ ...entry })),
-      truncated: record.networkTruncated
+      truncated: record.networkTruncated,
+      sourceState: { ...record.sourceState }
     };
   }
 
@@ -549,7 +574,8 @@ export class BrowserManager {
       schemaVersion: 1,
       previewId: record.previewId,
       url: record.url,
-      viewport: { ...record.viewport }
+      viewport: { ...record.viewport },
+      sourceState: { ...record.sourceState }
     };
   }
 

@@ -1466,6 +1466,10 @@ describe("structured MCP tool results", () => {
     };
     expect(startSchema.safeParse(base).success).toBe(true);
     expect(startDefinition?.annotations).toEqual(PROCESS_RUN_TOOL_ANNOTATIONS);
+    const previewOutput = startDefinition?.outputSchema as z.ZodTypeAny;
+    expect(previewOutput).toBeDefined();
+    expect(previewOutput.safeParse(previewResult).success).toBe(true);
+    expect(previewOutput.safeParse({ ...previewResult, sourceState: undefined }).success).toBe(false);
     for (const extra of [
       { host: "example.invalid" },
       { url: "https://example.invalid" },
@@ -1494,6 +1498,86 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
   });
 
+  it("publishes source-state-bound browser output schemas", async () => {
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const sourceState = {
+      headOid: "1".repeat(40),
+      changesFingerprint: "a".repeat(64)
+    };
+    const openResult = {
+      schemaVersion: 1 as const,
+      previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      url: "http://127.0.0.1:3000/",
+      viewport: { width: 1280, height: 720 },
+      sourceState
+    };
+    const inspectResult = {
+      ...openResult,
+      title: "Fixture",
+      bodyText: "body",
+      ariaSnapshot: "- heading \"Fixture\"",
+      truncated: false,
+      truncationReasons: []
+    };
+    const actionResult = { schemaVersion: 1 as const, previewId: openResult.previewId, ok: true as const, sourceState };
+    const screenshotResult = {
+      schemaVersion: 1 as const,
+      previewId: openResult.previewId,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_browser",
+        mediaType: "image/png",
+        sizeBytes: 4,
+        sourceTruncated: false
+      },
+      viewport: openResult.viewport,
+      sourceState
+    };
+    const consoleResult = {
+      schemaVersion: 1 as const,
+      previewId: openResult.previewId,
+      entries: [{ level: "log", text: "ok" }],
+      truncated: false,
+      sourceState
+    };
+    const networkResult = {
+      schemaVersion: 1 as const,
+      previewId: openResult.previewId,
+      entries: [{ method: "GET", url: "https://example.test/fail", resourceType: "fetch", failureText: "failed" }],
+      truncated: false,
+      sourceState
+    };
+    context.browser.openPreview = async () => openResult;
+    context.browser.inspect = async () => inspectResult;
+    context.browser.click = async () => actionResult;
+    context.browser.type = async () => actionResult;
+    context.browser.screenshot = async () => screenshotResult;
+    context.browser.console = async () => consoleResult;
+    context.browser.networkFailures = async () => networkResult;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>) {
+        definitions.set(name, definition);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    for (const [name, value] of [
+      ["browser.openPreview", openResult],
+      ["browser.inspect", inspectResult],
+      ["browser.click", actionResult],
+      ["browser.type", actionResult],
+      ["browser.screenshot", screenshotResult],
+      ["browser.console", consoleResult],
+      ["browser.networkFailures", networkResult]
+    ] as const) {
+      const output = definitions.get(name)?.outputSchema as z.ZodTypeAny;
+      expect(output, name).toBeDefined();
+      expect(output.safeParse(value).success, name).toBe(true);
+      expect(output.safeParse({ ...value, sourceState: undefined }).success, name).toBe(false);
+    }
+  });
+
   it("keeps visual verification schemas bounded, closed, and structured", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
@@ -1508,6 +1592,10 @@ describe("structured MCP tool results", () => {
     const matrixResult = {
       schemaVersion: 1 as const,
       previewId: "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      sourceState: {
+        headOid: "1".repeat(40),
+        changesFingerprint: "a".repeat(64)
+      },
       captures: [
         { name: "mobile" as const, viewport: { width: 390, height: 844 }, artifact },
         { name: "tablet" as const, viewport: { width: 768, height: 1024 }, artifact },
@@ -1517,6 +1605,7 @@ describe("structured MCP tool results", () => {
     const compareResult = {
       schemaVersion: 1 as const,
       previewId: matrixResult.previewId,
+      sourceState: matrixResult.sourceState,
       currentArtifact: artifact,
       referenceArtifact: "artifact://ka_reference",
       currentDimensions: { width: 390, height: 844 },

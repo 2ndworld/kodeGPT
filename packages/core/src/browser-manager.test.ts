@@ -115,6 +115,37 @@ function manager() {
 }
 
 describe("BrowserManager", () => {
+  it("propagates the preview source state through browser evidence without independent source-state scans", async () => {
+    const fixture = manager();
+    const sourceState = fixture.preview.status.sourceState;
+
+    const opened = await fixture.manager.openPreview({ workspaceId: "ws_test", previewId: "pv_test" });
+    const inspected = await fixture.manager.inspect({ workspaceId: "ws_test", previewId: "pv_test" });
+    const resized = await fixture.manager.setViewport({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      viewport: { width: 390, height: 844 }
+    });
+    const clicked = await fixture.manager.click({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      target: { kind: "role", role: "button", name: "Save" }
+    });
+    const typed = await fixture.manager.type({
+      workspaceId: "ws_test",
+      previewId: "pv_test",
+      target: { kind: "css", selector: "#email" },
+      text: "user@example.test"
+    });
+    const screenshot = await fixture.manager.screenshot({ workspaceId: "ws_test", previewId: "pv_test" });
+    const consoleEvidence = await fixture.manager.console({ workspaceId: "ws_test", previewId: "pv_test" });
+    const networkEvidence = await fixture.manager.networkFailures({ workspaceId: "ws_test", previewId: "pv_test" });
+
+    for (const result of [opened, inspected, resized, clicked, typed, screenshot, consoleEvidence, networkEvidence]) {
+      expect(result.sourceState).toEqual(sourceState);
+    }
+  });
+
   it("binds one idempotent session to the exact live 127.0.0.1 preview origin", async () => {
     const fixture = manager();
 

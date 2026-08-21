@@ -20,6 +20,10 @@ import {
 } from "./visual-verification.js";
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const SOURCE_STATE = {
+  headOid: "1".repeat(40),
+  changesFingerprint: "a".repeat(64)
+};
 
 function pngChunk(type: string, data: Uint8Array): Buffer {
   const header = Buffer.alloc(8);
@@ -75,7 +79,8 @@ class FakeVisualBrowser implements VisualBrowserAdapter {
       bodyText: "fixture",
       ariaSnapshot: "",
       truncated: false,
-      truncationReasons: []
+      truncationReasons: [],
+      sourceState: SOURCE_STATE
     };
   }
 
@@ -92,7 +97,8 @@ class FakeVisualBrowser implements VisualBrowserAdapter {
       schemaVersion: 1,
       previewId: input.previewId,
       url: "http://127.0.0.1:4173/",
-      viewport: { ...this.viewport }
+      viewport: { ...this.viewport },
+      sourceState: SOURCE_STATE
     };
   }
 
@@ -108,7 +114,8 @@ class FakeVisualBrowser implements VisualBrowserAdapter {
       schemaVersion: 1,
       previewId: input.previewId,
       artifact: { ...this.screenshotArtifact, uri: `${this.screenshotArtifact.uri}_${callIndex}` },
-      viewport: { ...this.viewport }
+      viewport: { ...this.viewport },
+      sourceState: SOURCE_STATE
     };
   }
 }
@@ -160,6 +167,7 @@ describe("VisualVerificationManager responsive capture", () => {
       { name: "desktop", viewport: { width: 1440, height: 900 } }
     ]);
     expect(result.captures.map(({ name, viewport }) => ({ name, viewport }))).toEqual(VISUAL_VIEWPORT_MATRIX);
+    expect(result.sourceState).toEqual(SOURCE_STATE);
     expect(test.browser.screenshots).toEqual([
       { viewport: { width: 390, height: 844 }, fullPage: false },
       { viewport: { width: 768, height: 1024 }, fullPage: false },
@@ -205,6 +213,7 @@ describe("VisualVerificationManager comparison", () => {
     expect(test.browser.screenshots).toEqual([{ viewport: { width: 1280, height: 720 }, fullPage: false }]);
     expect(result.currentArtifact.uri).toBe(currentUri);
     expect(result.referenceArtifact).toBe(referenceUri);
+    expect(result.sourceState).toEqual(SOURCE_STATE);
     expect(result.dimensionsMatch).toBe(true);
     expect(result.changedPixels).toBe(0);
     expect(result.changedPixelRatio).toBe(0);
