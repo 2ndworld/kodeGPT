@@ -71,6 +71,23 @@ describe("rankSkillsForQuery", () => {
     expect(matches[0]?.skill.skillId).toBe(local.skillId);
   });
 
+  it("prefers broader domain coverage over a narrow helper for multi-stage intent", () => {
+    const broad = entry({
+      name: "application-workflow",
+      description: "End to end application workflow to check UI, create and deliver PRs, and inspect CI evidence.",
+      skillId: `sk_${"a".repeat(64)}`
+    });
+    const narrow = entry({
+      name: "visual-check",
+      description: "Inspect responsive UI screenshots and browser visual evidence.",
+      skillId: `sk_${"b".repeat(64)}`
+    });
+
+    expect(rankSkillsForQuery([narrow, broad], "check the UI and create a PR")[0]?.skill.name).toBe(
+      "application-workflow"
+    );
+  });
+
   it("is stable by UTF-8 skill identity when scores tie", () => {
     const left = entry({ skillId: `sk_${"8".repeat(64)}`, sourceId: `ss_${"a".repeat(32)}` });
     const right = entry({ skillId: `sk_${"9".repeat(64)}`, sourceId: `ss_${"b".repeat(32)}` });

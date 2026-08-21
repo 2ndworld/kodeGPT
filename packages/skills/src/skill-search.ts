@@ -19,6 +19,7 @@ const SCORE = Object.freeze({
   ALL_NAME_TOKENS: 7_000,
   NAME_TOKEN: 900,
   DESCRIPTION_TOKEN: 300,
+  QUERY_COVERAGE_TOKEN: 500,
   WORKSPACE_SOURCE: 120,
   COMPATIBILITY_NATIVE: 80,
   COMPATIBILITY_PARTIAL: 50,
@@ -27,6 +28,28 @@ const SCORE = Object.freeze({
 });
 
 const MAX_MATCH_REASONS = 8;
+const QUERY_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "from",
+  "in",
+  "of",
+  "on",
+  "or",
+  "the",
+  "this",
+  "to",
+  "with",
+  "dan",
+  "dengan",
+  "ini",
+  "itu",
+  "lalu",
+  "untuk",
+  "yang"
+]);
 
 export function rankSkillsForQuery(
   skills: readonly SkillCatalogEntry[],
@@ -34,7 +57,8 @@ export function rankSkillsForQuery(
   options: SkillSearchOptions = {}
 ): readonly SkillSearchMatch[] {
   const normalized = normalizeDiscoveryQuery(query);
-  if (normalized.tokens.length === 0) return Object.freeze([]);
+  const terms = normalized.tokens.filter((item) => !QUERY_STOPWORDS.has(item));
+  if (terms.length === 0) return Object.freeze([]);
 
   const matches: SkillSearchMatch[] = [];
   for (const skill of skills) {
@@ -50,12 +74,15 @@ export function rankSkillsForQuery(
       reasons.push("NAME_EXACT");
     }
 
-    const nameMatches = normalized.tokens.filter((token) => nameTokens.has(token)).length;
-    const descriptionMatches = normalized.tokens.filter((token) => descriptionTokens.has(token)).length;
-    const textMatched = nameMatches > 0 || descriptionMatches > 0;
+    const nameMatches = terms.filter((token) => nameTokens.has(token)).length;
+    const descriptionMatches = terms.filter((token) => descriptionTokens.has(token)).length;
+    const coverageMatches = terms.filter(
+      (token) => nameTokens.has(token) || descriptionTokens.has(token)
+    ).length;
+    const textMatched = coverageMatches > 0;
     if (!textMatched) continue;
 
-    if (normalized.tokens.every((token) => nameTokens.has(token))) {
+    if (terms.every((token) => nameTokens.has(token))) {
       score += SCORE.ALL_NAME_TOKENS;
       reasons.push("ALL_NAME_TOKENS");
     }
@@ -66,6 +93,10 @@ export function rankSkillsForQuery(
     if (descriptionMatches > 0) {
       score += descriptionMatches * SCORE.DESCRIPTION_TOKEN;
       reasons.push(`DESCRIPTION_TOKEN:${descriptionMatches}`);
+    }
+    if (coverageMatches > 0) {
+      score += coverageMatches * SCORE.QUERY_COVERAGE_TOKEN;
+      reasons.push(`QUERY_COVERAGE:${coverageMatches}`);
     }
 
     const compatibilityBonus = compatibilityScore(skill.compatibility.classification);

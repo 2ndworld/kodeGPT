@@ -154,21 +154,32 @@ export async function discoverKodegpt(
   }
 
   const rankedSkills = deps.rankSkills(candidateSkills, query, { workspaceSourceIds });
-  const groupedSkills = groupRankedSkills(rankedSkills, workspaceSourceIds, truncationReasons);
-  if (groupedSkills.length > limit) truncationReasons.add("SKILL_LIMIT");
-  const visibleGroups = groupedSkills.slice(0, limit);
+  const rankedSkillIds = new Set(rankedSkills.map((match) => match.skill.skillId));
+  const fallbackMatches = candidateSkills
+    .filter((skill) => !rankedSkillIds.has(skill.skillId))
+    .map((skill) =>
+      Object.freeze({
+        skill,
+        score: 0,
+        matchReasons: Object.freeze([] as string[])
+      })
+    );
+  const textualGroups = groupRankedSkills(rankedSkills, workspaceSourceIds, truncationReasons);
+  const fallbackGroups = groupRankedSkills(fallbackMatches, workspaceSourceIds, truncationReasons);
+  const inspectionGroups = [...textualGroups, ...fallbackGroups];
 
   const actionScoreById = new Map(actionMatches.map((match) => [match.action.id, match.score]));
   const actionIdSet = new Set(actionMatches.map((match) => match.action.id));
-  const inspectedGroupCount = Math.min(visibleGroups.length, SYSTEM_DISCOVER_MAX_SKILL_INSPECTIONS);
-  if (visibleGroups.length > SYSTEM_DISCOVER_MAX_SKILL_INSPECTIONS) {
+  const inspectedGroupCount = Math.min(inspectionGroups.length, SYSTEM_DISCOVER_MAX_SKILL_INSPECTIONS);
+  if (inspectionGroups.length > SYSTEM_DISCOVER_MAX_SKILL_INSPECTIONS) {
     truncationReasons.add("SKILL_INSPECTION_LIMIT");
   }
 
   const matchedStagesBySkill = new Map<string, SystemDiscoverMatchedStage[]>();
+  const stageMatchedFallbackGroups: RankedGroup[] = [];
   const rankedFlows: RankedFlow[] = [];
   for (let index = 0; index < inspectedGroupCount; index += 1) {
-    const group = visibleGroups[index]!;
+    const group = inspectionGroups[index]!;
     const selected = group.representative.skill;
     let inspected: SkillInspectResult;
     try {
@@ -190,6 +201,17 @@ export async function discoverKodegpt(
       selected.skillId,
       stageEvidence.map(({ stage }) => stage)
     );
+    if (group.representative.score === 0) {
+      const stageScore = Math.max(...stageEvidence.map((evidence) => evidence.score));
+      stageMatchedFallbackGroups.push({
+        representative: Object.freeze({
+          ...group.representative,
+          score: stageScore,
+          matchReasons: Object.freeze(["STAGE_ACTION_MATCH"])
+        }),
+        members: group.members
+      });
+    }
     for (const evidence of stageEvidence) {
       rankedFlows.push({
         score: evidence.score,
@@ -206,6 +228,11 @@ export async function discoverKodegpt(
     return compareUtf8(left.stageId, right.stageId);
   });
   if (rankedFlows.length > SYSTEM_DISCOVER_MAX_FLOWS) truncationReasons.add("FLOW_LIMIT");
+
+  const resultGroups = [...textualGroups, ...stageMatchedFallbackGroups];
+  resultGroups.sort(compareRankedGroups);
+  if (resultGroups.length > limit) truncationReasons.add("SKILL_LIMIT");
+  const visibleGroups = resultGroups.slice(0, limit);
 
   const actions = Object.freeze(
     actionMatches.slice(0, limit).map((match) =>
@@ -309,20 +336,22 @@ function groupRankedSkills(
     result.push({ representative, members: Object.freeze([...members]) });
   }
 
-  result.sort((left, right) => {
-    if (left.representative.score !== right.representative.score) {
-      return right.representative.score - left.representative.score;
-    }
-    const nameOrder = compareUtf8(left.representative.skill.name, right.representative.skill.name);
-    if (nameOrder !== 0) return nameOrder;
-    const sourceOrder = compareUtf8(
-      left.representative.skill.sourceId,
-      right.representative.skill.sourceId
-    );
-    if (sourceOrder !== 0) return sourceOrder;
-    return compareUtf8(left.representative.skill.skillId, right.representative.skill.skillId);
-  });
+  result.sort(compareRankedGroups);
   return result;
+}
+
+function compareRankedGroups(left: RankedGroup, right: RankedGroup): number {
+  if (left.representative.score !== right.representative.score) {
+    return right.representative.score - left.representative.score;
+  }
+  const nameOrder = compareUtf8(left.representative.skill.name, right.representative.skill.name);
+  if (nameOrder !== 0) return nameOrder;
+  const sourceOrder = compareUtf8(
+    left.representative.skill.sourceId,
+    right.representative.skill.sourceId
+  );
+  if (sourceOrder !== 0) return sourceOrder;
+  return compareUtf8(left.representative.skill.skillId, right.representative.skill.skillId);
 }
 
 function selectRepresentative(

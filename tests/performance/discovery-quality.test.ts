@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { searchPublicActions } from "../../packages/capabilities/src/public-action-search.js";
+import type { SkillCatalogEntry } from "../../packages/skills/src/contracts.js";
+import { rankSkillsForQuery } from "../../packages/skills/src/skill-search.js";
 
 type Scenario = {
   query: string;
@@ -62,6 +64,58 @@ const scenarios: readonly Scenario[] = [
   { query: "cek status workspace", expected: ["workspace.info"], critical: true }
 ];
 
+const nativeCompatibility = {
+  classification: "NATIVE" as const,
+  requiredCapabilities: [],
+  missingCapabilities: [],
+  requiredProviders: [],
+  reasons: ["NATIVE_REQUIREMENTS_SATISFIED"],
+  analysisBasis: "static" as const
+};
+
+function skill(
+  name: string,
+  description: string,
+  seed: string,
+  overrides: Partial<SkillCatalogEntry> = {}
+): SkillCatalogEntry {
+  return {
+    skillId: `sk_${seed.repeat(64).slice(0, 64)}`,
+    name,
+    description,
+    sourceId: `ss_${seed.repeat(32).slice(0, 32)}`,
+    sourceKind: "agent-skills",
+    fingerprint: seed.repeat(64).slice(0, 64),
+    descriptorFingerprint: `${seed}d`.repeat(64).slice(0, 64),
+    nameCollision: false,
+    compatibility: nativeCompatibility,
+    availability: "live",
+    pinned: false,
+    ...overrides
+  };
+}
+
+const applicationWorkflow = skill(
+  "kodegpt-application-development-workflow",
+  "Use when developing or fixing an application end to end with KodeGPT to understand the repository, implement and verify changes, check preview/browser UI and visuals, create and deliver PRs, and inspect CI evidence.",
+  "a"
+);
+
+const skillCandidates: readonly SkillCatalogEntry[] = [
+  applicationWorkflow,
+  skill("repository-review", "Review repository structure, code ownership, and architectural changes.", "b"),
+  skill("ci-triage", "Inspect CI failures and summarize remote workflow evidence.", "c"),
+  skill("visual-check", "Inspect responsive UI screenshots and browser visual evidence.", "d"),
+  skill("pull-request-helper", "Prepare and inspect pull request metadata.", "e")
+];
+
+const skillRoutingIntents = [
+  "develop this application end to end",
+  "fix the app and verify it before PR",
+  "lanjutkan development lalu cek CI",
+  "check the UI and create a PR"
+] as const;
+
 describe("deterministic public action discovery quality", () => {
   it("meets top-1/top-3 routing thresholds including critical Indonesian intents", () => {
     let top1Hits = 0;
@@ -109,5 +163,18 @@ describe("deterministic public action discovery quality", () => {
     expect(top3Recall, evidence).toBeGreaterThanOrEqual(0.95);
     expect(top1Accuracy, evidence).toBeGreaterThanOrEqual(0.9);
     expect(criticalTop3Recall, evidence).toBe(1);
+  });
+
+  it("routes end-to-end application work to the built-in application workflow", () => {
+    const misses: Array<{ query: string; actual: string[] }> = [];
+
+    for (const query of skillRoutingIntents) {
+      const actual = rankSkillsForQuery(skillCandidates, query)
+        .slice(0, 3)
+        .map((match) => match.skill.name);
+      if (actual[0] !== applicationWorkflow.name) misses.push({ query, actual });
+    }
+
+    expect(misses, JSON.stringify(misses, null, 2)).toEqual([]);
   });
 });

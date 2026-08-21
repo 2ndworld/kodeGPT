@@ -165,6 +165,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     await mkdir(join(workspaceA, "nested"));
     await mkdir(join(workspaceA, "src"));
     await mkdir(join(workspaceA, "frontend"));
+    await mkdir(join(workspaceA, "skills/kodegpt-application-development-workflow"), { recursive: true });
     await mkdir(join(workspaceA, "node_modules/pkg"), { recursive: true });
     await mkdir(join(workspaceA, ".worktrees/old"), { recursive: true });
     await mkdir(join(workspaceA, "target/generated"), { recursive: true });
@@ -200,11 +201,18 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     );
     await writeFile(join(workspaceA, "pnpm-workspace.yaml"), "packages: []\n");
     await writeFile(join(workspaceA, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await writeFile(
+      join(workspaceA, "skills/kodegpt-application-development-workflow/SKILL.md"),
+      await readFile(
+        join(REPOSITORY_ROOT, "skills/kodegpt-application-development-workflow/SKILL.md"),
+        "utf8"
+      )
+    );
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
     await writeFile(
       join(workspaceA, ".git/info/exclude"),
-      "/frontend/\n/node_modules/\n/.worktrees/\n/target/\n"
+      "/frontend/\n/skills/\n/node_modules/\n/.worktrees/\n/target/\n"
     );
     runGit(workspaceA, ["add", "tracked.txt"]);
 
@@ -287,6 +295,44 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(openedA.id).toMatch(/^ws_/);
       expect(openedB.id).toMatch(/^ws_/);
       expect(openedA.id).not.toBe(openedB.id);
+
+      const mobileDiscovery = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "system.discover",
+          { query: "cek tampilan mobile", workspaceId: openedA.id },
+          "req_full_discover_mobile"
+        )
+      );
+      expect(mobileDiscovery.actions.slice(0, 3).map((match: { id: string }) => match.id)).toContain(
+        "visual.captureMatrix"
+      );
+      const workflowDiscovery = mobileDiscovery.skills.find(
+        (skill: { name: string }) => skill.name === "kodegpt-application-development-workflow"
+      );
+      expect(workflowDiscovery).toBeDefined();
+      expect(workflowDiscovery.matchReasons).toContain("STAGE_ACTION_MATCH");
+      expect(workflowDiscovery.matchedStages.map((stage: { id: string }) => stage.id)).toContain("visual");
+
+      const resumeDiscovery = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "system.discover",
+          { query: "lanjutkan pekerjaan sebelumnya" },
+          "req_full_discover_resume"
+        )
+      );
+      const workspaceInfoDiscovery = resumeDiscovery.actions.find(
+        (action: { id: string }) => action.id === "workspace.info"
+      );
+      expect(workspaceInfoDiscovery).toBeDefined();
+      expect(workspaceInfoDiscovery.availability).toEqual({
+        status: "CONTEXT_REQUIRED",
+        reasons: ["WORKSPACE_REQUIRED"]
+      });
+      expect(await readFile(join(workspaceA, "tracked.txt"), "utf8")).toBe("before\n");
 
       expect(
         textJson(

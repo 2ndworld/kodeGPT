@@ -1,6 +1,6 @@
 ---
 name: kodegpt-application-development-workflow
-description: Use when developing or fixing an application with KodeGPT from repository understanding through verified PR and CI evidence.
+description: Use when developing or fixing an application end to end with KodeGPT to understand the repository, implement and verify changes, check preview/browser UI and visuals, create and deliver PRs, and inspect CI evidence.
 metadata:
   kodegpt:
     requires:

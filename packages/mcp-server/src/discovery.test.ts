@@ -161,6 +161,32 @@ describe("discoverKodegpt", () => {
     });
   });
 
+  it("discovers a skill through explicit stage-action affinity even when skill text does not match the query", async () => {
+    const workflow = skillEntry({
+      description: "English-only application workflow description"
+    });
+    const deps = baseDeps({
+      listSkills: vi.fn(async () => listResult([workflow])),
+      rankSkills: vi.fn(() => []),
+      inspectSkill: vi.fn(async () =>
+        inspection(workflow, [
+          {
+            id: "visual",
+            description: "Gather responsive visual evidence.",
+            actionIds: ["visual.captureMatrix", "visual.compare"]
+          }
+        ])
+      )
+    });
+
+    const result = await discoverKodegpt({ query: "cek tampilan mobile", limit: 8 }, deps);
+
+    expect(result.actions.slice(0, 3).map((match) => match.id)).toContain("visual.captureMatrix");
+    expect(result.skills[0]?.skillId).toBe(workflow.skillId);
+    expect(result.skills[0]?.matchReasons).toContain("STAGE_ACTION_MATCH");
+    expect(result.skills[0]?.matchedStages?.map((stage) => stage.id)).toContain("visual");
+  });
+
   it("groups exact name+fingerprint duplicates, prefers the matching workspace-local copy, and bounds alternate provenance", async () => {
     const global = skillEntry({ skillId: `sk_${"1".repeat(64)}`, sourceId: GLOBAL_SOURCE });
     const local = skillEntry({ skillId: `sk_${"2".repeat(64)}`, sourceId: LOCAL_SOURCE });
@@ -285,6 +311,29 @@ describe("discoverKodegpt", () => {
     });
     expect(workspaceInfo).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(invalidWorkspace)).not.toContain("/private/path");
+  });
+
+  it("propagates skill-source truncation and keeps action/skill outputs within the requested limit", async () => {
+    const skills = [
+      skillEntry({ skillId: `sk_${"7".repeat(64)}`, name: "application-alpha" }),
+      skillEntry({ skillId: `sk_${"8".repeat(64)}`, name: "application-beta" }),
+      skillEntry({ skillId: `sk_${"9".repeat(64)}`, name: "application-gamma" })
+    ];
+    const deps = baseDeps({
+      listSkills: vi.fn(async () => listResult(skills, true)),
+      inspectSkill: vi.fn(async ({ skillId }) =>
+        inspection(skills.find((skill) => skill.skillId === skillId)!)
+      )
+    });
+
+    const result = await discoverKodegpt({ query: "application development", limit: 1 }, deps);
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.skills).toHaveLength(1);
+    expect(result.truncated).toBe(true);
+    expect(result.truncationReasons).toContain("SOURCE_UNAVAILABLE");
+    expect(result.truncationReasons).toContain("ACTION_LIMIT");
+    expect(result.truncationReasons).toContain("SKILL_LIMIT");
   });
 
   it("never invokes undeclared mutation, process, browser, GitHub, CI, or provider dependencies", async () => {
