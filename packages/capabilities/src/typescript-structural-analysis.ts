@@ -5,6 +5,8 @@ import type {
   SourceRegion,
   StructuralFileAnalysis,
   StructuralLanguage,
+  StructuralReferenceEvidence,
+  StructuralRelationshipEvidence,
   StructuralSymbolEvidence,
   WorkspaceInspectSymbolKind
 } from "./contracts.js";
@@ -24,22 +26,35 @@ export function analyzeTypeScriptSource(input: AnalyzeTypeScriptSourceInput): St
     scriptKindForPath(input.path)
   );
   const symbols: StructuralSymbolEvidence[] = [];
+  const references: StructuralReferenceEvidence[] = [];
+  const relationships = new Map<string, StructuralRelationshipEvidence>();
 
   const visit = (node: ts.Node): void => {
     const symbol = symbolForNode(source, input.path, node);
     if (symbol !== undefined) symbols.push(symbol);
+
+    if (ts.isIdentifier(node) && isReferenceIdentifier(node)) {
+      references.push(referenceForIdentifier(source, input.path, node));
+    }
+
+    const relationship = moduleRelationship(input.path, node);
+    if (relationship !== undefined) {
+      relationships.set(`${relationship.from}\0${relationship.to}\0${relationship.kind}`, relationship);
+    }
+
     ts.forEachChild(node, visit);
   };
   visit(source);
 
   symbols.sort(compareSymbols);
+  references.sort(compareReferences);
   return {
     path: input.path,
     language,
     precision: "structural",
     symbols,
-    references: [],
-    relationships: [],
+    references,
+    relationships: [...relationships.values()].sort(compareRelationships),
     warnings: []
   };
 }
@@ -117,6 +132,95 @@ function isExported(node: ts.Node): boolean {
         modifier.kind === ts.SyntaxKind.ExportKeyword || modifier.kind === ts.SyntaxKind.DefaultKeyword
     ) ?? false
   );
+}
+
+function referenceForIdentifier(
+  source: ts.SourceFile,
+  path: string,
+  node: ts.Identifier
+): StructuralReferenceEvidence {
+  const position = source.getLineAndCharacterOfPosition(node.getStart(source));
+  const line = position.line + 1;
+  return {
+    name: node.text,
+    path,
+    line,
+    column: position.character + 1,
+    kind: "reference",
+    region: { startLine: line, endLine: line }
+  };
+}
+
+function isReferenceIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent;
+
+  if (
+    (ts.isFunctionDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent)) &&
+    parent.name === node
+  ) {
+    return false;
+  }
+  if (
+    (ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isBindingElement(parent)) &&
+    parent.name === node
+  ) {
+    return false;
+  }
+  if (
+    ts.isImportSpecifier(parent) ||
+    ts.isImportClause(parent) ||
+    ts.isNamespaceImport(parent) ||
+    ts.isExportSpecifier(parent)
+  ) {
+    return false;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+  if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+  if (ts.isLabeledStatement(parent) && parent.label === node) return false;
+  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return false;
+
+  return true;
+}
+
+function moduleRelationship(path: string, node: ts.Node): StructuralRelationshipEvidence | undefined {
+  const specifier =
+    ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
+      ? node.moduleSpecifier.text
+      : ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined && ts.isStringLiteral(node.moduleSpecifier)
+        ? node.moduleSpecifier.text
+        : undefined;
+  if (specifier === undefined || !specifier.startsWith(".")) return undefined;
+
+  const target = posixPath.normalize(posixPath.join(posixPath.dirname(path), specifier));
+  if (target === ".." || target.startsWith("../") || target.startsWith("/")) return undefined;
+  return { from: path, to: target, kind: "imports", precision: "structural" };
+}
+
+function compareReferences(
+  left: StructuralReferenceEvidence,
+  right: StructuralReferenceEvidence
+): number {
+  return (
+    compareText(left.path, right.path) ||
+    left.line - right.line ||
+    left.column - right.column ||
+    compareText(left.name, right.name)
+  );
+}
+
+function compareRelationships(
+  left: StructuralRelationshipEvidence,
+  right: StructuralRelationshipEvidence
+): number {
+  return compareText(left.from, right.from) || compareText(left.to, right.to) || compareText(left.kind, right.kind);
 }
 
 function languageForPath(path: string): StructuralLanguage {

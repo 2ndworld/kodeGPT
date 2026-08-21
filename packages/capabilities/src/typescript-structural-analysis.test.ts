@@ -86,4 +86,49 @@ describe("TypeScript structural analysis", () => {
       expect.objectContaining({ name: "checkout", kind: "function", exported: true })
     );
   });
+
+  it("extracts AST-role-aware references and relative module relationships", async () => {
+    const { analyzeTypeScriptSource } = await analyzer();
+    const contents = [
+      'import { money as formatMoney } from "./money.js";',
+      'export { taxRate } from "./tax.js";',
+      '',
+      'const note = "calculateInvoice formatMoney should not count";',
+      '// calculateInvoice formatMoney should not count either',
+      'const metadata = { calculateInvoice: true };',
+      '',
+      'export function checkout(total: number) {',
+      '  return calculateInvoice(formatMoney(total));',
+      '}'
+    ].join("\n");
+
+    const result = analyzeTypeScriptSource({ path: "src/checkout.ts", contents });
+    const names = result.references.map((reference) => reference.name);
+
+    expect(result.references).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "calculateInvoice", line: 9, kind: "reference" }),
+        expect.objectContaining({ name: "formatMoney", line: 9, kind: "reference" }),
+        expect.objectContaining({ name: "total", line: 9, kind: "reference" })
+      ])
+    );
+    expect(names.filter((name) => name === "calculateInvoice")).toHaveLength(1);
+    expect(names.filter((name) => name === "formatMoney")).toHaveLength(1);
+    expect(result.relationships).toEqual(
+      expect.arrayContaining([
+        {
+          from: "src/checkout.ts",
+          to: "src/money.js",
+          kind: "imports",
+          precision: "structural"
+        },
+        {
+          from: "src/checkout.ts",
+          to: "src/tax.js",
+          kind: "imports",
+          precision: "structural"
+        }
+      ])
+    );
+  });
 });
