@@ -107,7 +107,7 @@ describe("KodeGPT MCP semantic surface", () => {
   });
 
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.20");
+    expect(MCP_SURFACE_VERSION).toBe("0.21");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
     expect(surface).toHaveLength(76);
