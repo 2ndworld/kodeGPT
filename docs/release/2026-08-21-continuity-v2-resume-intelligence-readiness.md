@@ -45,18 +45,24 @@ The final surface/readiness commit is recorded after candidate verification.
 - Structured MCP result/wiring + discovery/skill guidance regression: 65 tests PASS across resume-context, structured-results, discovery, skill catalog, and public-action catalog.
 - Surface/readiness/security/provider focused gate after the `0.21` bump: 6 files, 71 tests PASS.
 
-## Final verification and integration gates
+## Final pre-merge verification
 
-Pending before merge:
+Fresh candidate verification completed on 2026-08-22:
 
-- full focused continuity/MCP regression set;
-- complete Vitest inventory;
-- `pnpm run typecheck`;
-- `pnpm run build`;
-- `cargo test --workspace`;
-- forbidden-pattern/package gates;
-- local resume dogfood for fresh / same-HEAD working-tree stale / HEAD advanced / diverged history plus explicit evidence refs;
-- persistence verification across close/reopen or isolated candidate restart.
+- focused continuity/MCP regression: 8 files, 132 tests PASS;
+- complete Vitest inventory split into two deterministic shards:
+  - shard 1/2: 70 files PASS, 530 tests PASS, 1 intentional Playwright spike test skipped;
+  - shard 2/2: 71 files PASS, 557 tests PASS;
+  - aggregate: 141 passing files plus 1 intentionally skipped file, 1,087 tests PASS, 1 skipped, 0 failed;
+- `pnpm run typecheck` — PASS across all 13 participating workspace projects;
+- `pnpm run build` — PASS;
+- `cargo test --workspace` — PASS with only existing non-fatal warnings/intentional ignored helper tests;
+- `pnpm run verify:forbidden` — PASS;
+- `pnpm run verify:package` — PASS;
+- production-stack candidate dogfood through `startKodegpt` — PASS for `fresh/SOURCE_STATE_MATCH`, same-HEAD `stale/WORKTREE_CHANGED`, descendant `stale/HEAD_ADVANCED`, checkpoint milestone creation, persistence across `workspace.close`/`workspace.open`, and divergent-history `superseded/HEAD_DIVERGED`;
+- the same candidate dogfood observed explicit completed-process and live-preview evidence one-shot through resume synthesis; existing focused composer coverage proves PR/CI/artifact one-shot reads and per-ref provider/missing degradation.
+
+The first shard attempt exposed one unrelated test-fixture collision: `skill-interoperability.test.ts` used fixed loopback port `43139`, which was already in use. No product behavior failed. The fixture was hardened to allocate an ephemeral loopback port, the affected test passed 3/3 in isolation, and the complete shard then passed. Full-stack candidate tests also use ephemeral ports for the new resume dogfood to avoid reintroducing fixed-port coupling.
 
 Pending after local verification:
 

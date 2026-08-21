@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
+import { createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,21 @@ async function tempRoot(prefix: string): Promise<string> {
   return root;
 }
 
+async function availablePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : undefined;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+  if (port === undefined) throw new Error("failed to allocate local test port");
+  return port;
+}
+
 async function canonicalTempRoot(prefix: string): Promise<string> {
   await mkdir(TARGET, { recursive: true });
   const root = await mkdtemp(join(TARGET, prefix));
@@ -66,6 +82,17 @@ function runGit(cwd: string, args: string[]): void {
   });
   expect(result.error).toBeUndefined();
   expect(result.status, result.stderr).toBe(0);
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout.trim();
 }
 
 function requestMeta() {
@@ -1156,6 +1183,265 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       );
     } finally {
       await started.close();
+    }
+  }, 45_000);
+
+  it("dogfoods continuity v2 resume relations, evidence, milestones, and reopen persistence", async () => {
+    const stateRoot = await tempRoot("kodegpt-resume-full-state-");
+    const workspace = await canonicalTempRoot("kodegpt-resume-full-workspace-");
+    await writeFile(join(workspace, "tracked.txt"), "base\n");
+    runGit(workspace, ["init", "-q"]);
+    runGit(workspace, ["config", "user.name", "KodeGPT Test"]);
+    runGit(workspace, ["config", "user.email", "kodegpt@example.invalid"]);
+    runGit(workspace, ["add", "tracked.txt"]);
+    runGit(workspace, ["commit", "-qm", "base"]);
+    runGit(workspace, ["branch", "-M", "main"]);
+    const baseOid = gitOutput(workspace, ["rev-parse", "HEAD"]);
+
+    const trust = new WorkspaceTrustStore(stateRoot);
+    const inspector = await KernelClient.start({ runtimePath: RUNTIME, stateRoot });
+    try {
+      const inspected = await inspector.request<InspectRootResult>("system.inspect_root", { path: workspace });
+      await trust.trust({
+        canonicalRoot: inspected.canonicalRoot,
+        identity: inspected.identity,
+        profileCeiling: "trusted"
+      });
+    } finally {
+      await inspector.stop();
+    }
+
+    const credential = await new ConnectorCredentialStore(stateRoot).rotate();
+    const mcpPort = await availablePort();
+    const previewPort = await availablePort();
+    const started = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: mcpPort });
+    let previewId: string | undefined;
+    try {
+      const port = started.status.port;
+      const opened = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: workspace }, "req_resume_open")
+      );
+
+      const process = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "process.run",
+          {
+            workspaceId: opened.id,
+            logicalExecutable: "node",
+            argv: ["-e", "console.log('resume-evidence')"],
+            background: false
+          },
+          "req_resume_process"
+        )
+      );
+      expect(process).toMatchObject({ state: "completed", exitCode: 0 });
+      expect(process.operationId).toMatch(/^op_/);
+
+      const preview = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "preview.start",
+          {
+            workspaceId: opened.id,
+            logicalExecutable: "node",
+            argv: [
+              "-e",
+              "require('http').createServer((_req,res)=>{res.statusCode=200;res.end('ok')}).listen(Number(process.argv[1]),'127.0.0.1')",
+              String(previewPort)
+            ],
+            port: previewPort,
+            requestPath: "/",
+            waitMs: 3_000
+          },
+          "req_resume_preview"
+        )
+      );
+      previewId = preview.previewId;
+      expect(preview).toMatchObject({ processState: "running", reachable: true, httpStatus: 200 });
+      expect(previewId).toMatch(/^pv_[a-f0-9]{32}$/);
+
+      const checkpoint1 = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "workspace.checkpoint",
+          {
+            workspaceId: opened.id,
+            operation: "upsert",
+            checkpoint: {
+              objective: "Dogfood Continuity v2",
+              status: "active",
+              baseline: { branch: "main", headOid: baseOid },
+              nextActions: ["Reconcile source state"],
+              evidenceRefs: [
+                { kind: "process", ref: process.operationId, summary: "completed evidence" },
+                { kind: "preview", ref: previewId, summary: "live preview evidence" },
+                { kind: "note", ref: "resume-dogfood" }
+              ]
+            }
+          },
+          "req_resume_checkpoint_1"
+        )
+      );
+      expect(checkpoint1).toMatchObject({ operation: "upsert", checkpoint: { revision: 1 } });
+
+      const info1 = textJson(
+        await callTool(port, credential.token, "workspace.info", { workspaceId: opened.id }, "req_resume_info_1")
+      );
+      expect(info1).toMatchObject({
+        checkpoint: { revision: 1 },
+        continuity: {
+          schemaVersion: 1,
+          capturedSourceState: { headOid: baseOid },
+          milestones: []
+        }
+      });
+
+      const fresh = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "context.build",
+          { workspaceId: opened.id, intent: "resume", maxBytes: 64 * 1024 },
+          "req_resume_fresh"
+        )
+      );
+      expect(fresh.resume).toMatchObject({
+        checkpointPresent: true,
+        checkpointState: { relation: "fresh", reasons: ["SOURCE_STATE_MATCH"] }
+      });
+      expect(fresh.resume.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "process", ref: process.operationId, availability: "observed" }),
+          expect.objectContaining({ kind: "preview", ref: previewId, availability: "observed", relation: "fresh" })
+        ])
+      );
+
+      await writeFile(join(workspace, "tracked.txt"), "working-tree-change\n");
+      const dirty = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "context.build",
+          { workspaceId: opened.id, intent: "resume", maxBytes: 64 * 1024 },
+          "req_resume_dirty"
+        )
+      );
+      expect(dirty.resume).toMatchObject({
+        checkpointPresent: true,
+        checkpointState: { relation: "stale", reasons: ["WORKTREE_CHANGED"] }
+      });
+
+      runGit(workspace, ["add", "tracked.txt"]);
+      runGit(workspace, ["commit", "-qm", "advance"]);
+      const advancedOid = gitOutput(workspace, ["rev-parse", "HEAD"]);
+      const advanced = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "context.build",
+          { workspaceId: opened.id, intent: "resume", maxBytes: 64 * 1024 },
+          "req_resume_advanced"
+        )
+      );
+      expect(advanced.resume).toMatchObject({
+        checkpointPresent: true,
+        checkpointState: { relation: "stale", reasons: ["HEAD_ADVANCED"] }
+      });
+
+      await callTool(
+        port,
+        credential.token,
+        "preview.stop",
+        { workspaceId: opened.id, previewId },
+        "req_resume_preview_stop"
+      );
+      previewId = undefined;
+
+      const checkpoint2 = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "workspace.checkpoint",
+          {
+            workspaceId: opened.id,
+            operation: "upsert",
+            expectedRevision: 1,
+            checkpoint: {
+              objective: "Resume from advanced HEAD",
+              status: "active",
+              baseline: { branch: "main", headOid: advancedOid },
+              nextActions: ["Verify divergence handling"],
+              evidenceRefs: [{ kind: "note", ref: "advanced-checkpoint" }]
+            }
+          },
+          "req_resume_checkpoint_2"
+        )
+      );
+      expect(checkpoint2).toMatchObject({ operation: "upsert", checkpoint: { revision: 2 } });
+
+      const info2 = textJson(
+        await callTool(port, credential.token, "workspace.info", { workspaceId: opened.id }, "req_resume_info_2")
+      );
+      expect(info2).toMatchObject({
+        checkpoint: { revision: 2 },
+        continuity: {
+          capturedSourceState: { headOid: advancedOid },
+          milestones: [{ revision: 1, sourceState: { headOid: baseOid } }]
+        }
+      });
+
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: opened.id },
+        "req_resume_close"
+      );
+      const reopened = textJson(
+        await callTool(port, credential.token, "workspace.open", { rootPath: workspace }, "req_resume_reopen")
+      );
+      const persisted = textJson(
+        await callTool(port, credential.token, "workspace.info", { workspaceId: reopened.id }, "req_resume_persisted")
+      );
+      expect(persisted).toMatchObject({
+        checkpoint: { revision: 2 },
+        continuity: {
+          capturedSourceState: { headOid: advancedOid },
+          milestones: [{ revision: 1, sourceState: { headOid: baseOid } }]
+        }
+      });
+
+      runGit(workspace, ["checkout", "-qb", "diverged", baseOid]);
+      await writeFile(join(workspace, "tracked.txt"), "diverged\n");
+      runGit(workspace, ["add", "tracked.txt"]);
+      runGit(workspace, ["commit", "-qm", "diverged"]);
+      const diverged = textJson(
+        await callTool(
+          port,
+          credential.token,
+          "context.build",
+          { workspaceId: reopened.id, intent: "resume", maxBytes: 64 * 1024 },
+          "req_resume_diverged"
+        )
+      );
+      expect(diverged.resume).toMatchObject({
+        checkpointPresent: true,
+        checkpointState: { relation: "superseded", reasons: ["HEAD_DIVERGED"] }
+      });
+
+      await callTool(
+        port,
+        credential.token,
+        "workspace.close",
+        { workspaceId: reopened.id },
+        "req_resume_final_close"
+      );
+    } finally {
+      await started.close().catch(() => undefined);
     }
   }, 45_000);
 
