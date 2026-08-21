@@ -192,7 +192,8 @@ export const WorkspaceInspectResultSchema: z.ZodType<WorkspaceInspectResult> = z
           kind: workspaceInspectSymbolKindSchema,
           path: workspaceInspectRelativePathSchema,
           line: z.number().int().positive().safe(),
-          exported: z.boolean()
+          exported: z.boolean(),
+          region: SourceRegionSchema.optional()
         })
         .strict()
     ),

@@ -185,6 +185,7 @@ export interface WorkspaceInspectSymbol {
   path: string;
   line: number;
   exported: boolean;
+  region?: SourceRegion;
 }
 
 export interface WorkspaceInspectRelationship {

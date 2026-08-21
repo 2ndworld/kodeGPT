@@ -2,10 +2,12 @@ import { posix } from "node:path";
 
 import type { CapabilityTreeEntry, WorkspaceInspectionAdapter } from "./adapters.js";
 import type {
+  StructuralFileAnalysis,
   WorkspaceInspectRelationship,
   WorkspaceInspectSymbol,
   WorkspaceInspectSymbolKind
 } from "./contracts.js";
+import { analyzeStructuralFile } from "./structural-analysis.js";
 
 const MAX_ANALYSIS_FILES = 256;
 const MAX_ANALYSIS_FILE_BYTES = 128 * 1024;
@@ -21,6 +23,10 @@ const WARNING_ORDER = [
   "INSPECT_ANALYSIS_FILE_LIMIT_REACHED",
   "INSPECT_ANALYSIS_BYTE_LIMIT_REACHED",
   "INSPECT_ANALYSIS_FILE_SKIPPED",
+  "STRUCTURAL_PARSE_FAILED",
+  "STRUCTURAL_SYMBOL_LIMIT_REACHED",
+  "STRUCTURAL_REFERENCE_LIMIT_REACHED",
+  "STRUCTURAL_RELATIONSHIP_LIMIT_REACHED",
   "INSPECT_SYMBOL_LIMIT_REACHED",
   "INSPECT_RELATIONSHIP_LIMIT_REACHED"
 ] as const;
@@ -81,7 +87,12 @@ export async function analyzeRepository(
     if (path.endsWith(".rs")) {
       analyzeRust(path, read.contents, knownFiles, symbols, relationships, warnings);
     } else {
-      analyzeTypeScript(path, read.contents, knownFiles, symbols, relationships, warnings);
+      const structural = analyzeStructuralFile({ path, contents: read.contents });
+      if (structural === undefined) {
+        warnings.add("INSPECT_ANALYSIS_FILE_SKIPPED");
+        continue;
+      }
+      addStructuralAnalysis(structural, knownFiles, symbols, relationships, warnings);
       addTestRelationship(path, knownFiles, relationships, warnings);
     }
   }
@@ -93,27 +104,51 @@ export async function analyzeRepository(
   };
 }
 
-function analyzeTypeScript(
-  path: string,
-  contents: string,
+function addStructuralAnalysis(
+  analysis: StructuralFileAnalysis,
   knownFiles: Set<string>,
   symbols: WorkspaceInspectSymbol[],
   relationships: Map<string, WorkspaceInspectRelationship>,
   warnings: Set<AnalysisWarning>
 ): void {
-  const lines = contents.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (line.length > 0 && /^\s/.test(line)) continue;
-
-    const symbol = parseTypeScriptSymbol(line, path, index + 1);
-    if (symbol !== undefined) addSymbol(symbols, symbol, warnings);
-
-    const specifier = importSpecifier(line);
-    if (specifier === undefined) continue;
-    const target = resolveTypeScriptImport(path, specifier, knownFiles);
-    if (target !== undefined) addRelationship(relationships, { from: path, to: target, kind: "imports" }, warnings);
+  for (const warning of analysis.warnings) {
+    if (isAnalysisWarning(warning)) warnings.add(warning);
+    if (warning === "STRUCTURAL_SYMBOL_LIMIT_REACHED") warnings.add("INSPECT_SYMBOL_LIMIT_REACHED");
+    if (warning === "STRUCTURAL_RELATIONSHIP_LIMIT_REACHED") {
+      warnings.add("INSPECT_RELATIONSHIP_LIMIT_REACHED");
+    }
   }
+
+  for (const structuralSymbol of analysis.symbols) {
+    addSymbol(
+      symbols,
+      {
+        name: structuralSymbol.name,
+        kind: structuralSymbol.kind,
+        path: structuralSymbol.path,
+        line: structuralSymbol.line,
+        exported: structuralSymbol.exported,
+        ...(structuralSymbol.region === undefined ? {} : { region: structuralSymbol.region })
+      },
+      warnings
+    );
+  }
+
+  for (const structuralRelationship of analysis.relationships) {
+    if (structuralRelationship.kind !== "imports") continue;
+    const target = resolveTypeScriptTarget(structuralRelationship.to, knownFiles);
+    if (target !== undefined) {
+      addRelationship(
+        relationships,
+        { from: structuralRelationship.from, to: target, kind: "imports" },
+        warnings
+      );
+    }
+  }
+}
+
+function isAnalysisWarning(value: string): value is AnalysisWarning {
+  return (WARNING_ORDER as readonly string[]).includes(value);
 }
 
 function analyzeRust(
@@ -139,29 +174,6 @@ function analyzeRust(
   }
 }
 
-function parseTypeScriptSymbol(line: string, path: string, lineNumber: number): WorkspaceInspectSymbol | undefined {
-  const exported = line.startsWith("export ");
-  let value = exported ? line.slice("export ".length) : line;
-  if (value.startsWith("default ")) value = value.slice("default ".length);
-  if (value.startsWith("declare ")) value = value.slice("declare ".length);
-  const asyncValue = value.startsWith("async ") ? value.slice("async ".length) : value;
-
-  const definitions: Array<[WorkspaceInspectSymbolKind, RegExp, string]> = [
-    ["function", /^function\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, asyncValue],
-    ["class", /^class\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, value],
-    ["interface", /^interface\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, value],
-    ["type", /^type\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, value],
-    ["enum", /^enum\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, value],
-    ["variable", /^(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/, value]
-  ];
-
-  for (const [kind, pattern, candidate] of definitions) {
-    const name = candidate.match(pattern)?.[1];
-    if (name !== undefined) return { name, kind, path, line: lineNumber, exported };
-  }
-  return undefined;
-}
-
 function parseRustSymbol(line: string, path: string, lineNumber: number): WorkspaceInspectSymbol | undefined {
   const visibility = line.match(/^(pub(?:\([^)]*\))?\s+)?/)?.[1];
   const exported = visibility !== undefined;
@@ -183,16 +195,7 @@ function parseRustSymbol(line: string, path: string, lineNumber: number): Worksp
   return undefined;
 }
 
-function importSpecifier(line: string): string | undefined {
-  return (
-    line.match(/^import\s+(?:.+?\s+from\s+)?["']([^"']+)["']\s*;?\s*$/)?.[1] ??
-    line.match(/^export\s+.+?\s+from\s+["']([^"']+)["']\s*;?\s*$/)?.[1]
-  );
-}
-
-function resolveTypeScriptImport(fromPath: string, specifier: string, knownFiles: Set<string>): string | undefined {
-  if (!specifier.startsWith(".")) return undefined;
-  const base = posix.normalize(posix.join(posix.dirname(fromPath), specifier));
+function resolveTypeScriptTarget(base: string, knownFiles: Set<string>): string | undefined {
   const candidates: string[] = [base];
   const extension = posix.extname(base);
 

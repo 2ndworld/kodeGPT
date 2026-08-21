@@ -3,9 +3,9 @@ import { posix } from "node:path";
 import type { StructuralFileAnalysis } from "./contracts.js";
 import { analyzeTypeScriptSource } from "./typescript-structural-analysis.js";
 
-export const MAX_STRUCTURAL_SYMBOLS_PER_FILE = 256;
+export const MAX_STRUCTURAL_SYMBOLS_PER_FILE = 1_000;
 export const MAX_STRUCTURAL_REFERENCES_PER_FILE = 2_000;
-export const MAX_STRUCTURAL_RELATIONSHIPS_PER_FILE = 256;
+export const MAX_STRUCTURAL_RELATIONSHIPS_PER_FILE = 1_000;
 
 const TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 
