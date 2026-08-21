@@ -418,6 +418,11 @@ export interface GitPatchCoverage {
   untracked: false;
 }
 
+export interface SourceStateRef {
+  headOid: string;
+  changesFingerprint: string;
+}
+
 export interface GitChangesResult {
   schemaVersion: 1;
   workspaceId: string;
@@ -429,6 +434,7 @@ export interface GitChangesResult {
   patchCoverage?: GitPatchCoverage;
   truncated: boolean;
   fingerprint: string;
+  sourceState: SourceStateRef;
 }
 
 export type GitLocalMutationOperation =
@@ -563,6 +569,7 @@ export interface VerifyRunResult {
   workspaceId: string;
   recipe: VerificationRecipe;
   operation: VerificationOperationResult;
+  sourceState: SourceStateRef;
 }
 
 export interface FilePatchInput {

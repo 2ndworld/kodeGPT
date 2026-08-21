@@ -276,6 +276,7 @@ class FakeKernel implements KernelTransport {
       case "git.checkpoint":
         return {
           schemaVersion: 1,
+          headOid: "f".repeat(40),
           records: [
             {
               recordType: "ordinary",
@@ -1304,6 +1305,7 @@ describe("WorkspaceManager", () => {
     });
     expect(gitCheckpoint).toEqual({
       schemaVersion: 1,
+      headOid: "f".repeat(40),
       records: [
         {
           recordType: "ordinary",

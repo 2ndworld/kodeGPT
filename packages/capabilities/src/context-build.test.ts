@@ -59,7 +59,11 @@ function sources(contents: Record<string, string>, options: SourceOptions = {}) 
     ],
     summary: { changedFiles: 2 },
     truncated: options.gitTruncated ?? false,
-    fingerprint: "a".repeat(64)
+    fingerprint: "a".repeat(64),
+    sourceState: {
+      headOid: "1".repeat(40),
+      changesFingerprint: "a".repeat(64)
+    }
   };
   const search: CodeSearchResult = {
     schemaVersion: 1,

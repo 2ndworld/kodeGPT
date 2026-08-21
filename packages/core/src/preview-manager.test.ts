@@ -6,6 +6,11 @@ import { NodeLoopbackPreviewProbe, PreviewManager } from "./preview-manager.js";
 import type { WorkspaceProcessOperationResult, WorkspaceProcessRunInput } from "./workspace-manager.js";
 
 const PREVIEW_ID = "pv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SOURCE_STATE = {
+  headOid: "1".repeat(40),
+  changesFingerprint: "a".repeat(64)
+};
+const SOURCE_STATE_ADAPTER = { resolve: async () => SOURCE_STATE };
 
 const RUNNING: WorkspaceProcessOperationResult = {
   schemaVersion: 1,
@@ -44,11 +49,77 @@ function processFixture(calls: unknown[] = []) {
 }
 
 describe("PreviewManager", () => {
+  it("captures source state once before launch and preserves it across inspect and stop", async () => {
+    const events: string[] = [];
+    let sourceStateCalls = 0;
+    const process = {
+      ...processFixture(),
+      async run(input: WorkspaceProcessRunInput) {
+        events.push("run");
+        return processFixture().run(input);
+      }
+    };
+    const manager = new PreviewManager(process, {
+      idFactory: () => PREVIEW_ID,
+      sourceState: {
+        async resolve() {
+          sourceStateCalls += 1;
+          events.push("source-state");
+          return SOURCE_STATE;
+        }
+      },
+      probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
+      sleep: async () => undefined
+    });
+
+    const started = await manager.start({
+      workspaceId: "ws_preview",
+      logicalExecutable: "node",
+      argv: ["server.mjs"],
+      port: 3000,
+      waitMs: 0
+    });
+    const inspected = await manager.inspect({ workspaceId: "ws_preview", previewId: PREVIEW_ID });
+    const stopped = await manager.stop({ workspaceId: "ws_preview", previewId: PREVIEW_ID });
+
+    expect(events.slice(0, 2)).toEqual(["source-state", "run"]);
+    expect(sourceStateCalls).toBe(1);
+    expect(started.sourceState).toEqual(SOURCE_STATE);
+    expect(inspected.sourceState).toEqual(SOURCE_STATE);
+    expect(stopped.sourceState).toEqual(SOURCE_STATE);
+  });
+
+  it("does not launch a preview when source-state capture fails", async () => {
+    const processCalls: unknown[] = [];
+    const manager = new PreviewManager(processFixture(processCalls), {
+      idFactory: () => PREVIEW_ID,
+      sourceState: {
+        async resolve() {
+          throw new Error("source-state unavailable");
+        }
+      },
+      probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
+      sleep: async () => undefined
+    });
+
+    await expect(
+      manager.start({
+        workspaceId: "ws_preview",
+        logicalExecutable: "node",
+        argv: ["server.mjs"],
+        port: 3000,
+        waitMs: 0
+      })
+    ).rejects.toThrow("source-state unavailable");
+    expect(processCalls).toEqual([]);
+  });
+
   it("starts a background process and binds it to a fixed loopback preview", async () => {
     const processCalls: unknown[] = [];
     const probeCalls: unknown[] = [];
     const manager = new PreviewManager(processFixture(processCalls), {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: {
         async inspect(input) {
           probeCalls.push(input);
@@ -90,7 +161,8 @@ describe("PreviewManager", () => {
       url: "http://127.0.0.1:4173/health",
       processState: "running",
       reachable: true,
-      httpStatus: 204
+      httpStatus: 204,
+      sourceState: SOURCE_STATE
     });
   });
 
@@ -98,6 +170,7 @@ describe("PreviewManager", () => {
     const probeCalls: unknown[] = [];
     const manager = new PreviewManager(processFixture(), {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: {
         async inspect(input) {
           probeCalls.push(input);
@@ -123,6 +196,7 @@ describe("PreviewManager", () => {
   it.each([1023, 65536, 3000.5, Number.NaN])("rejects invalid preview port %s", async (port) => {
     const manager = new PreviewManager(processFixture(), {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -142,6 +216,7 @@ describe("PreviewManager", () => {
     async (requestPath) => {
       const manager = new PreviewManager(processFixture(), {
         idFactory: () => PREVIEW_ID,
+        sourceState: SOURCE_STATE_ADAPTER,
         probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
         sleep: async () => undefined
       });
@@ -162,6 +237,7 @@ describe("PreviewManager", () => {
     const processCalls: unknown[] = [];
     const manager = new PreviewManager(processFixture(processCalls), {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: {
         portInUse: async () => true,
         inspect: async () => ({ reachable: false, httpStatus: null })
@@ -198,6 +274,7 @@ describe("PreviewManager", () => {
     };
     const manager = new PreviewManager(process, {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => probes.shift() ?? { reachable: false, httpStatus: null } },
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -230,6 +307,7 @@ describe("PreviewManager", () => {
     };
     const manager = new PreviewManager(process, {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: {
         async inspect(input) {
           probeCalls.push(input);
@@ -260,6 +338,7 @@ describe("PreviewManager", () => {
     const probeCalls: unknown[] = [];
     const manager = new PreviewManager(process, {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: {
         async inspect(input) {
           probeCalls.push(input);
@@ -297,6 +376,7 @@ describe("PreviewManager", () => {
     const calls: unknown[] = [];
     const manager = new PreviewManager(processFixture(calls), {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -334,6 +414,7 @@ describe("PreviewManager", () => {
     };
     const manager = new PreviewManager(process, {
       idFactory: () => PREVIEW_ID,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -357,6 +438,7 @@ describe("PreviewManager", () => {
     let id = 0;
     const manager = new PreviewManager(processFixture(), {
       idFactory: () => `pv_${(id++).toString(16).padStart(32, "0")}`,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -409,6 +491,7 @@ describe("PreviewManager", () => {
     let id = 0;
     const manager = new PreviewManager(process, {
       idFactory: () => `pv_${(id++).toString(16).padStart(32, "0")}`,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -466,6 +549,7 @@ describe("PreviewManager", () => {
     let id = 0;
     const manager = new PreviewManager(process, {
       idFactory: () => `pv_${(id++).toString(16).padStart(32, "0")}`,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });
@@ -507,6 +591,7 @@ describe("PreviewManager", () => {
     let id = 0;
     const manager = new PreviewManager(process, {
       idFactory: () => `pv_${(id++).toString(16).padStart(32, "0")}`,
+      sourceState: SOURCE_STATE_ADAPTER,
       probe: { inspect: async () => ({ reachable: false, httpStatus: null }) },
       sleep: async () => undefined
     });

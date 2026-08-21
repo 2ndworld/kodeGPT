@@ -68,7 +68,11 @@ describe("native capability public package boundary", () => {
         summary: { changedFiles: 0 },
         patchCoverage: { staged: true, worktree: true, untracked: false },
         truncated: false,
-        fingerprint: "a".repeat(64)
+        fingerprint: "a".repeat(64),
+        sourceState: {
+          headOid: "1".repeat(40),
+          changesFingerprint: "a".repeat(64)
+        }
       })
     ).toMatchObject({
       workspaceId: "ws_public",
@@ -145,7 +149,11 @@ describe("native capability public package boundary", () => {
           summary: { changedFiles: 0 },
           patchCoverage: { staged: true, worktree: true, untracked: false },
           truncated: false,
-          fingerprint: "a".repeat(64)
+          fingerprint: "a".repeat(64),
+          sourceState: {
+            headOid: "1".repeat(40),
+            changesFingerprint: "a".repeat(64)
+          }
         },
         selectedFiles: [],
         relevantMatches: [],

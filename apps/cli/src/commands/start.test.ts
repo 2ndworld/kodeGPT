@@ -115,7 +115,7 @@ function dependencies(
     writeFile: async () => ({ bytesWritten: 0, created: true }),
     editFile: async () => ({ bytesWritten: 0, replacements: 0 }),
     gitStatus: async () => gitInspection,
-    gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+    gitCheckpoint: async () => ({ schemaVersion: 1 as const, headOid: "1".repeat(40), records: [], truncated: false }),
     gitCheckpointPatch: async () => gitInspection,
     gitLog: async () => ({ schemaVersion: 1 as const, resolvedOid: "1".repeat(40), commits: [], returnedCount: 0, truncated: false, truncationReasons: [] }),
     gitShow: async () => ({
@@ -255,7 +255,7 @@ describe("kodegpt start orchestration", () => {
         developerEnvironmentRegistry: true,
         inheritsHostEnvironment: false
       });
-      expect(capabilities.mcpSurfaceVersion).toBe("0.19");
+      expect(capabilities.mcpSurfaceVersion).toBe("0.20");
       expect(capabilities.publicTools).toMatchObject({ count: 76 });
       expect((capabilities.publicTools as { families: Record<string, string[]> }).families.system).toContain(
         "system.discover"
@@ -963,7 +963,7 @@ describe("kodegpt start orchestration", () => {
       Object.assign(managers.workspaceManager, {
         treeBounded: async () => ({ entries: [], truncated: false }),
         searchBounded: async () => ({ matches: [], truncated: false, truncationReasons: [] }),
-        gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+        gitCheckpoint: async () => ({ schemaVersion: 1 as const, headOid: "1".repeat(40), records: [], truncated: false }),
         pathIdentity: async () => ({ schemaVersion: 1 as const, exists: false, hashTruncated: false }),
         readFile: async (_workspaceId: string, path: string) => ({
           contents: path === "src/main.ts" ? "export const value = 1;\n" : "",

@@ -166,7 +166,7 @@ describe("bridge command unit tests", () => {
             bytesSpooled: 0,
             artifact: processResult.artifact
           }),
-          gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+          gitCheckpoint: async () => ({ schemaVersion: 1 as const, headOid: "1".repeat(40), records: [], truncated: false }),
           gitCheckpointPatch: async () => ({
             schemaVersion: 1 as const,
             exitCode: 0,

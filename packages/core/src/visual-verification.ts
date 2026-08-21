@@ -5,6 +5,7 @@ import type {
   BrowserScreenshotResult,
   BrowserViewport
 } from "./browser-manager.js";
+import type { EvidenceSourceStateRef } from "./preview-manager.js";
 import {
   VISUAL_ARTIFACT_MAX_BYTES,
   VisualVerificationError,
@@ -65,11 +66,13 @@ export interface VisualCaptureMatrixResult {
   schemaVersion: 1;
   previewId: string;
   captures: VisualCaptureEntry[];
+  sourceState: EvidenceSourceStateRef;
 }
 
 export interface VisualCompareResult {
   schemaVersion: 1;
   previewId: string;
+  sourceState: EvidenceSourceStateRef;
   currentArtifact: BrowserArtifactMetadata;
   referenceArtifact: string;
   currentDimensions: VisualDimensions;
@@ -202,7 +205,8 @@ export class VisualVerificationManager {
     return {
       schemaVersion: 1,
       previewId: input.previewId,
-      captures
+      captures,
+      sourceState: { ...inspected.sourceState }
     };
   }
 
@@ -231,6 +235,7 @@ export class VisualVerificationManager {
     return {
       schemaVersion: 1,
       previewId: input.previewId,
+      sourceState: { ...current.sourceState },
       currentArtifact: { ...current.artifact },
       referenceArtifact: input.referenceArtifact,
       currentDimensions: comparison.currentDimensions,

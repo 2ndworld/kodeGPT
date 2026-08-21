@@ -396,6 +396,7 @@ export interface WorkspaceGitCheckpointRecord {
 
 export interface WorkspaceGitCheckpointResult {
   schemaVersion: 1;
+  headOid: string;
   records: WorkspaceGitCheckpointRecord[];
   truncated: boolean;
 }
@@ -1840,6 +1841,8 @@ function validateGitCheckpoint(value: unknown): WorkspaceGitCheckpointResult {
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
+    typeof value.headOid !== "string" ||
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.headOid) ||
     !Array.isArray(value.records) ||
     typeof value.truncated !== "boolean"
   ) {
@@ -1859,7 +1862,7 @@ function validateGitCheckpoint(value: unknown): WorkspaceGitCheckpointResult {
     }
     seen.add(record.path);
   }
-  return { schemaVersion: 1, records, truncated: value.truncated };
+  return { schemaVersion: 1, headOid: value.headOid, records, truncated: value.truncated };
 }
 
 function validateGitCheckpointRecord(value: unknown): WorkspaceGitCheckpointRecord {

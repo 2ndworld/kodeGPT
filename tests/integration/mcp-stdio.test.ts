@@ -247,7 +247,11 @@ const context: KodegptToolContext = {
         changedPaths: [],
         summary: { changedFiles: 0 },
         truncated: false,
-        fingerprint: "a".repeat(64)
+        fingerprint: "a".repeat(64),
+        sourceState: {
+          headOid: "1".repeat(40),
+          changesFingerprint: "a".repeat(64)
+        }
       },
       selectedFiles: [
         {

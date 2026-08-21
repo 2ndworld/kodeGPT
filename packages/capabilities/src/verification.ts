@@ -7,6 +7,7 @@ import {
   CAPABILITY_SCHEMA_VERSION,
   type VerificationCategory,
   type VerificationRecipe,
+  type SourceStateRef,
   type VerifyListInput,
   type VerifyListResult,
   type VerifyRunInput,
@@ -217,6 +218,7 @@ export async function runVerification(
   workspace: VerificationWorkspaceAdapter,
   availability: VerificationAvailabilityAdapter,
   execution: VerificationExecutionAdapter,
+  resolveSourceState: (workspaceId: string) => Promise<SourceStateRef>,
   input: VerifyRunInput
 ): Promise<VerifyRunResult> {
   validateRunInput(input);
@@ -236,6 +238,7 @@ export async function runVerification(
     throw new CapabilityError("VERIFICATION_NOT_ALLOWED", "Verification recipe is not allowed");
   }
 
+  const sourceState = await resolveSourceState(input.workspaceId);
   const operation = await execution.run({
     workspaceId: input.workspaceId,
     recipeId: recipe.id,
@@ -249,7 +252,8 @@ export async function runVerification(
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     workspaceId: input.workspaceId,
     recipe,
-    operation
+    operation,
+    sourceState
   };
 }
 

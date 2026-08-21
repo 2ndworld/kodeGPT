@@ -259,6 +259,7 @@ export class NativeCapabilityService {
       this.#dependencies.verification.workspace,
       this.#dependencies.verification.availability,
       this.#dependencies.verification.execution,
+      async (workspaceId) => (await this.gitChanges({ workspaceId })).sourceState,
       input
     );
   }

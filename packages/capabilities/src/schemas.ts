@@ -25,6 +25,7 @@ import {
   type FilePatchResult,
   type GitChangesInput,
   type GitChangesResult,
+  type SourceStateRef,
   type GitStageInput,
   type GitCommitInput,
   type GitBranchInput,
@@ -410,6 +411,13 @@ export const GitDiffHistoryResultSchema: z.ZodType<GitDiffHistoryResult> = z.obj
   summary: gitStatSummarySchema, patch: z.string(), truncated: z.boolean(), truncationReasons: z.array(gitTruncationReasonSchema)
 }).strict().refine((v) => v.truncated === (v.truncationReasons.length > 0));
 
+export const SourceStateRefSchema: z.ZodType<SourceStateRef> = z
+  .object({
+    headOid: gitOidSchema,
+    changesFingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict();
+
 export const GitChangesInputSchema: z.ZodType<GitChangesInput> = z
   .object({
     workspaceId: z.string().min(1),
@@ -455,9 +463,13 @@ export const GitChangesResultSchema: z.ZodType<GitChangesResult> = z
       .strict()
       .optional(),
     truncated: z.boolean(),
-    fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    sourceState: SourceStateRefSchema
   })
-  .strict();
+  .strict()
+  .refine((value) => value.sourceState.changesFingerprint === value.fingerprint, {
+    message: "sourceState changesFingerprint must match fingerprint"
+  });
 
 const gitMutationPathSchema = z
   .string()
@@ -703,7 +715,8 @@ export const VerifyRunResultSchema: z.ZodType<VerifyRunResult> = z
     schemaVersion: z.literal(1),
     workspaceId: z.string().min(1),
     recipe: verificationRecipeSchema,
-    operation: verificationOperationSchema
+    operation: verificationOperationSchema,
+    sourceState: SourceStateRefSchema
   })
   .strict();
 

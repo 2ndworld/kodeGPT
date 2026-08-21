@@ -51,6 +51,7 @@ import {
   GitLogResultSchema,
   GitShowInputSchema,
   GitShowResultSchema,
+  SourceStateRefSchema,
   GitRangeInputSchema,
   GitRangeResultSchema,
   GitDiffHistoryInputSchema,
@@ -122,6 +123,7 @@ export const VisualCaptureMatrixResultSchema = z
   .object({
     schemaVersion: z.literal(1),
     previewId: z.string().regex(/^pv_[a-f0-9]{32}$/),
+    sourceState: SourceStateRefSchema,
     captures: z.tuple([
       z
         .object({
@@ -152,6 +154,7 @@ export const VisualCompareResultSchema = z
   .object({
     schemaVersion: z.literal(1),
     previewId: z.string().regex(/^pv_[a-f0-9]{32}$/),
+    sourceState: SourceStateRefSchema,
     currentArtifact: VISUAL_ARTIFACT_SCHEMA,
     referenceArtifact: VISUAL_ARTIFACT_URI_SCHEMA,
     currentDimensions: VISUAL_DIMENSIONS_SCHEMA,
@@ -170,6 +173,92 @@ function boundedUtf8String(maxBytes: number) {
     message: `must be at most ${maxBytes} UTF-8 bytes`
   });
 }
+
+const PREVIEW_ID_SCHEMA = z.string().regex(/^pv_[a-f0-9]{32}$/);
+const PREVIEW_URL_SCHEMA = z.string().regex(/^http:\/\/127\.0\.0\.1:\d{1,5}\//);
+const BROWSER_VIEWPORT_SCHEMA = z
+  .object({
+    width: z.number().int().min(320).max(3840),
+    height: z.number().int().min(240).max(2160)
+  })
+  .strict();
+const PREVIEW_STATUS_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    operationId: z.string().startsWith("op_"),
+    url: PREVIEW_URL_SCHEMA,
+    processState: z.enum(["running", "completed", "failed", "cancelled"]),
+    exitCode: z.number().int().optional(),
+    reachable: z.boolean(),
+    httpStatus: z.number().int().min(100).max(599).nullable(),
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
+const BROWSER_OPEN_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    url: PREVIEW_URL_SCHEMA,
+    viewport: BROWSER_VIEWPORT_SCHEMA,
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
+const BROWSER_INSPECT_RESULT_SCHEMA = BROWSER_OPEN_RESULT_SCHEMA.safeExtend({
+  title: boundedUtf8String(2048),
+  bodyText: boundedUtf8String(32 * 1024),
+  ariaSnapshot: boundedUtf8String(32 * 1024),
+  truncated: z.boolean(),
+  truncationReasons: z.array(z.string())
+});
+const BROWSER_ACTION_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    ok: z.literal(true),
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
+const BROWSER_SCREENSHOT_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    artifact: VISUAL_ARTIFACT_SCHEMA,
+    viewport: BROWSER_VIEWPORT_SCHEMA,
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
+const BROWSER_CONSOLE_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    entries: z
+      .array(z.object({ level: boundedUtf8String(64), text: boundedUtf8String(2048) }).strict())
+      .max(100),
+    truncated: z.boolean(),
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
+const BROWSER_NETWORK_FAILURES_RESULT_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    previewId: PREVIEW_ID_SCHEMA,
+    entries: z
+      .array(
+        z
+          .object({
+            method: boundedUtf8String(32),
+            url: boundedUtf8String(2048),
+            resourceType: boundedUtf8String(64),
+            failureText: boundedUtf8String(2048)
+          })
+          .strict()
+      )
+      .max(100),
+    truncated: z.boolean(),
+    sourceState: SourceStateRefSchema
+  })
+  .strict();
 
 const WORKSPACE_CHECKPOINT_EVIDENCE_SCHEMA = z
   .object({
@@ -398,6 +487,7 @@ export function registerKodegptTools(
           .strict()
           .optional()
       },
+      outputSchema: BROWSER_OPEN_RESULT_SCHEMA,
       annotations: BROWSER_SESSION_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId, viewport }) =>
@@ -409,6 +499,7 @@ export function registerKodegptTools(
     {
       description: "Inspect bounded title, body text, accessibility snapshot, URL, and viewport evidence for one preview browser session.",
       inputSchema: browserPreviewFields,
+      outputSchema: BROWSER_INSPECT_RESULT_SCHEMA,
       annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
@@ -420,6 +511,7 @@ export function registerKodegptTools(
     {
       description: "Click one bounded CSS or role target inside an existing preview-scoped browser session.",
       inputSchema: { ...browserPreviewFields, target: browserTargetSchema },
+      outputSchema: BROWSER_ACTION_RESULT_SCHEMA,
       annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId, target }) =>
@@ -436,6 +528,7 @@ export function registerKodegptTools(
         text: z.string().max(16 * 1024),
         submit: z.boolean().optional()
       },
+      outputSchema: BROWSER_ACTION_RESULT_SCHEMA,
       annotations: BROWSER_INTERACTION_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId, target, text, submit }) =>
@@ -447,6 +540,7 @@ export function registerKodegptTools(
     {
       description: "Capture one bounded PNG screenshot from an existing preview browser session into the normal artifact spool.",
       inputSchema: { ...browserPreviewFields, fullPage: z.boolean().optional() },
+      outputSchema: BROWSER_SCREENSHOT_RESULT_SCHEMA,
       annotations: BROWSER_CAPTURE_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId, fullPage }) =>
@@ -458,6 +552,7 @@ export function registerKodegptTools(
     {
       description: "Read bounded normalized console evidence from one existing preview browser session.",
       inputSchema: browserPreviewFields,
+      outputSchema: BROWSER_CONSOLE_RESULT_SCHEMA,
       annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
@@ -469,6 +564,7 @@ export function registerKodegptTools(
     {
       description: "Read bounded redacted failed-request evidence from one existing preview browser session.",
       inputSchema: browserPreviewFields,
+      outputSchema: BROWSER_NETWORK_FAILURES_RESULT_SCHEMA,
       annotations: BROWSER_READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
@@ -1291,6 +1387,7 @@ export function registerKodegptTools(
           .optional(),
         waitMs: z.number().int().nonnegative().max(10_000).safe().optional()
       },
+      outputSchema: PREVIEW_STATUS_RESULT_SCHEMA,
       annotations: PROCESS_RUN_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, logicalExecutable, argv, port, cwd, env, requestPath, waitMs }) =>
@@ -1316,6 +1413,7 @@ export function registerKodegptTools(
         workspaceId: z.string().min(1),
         previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
       },
+      outputSchema: PREVIEW_STATUS_RESULT_SCHEMA,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
@@ -1330,6 +1428,7 @@ export function registerKodegptTools(
         workspaceId: z.string().min(1),
         previewId: z.string().regex(/^pv_[a-f0-9]{32}$/)
       },
+      outputSchema: PREVIEW_STATUS_RESULT_SCHEMA,
       annotations: PROCESS_CANCEL_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
