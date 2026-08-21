@@ -84,6 +84,7 @@ import {
   type SystemDiscoverInput,
   type SystemDiscoverResult
 } from "./discovery.js";
+import { composeResumeSynthesis, type ResumeSynthesis } from "./resume-context.js";
 
 export type JsonObject = Record<string, unknown>;
 export type MaybePromise<T> = Promise<T> | T;
@@ -248,8 +249,10 @@ export interface VerifyToolContext {
   run(input: VerifyRunInput): Promise<VerifyRunResult>;
 }
 
+export type ContextBuildToolResult = ContextBuildResult & { resume?: ResumeSynthesis };
+
 export interface ContextToolContext {
-  build(input: ContextBuildInput): Promise<ContextBuildResult>;
+  build(input: ContextBuildInput): Promise<ContextBuildToolResult>;
 }
 
 export interface CiToolContext {
@@ -539,7 +542,28 @@ export function createKodegptToolContext(options: {
       run: (input) => native.runVerification(input)
     },
     context: {
-      build: (input) => native.buildContext(input)
+      build: async (input) => {
+        const base = await native.buildContext(input);
+        if (input.intent !== "resume") return base;
+        const resume = await composeResumeSynthesis(
+          {
+            workspaceInfo: (workspaceId) => options.workspaceManager.workspaceInfo(workspaceId),
+            gitRange: (rangeInput) => native.gitRange(rangeInput),
+            processStatus: (workspaceId, operationId) =>
+              options.executionManager.status(workspaceId, operationId, 0),
+            previewInspect: async (previewInput) => preview.inspect(previewInput),
+            repository: (workspaceId) => remoteCi.repository({ workspaceId }),
+            prInspect: (prInput) => githubRead.prInspect(prInput),
+            ciRun: (runInput) => remoteCi.run(runInput),
+            artifactProbe: async (uri) => {
+              await options.artifactStore.read(uri, { offset: 0, maxBytes: 1 });
+            }
+          },
+          input.workspaceId,
+          base
+        );
+        return { ...base, resume };
+      }
     },
     ci: {
       repository: (input) => remoteCi.repository(input),

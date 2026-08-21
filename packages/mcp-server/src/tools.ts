@@ -330,6 +330,31 @@ export const WorkspaceCheckpointSchema = z
   .strict()
   .superRefine(enforceWorkspaceCheckpointStatus);
 
+const WORKSPACE_SOURCE_STATE_SCHEMA = z
+  .object({
+    headOid: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+    changesFingerprint: z.string().regex(/^[0-9a-f]{64}$/)
+  })
+  .strict();
+
+const WORKSPACE_MILESTONE_SCHEMA = z
+  .object({
+    revision: z.number().int().positive().safe(),
+    status: z.enum(["active", "blocked", "complete"]),
+    objective: z.string().max(512).optional(),
+    sourceState: WORKSPACE_SOURCE_STATE_SCHEMA.optional(),
+    updatedAt: z.string().datetime({ offset: true })
+  })
+  .strict();
+
+const WORKSPACE_CONTINUITY_SCHEMA = z
+  .object({
+    schemaVersion: z.literal(1),
+    capturedSourceState: WORKSPACE_SOURCE_STATE_SCHEMA.optional(),
+    milestones: z.array(WORKSPACE_MILESTONE_SCHEMA).max(8)
+  })
+  .strict();
+
 const WORKSPACE_EFFECTIVE_POLICY_SCHEMA = z
   .object({
     name: z.enum(["observe", "develop", "trusted"]),
@@ -348,7 +373,8 @@ export const WorkspaceInfoResultSchema = z
     id: z.string().min(1),
     canonicalRoot: z.string().min(1),
     effectivePolicy: WORKSPACE_EFFECTIVE_POLICY_SCHEMA,
-    checkpoint: WorkspaceCheckpointSchema.optional()
+    checkpoint: WorkspaceCheckpointSchema.optional(),
+    continuity: WORKSPACE_CONTINUITY_SCHEMA.optional()
   })
   .strict();
 
@@ -403,6 +429,78 @@ export const WorkspaceCheckpointResultSchema = z.discriminatedUnion("operation",
     })
     .strict()
 ]);
+
+const RESUME_RELATION_SCHEMA = z.enum(["fresh", "stale", "superseded", "unverifiable"]);
+const RESUME_REASON_SCHEMA = z.enum([
+  "SOURCE_STATE_MATCH",
+  "WORKTREE_CHANGED",
+  "HEAD_ADVANCED",
+  "HEAD_REWOUND",
+  "HEAD_DIVERGED",
+  "LEGACY_SOURCE_STATE_UNKNOWN",
+  "GIT_ANCESTRY_UNAVAILABLE"
+]);
+const RESUME_CHECKPOINT_STATE_SCHEMA = z
+  .object({
+    relation: RESUME_RELATION_SCHEMA,
+    reasons: z.array(RESUME_REASON_SCHEMA).min(1).max(2),
+    currentSourceState: WORKSPACE_SOURCE_STATE_SCHEMA.optional(),
+    capturedSourceState: WORKSPACE_SOURCE_STATE_SCHEMA.optional()
+  })
+  .strict();
+const RESUME_EVIDENCE_SCHEMA = z
+  .object({
+    kind: z.enum(["artifact", "process", "preview", "pr", "ci", "git", "note"]),
+    ref: z.string().min(1).max(512),
+    availability: z.enum(["observed", "missing", "unavailable", "invalid", "informational"]),
+    state: z.string().max(256).optional(),
+    relation: z.enum(["fresh", "stale", "unverifiable"]).optional(),
+    reasons: z.array(z.string().min(1).max(128)).max(8).optional(),
+    summary: z.string().max(1024).optional()
+  })
+  .strict();
+export const ResumeSynthesisSchema = z.discriminatedUnion("checkpointPresent", [
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      checkpointPresent: z.literal(false),
+      milestones: z.tuple([]),
+      evidence: z.tuple([]),
+      warnings: z.array(z.string().max(256)).max(32)
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      checkpointPresent: z.literal(true),
+      checkpoint: WorkspaceCheckpointSchema,
+      checkpointState: RESUME_CHECKPOINT_STATE_SCHEMA,
+      milestones: z.array(WORKSPACE_MILESTONE_SCHEMA).max(8),
+      evidence: z.array(RESUME_EVIDENCE_SCHEMA).max(16),
+      warnings: z.array(z.string().max(256)).max(32)
+    })
+    .strict()
+]);
+
+const CONTEXT_BUILD_RESULT_OBJECT_SCHEMA = ContextBuildResultSchema as unknown as z.ZodObject<any>;
+export const ContextBuildToolResultSchema = CONTEXT_BUILD_RESULT_OBJECT_SCHEMA
+  .extend({ resume: ResumeSynthesisSchema.optional() })
+  .superRefine((value, context) => {
+    if (value.intent === "resume" && value.resume === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resume"],
+        message: "resume intent requires resume synthesis"
+      });
+    }
+    if (value.intent !== "resume" && value.resume !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resume"],
+        message: "resume synthesis is only valid for resume intent"
+      });
+    }
+  });
 
 export function listSurfaceTools(): Array<{ name: string; required: string[] }> {
   return listPublicActionDescriptors().map(({ id, requiredInputs }) => ({
@@ -961,12 +1059,12 @@ export function registerKodegptTools(
     {
       description: "Build a deterministic bounded context bundle from existing workspace capabilities.",
       inputSchema: ContextBuildInputSchema,
-      outputSchema: ContextBuildResultSchema,
+      outputSchema: ContextBuildToolResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, intent, target, focus, maxBytes }) =>
       nativeCapabilityResult(async () =>
-        ContextBuildResultSchema.parse(
+        ContextBuildToolResultSchema.parse(
           await context.context.build({ workspaceId, intent, target, focus, maxBytes })
         )
       )
