@@ -8,6 +8,7 @@ const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".
 const APPROVED_REMOTE_CI_MUTATION_SURFACE_FILES = new Set([
   "packages/capabilities/src/adapters.ts",
   "packages/capabilities/src/contracts.ts",
+  "packages/capabilities/src/public-actions.ts",
   "packages/capabilities/src/remote-ci/service.ts",
   "packages/capabilities/src/skill-metadata.ts",
   "packages/core/src/workspace-manager.ts",
