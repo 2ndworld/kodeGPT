@@ -26,7 +26,8 @@ export const INTENT_WEIGHTS = {
   implement: { target: 100, changed: 60, tests: 70, config: 50, search: 40 },
   debug: { target: 100, changed: 80, tests: 80, config: 40, search: 60 },
   review: { target: 80, changed: 100, tests: 60, config: 40, search: 50 },
-  verify: { target: 60, changed: 80, tests: 100, config: 60, search: 40 }
+  verify: { target: 60, changed: 80, tests: 100, config: 60, search: 40 },
+  resume: { target: 80, changed: 100, tests: 50, config: 40, search: 50 }
 } as const;
 
 type CandidateKind =
@@ -637,7 +638,7 @@ function validateInput(input: ContextBuildInput): void {
   if (input.workspaceId.length === 0) {
     throw new CapabilityError("CAPABILITY_INPUT_INVALID", "Context workspaceId must not be empty");
   }
-  if (!["understand", "implement", "debug", "review", "verify"].includes(input.intent)) {
+  if (!["understand", "implement", "debug", "review", "verify", "resume"].includes(input.intent)) {
     throw new CapabilityError("CAPABILITY_INPUT_INVALID", "Context intent is unsupported");
   }
   if (input.target !== undefined && !isSafeRelativePath(input.target)) {

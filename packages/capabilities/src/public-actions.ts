@@ -305,9 +305,17 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
     []
   ),
   "context.build": define(
-    "Build bounded repository context for a stated intent and target.",
-    ["build context", "gather context", "project context", "repository context"],
-    ["context", "repository", "understand"],
+    "Build bounded repository context for a stated intent and target, including resume context.",
+    [
+      "build context",
+      "gather context",
+      "project context",
+      "repository context",
+      "resume development",
+      "continue workspace",
+      "resume context"
+    ],
+    ["context", "repository", "understand", "resume", "continuity"],
     "composite",
     "workspace",
     ["workspaceId", "intent"]

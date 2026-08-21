@@ -12,6 +12,7 @@ import {
 } from "./contracts.js";
 import { buildContext, INTENT_WEIGHTS } from "./context-build.js";
 import { CapabilityError } from "./errors.js";
+import { ContextBuildInputSchema } from "./schemas.js";
 
 type SourceOptions = {
   extraSearchMatches?: CodeSearchResult["matches"];
@@ -889,12 +890,47 @@ describe("context.build", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("accepts resume intent and prioritizes changed evidence over config and search candidates", async () => {
+    expect(
+      ContextBuildInputSchema.safeParse({ workspaceId: "ws_1", intent: "resume" }).success
+    ).toBe(true);
+    const fixture = sources({
+      "packages/core/src/helper.ts": "changed-core\n",
+      "packages/other/src/unrelated.ts": "changed-other\n",
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n",
+      "packages/other/package.json": "other-manifest\n",
+      "packages/core/src/workspace-manager.ts": "search-target\n",
+      "packages/core/src/workspace-manager-helper.ts": "search-hit\n",
+      "packages/core/src/workspace-manager.test.ts": "test-hit\n"
+    });
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "resume" as never,
+      maxBytes: 4 * 1024
+    });
+
+    expect(result.intent).toBe("resume");
+    expect(result.selectedFiles.slice(0, 2).map((file) => file.path)).toEqual([
+      "packages/core/src/helper.ts",
+      "packages/other/src/unrelated.ts"
+    ]);
+  });
+
   it("uses explicit intent weights while preserving hard priority tiers", () => {
     expect(INTENT_WEIGHTS.understand).toMatchObject({ target: 100, changed: 40, tests: 20, config: 50 });
     expect(INTENT_WEIGHTS.implement.tests).toBe(70);
     expect(INTENT_WEIGHTS.debug.changed).toBe(80);
     expect(INTENT_WEIGHTS.review.changed).toBe(100);
     expect(INTENT_WEIGHTS.verify.tests).toBe(100);
+    expect((INTENT_WEIGHTS as Record<string, unknown>).resume).toEqual({
+      target: 80,
+      changed: 100,
+      tests: 50,
+      config: 40,
+      search: 50
+    });
   });
 
   it("rejects unsafe targets and invalid runtime intents before reading workspace content", async () => {
