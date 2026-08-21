@@ -45,9 +45,10 @@ function identity(sha256: string, sizeBytes = 7) {
 
 function checkpoint(
   records: CapabilityGitCheckpointRecord[],
-  truncated = false
+  truncated = false,
+  headOid = "f".repeat(40)
 ): CapabilityGitCheckpointResult {
-  return { schemaVersion: 1, records, truncated };
+  return { schemaVersion: 1, headOid, records, truncated };
 }
 
 function service(options: {
@@ -136,6 +137,10 @@ describe("git.changes", () => {
     expect(result.clean).toBe(false);
     expect(result.summary).toEqual({ changedFiles: 5 });
     expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.sourceState).toEqual({
+      headOid: "f".repeat(40),
+      changesFingerprint: result.fingerprint
+    });
   });
 
   it("returns a deterministic clean checkpoint without generating patch presentation", async () => {

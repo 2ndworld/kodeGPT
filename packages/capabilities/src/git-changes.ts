@@ -57,7 +57,11 @@ export async function gitChanges(
     ...(patchArtifact !== undefined ? { patchArtifact } : {}),
     ...(patchCoverage !== undefined ? { patchCoverage } : {}),
     truncated,
-    fingerprint
+    fingerprint,
+    sourceState: {
+      headOid: checkpoint.headOid,
+      changesFingerprint: fingerprint
+    }
   };
 }
 

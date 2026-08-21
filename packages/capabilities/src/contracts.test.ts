@@ -264,10 +264,26 @@ describe("capability contracts", () => {
       patchPreview: "diff --git a/src/main.ts b/src/main.ts\n",
       patchArtifact: { uri: "artifact://ka_diff", bytes: 42 },
       truncated: false,
-      fingerprint: "a".repeat(64)
+      fingerprint: "a".repeat(64),
+      sourceState: {
+        headOid: "1".repeat(40),
+        changesFingerprint: "a".repeat(64)
+      }
     };
     expect(GitChangesResultSchema.parse(validResult)).toEqual(validResult);
     expect(() => GitChangesResultSchema.parse({ ...validResult, fingerprint: "not-a-sha" })).toThrow();
+    expect(() =>
+      GitChangesResultSchema.parse({
+        ...validResult,
+        sourceState: { ...validResult.sourceState, headOid: "short" }
+      })
+    ).toThrow();
+    expect(() =>
+      GitChangesResultSchema.parse({
+        ...validResult,
+        sourceState: { ...validResult.sourceState, changesFingerprint: "b".repeat(64) }
+      })
+    ).toThrow();
   });
 
   it("validates context.build evidence status and truthful unavailable Git results", () => {
@@ -354,7 +370,11 @@ describe("capability contracts", () => {
       changedPaths: [{ path: "src/main.ts", worktreeStatus: "M" }],
       summary: { changedFiles: 1 },
       truncated: false,
-      fingerprint: "b".repeat(64)
+      fingerprint: "b".repeat(64),
+      sourceState: {
+        headOid: "2".repeat(40),
+        changesFingerprint: "b".repeat(64)
+      }
     };
     expect(
       ContextBuildResultSchema.parse({

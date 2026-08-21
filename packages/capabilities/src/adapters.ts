@@ -382,6 +382,7 @@ export interface CapabilityGitCheckpointRecord {
 
 export interface CapabilityGitCheckpointResult {
   schemaVersion: 1;
+  headOid: string;
   records: CapabilityGitCheckpointRecord[];
   truncated: boolean;
 }

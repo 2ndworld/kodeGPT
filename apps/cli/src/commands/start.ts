@@ -326,6 +326,7 @@ export async function createProductionServiceStack(
           const result = await managers.workspaceManager.gitCheckpoint(workspaceId);
           return {
             schemaVersion: 1,
+            headOid: result.headOid,
             truncated: result.truncated,
             records: result.records.map((record) => ({
               ...record,

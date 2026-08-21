@@ -205,6 +205,7 @@ pub struct GitCheckpointRecord {
 #[serde(rename_all = "camelCase")]
 pub struct GitCheckpointResult {
     pub schema_version: u32,
+    pub head_oid: String,
     pub records: Vec<GitCheckpointRecord>,
     pub truncated: bool,
 }
@@ -1629,12 +1630,13 @@ pub fn run_git_checkpoint(
         return Err(GitInspectionError::CommandFailed);
     }
 
-    let (mut records, mut truncated) =
+    let (head_oid, mut records, mut truncated) =
         parse_checkpoint_status(&command.stdout_preview, command.stdout_truncated)?;
     truncated |= attach_current_identities(workspace_root, &mut records)?;
 
     Ok(GitCheckpointResult {
         schema_version: 1,
+        head_oid,
         records,
         truncated,
     })
@@ -1825,6 +1827,7 @@ fn checkpoint_status_args(filter_overrides: &[OsString]) -> Vec<OsString> {
             "status",
             "--porcelain=v2",
             "-z",
+            "--branch",
             "--untracked-files=all",
             "--ignore-submodules=all",
         ]
@@ -1837,7 +1840,7 @@ fn checkpoint_status_args(filter_overrides: &[OsString]) -> Vec<OsString> {
 fn parse_checkpoint_status(
     bytes: &[u8],
     source_truncated: bool,
-) -> Result<(Vec<GitCheckpointRecord>, bool), GitInspectionError> {
+) -> Result<(String, Vec<GitCheckpointRecord>, bool), GitInspectionError> {
     let mut fields = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
     let complete_terminated = bytes.is_empty() || bytes.ends_with(&[0]);
     if complete_terminated && fields.last().is_some_and(|field| field.is_empty()) {
@@ -1848,6 +1851,7 @@ fn parse_checkpoint_status(
         return Err(GitInspectionError::InvalidCheckpointStatus);
     }
 
+    let mut head_oid: Option<String> = None;
     let mut records = Vec::new();
     let mut index = 0usize;
     let mut truncated = source_truncated;
@@ -1859,6 +1863,16 @@ fn parse_checkpoint_status(
         let field = std::str::from_utf8(fields[index])
             .map_err(|_| GitInspectionError::InvalidCheckpointStatus)?;
         index += 1;
+        if let Some(value) = field.strip_prefix("# branch.oid ") {
+            if head_oid.is_some() {
+                return Err(GitInspectionError::InvalidCheckpointStatus);
+            }
+            head_oid = Some(
+                parse_repository_head_oid(value.as_bytes())
+                    .map_err(|_| GitInspectionError::InvalidCheckpointStatus)?,
+            );
+            continue;
+        }
         if field.starts_with("# ") || field.starts_with("! ") {
             continue;
         }
@@ -1913,7 +1927,8 @@ fn parse_checkpoint_status(
         }
         return Err(GitInspectionError::InvalidCheckpointStatus);
     }
-    Ok((records, truncated))
+    let head_oid = head_oid.ok_or(GitInspectionError::InvalidCheckpointStatus)?;
+    Ok((head_oid, records, truncated))
 }
 
 fn parse_ordinary_record(field: &str) -> Result<GitCheckpointRecord, GitInspectionError> {
@@ -3112,15 +3127,18 @@ mod tests {
         let oid_a = "1".repeat(40);
         let oid_b = "2".repeat(40);
         let oid_c = "3".repeat(40);
+        let head_oid = "a".repeat(40);
         let status = format!(
-            "1 M. N... 100644 100644 100644 {oid_a} {oid_b} café -> \"quoted\"\tname.txt\0\
+            "# branch.oid {head_oid}\0# branch.head main\0\
+             1 M. N... 100644 100644 100644 {oid_a} {oid_b} café -> \"quoted\"\tname.txt\0\
              2 R. N... 100644 100644 100644 {oid_a} {oid_b} R100 renamed -> \"tab\t文.txt\0original name.txt\0\
              u UU N... 100644 100644 100644 100644 {oid_a} {oid_b} {oid_c} conflict file.txt\0\
              ? untracked -> \"x\t文.txt\0"
         );
 
-        let (records, truncated) =
+        let (resolved_head_oid, records, truncated) =
             parse_checkpoint_status(status.as_bytes(), false).expect("porcelain v2 parses");
+        assert_eq!(resolved_head_oid, head_oid);
         assert!(!truncated);
         assert_eq!(records.len(), 4);
         assert_eq!(records[0].record_type, GitCheckpointRecordType::Ordinary);
@@ -3140,6 +3158,32 @@ mod tests {
         assert_eq!(records[2].stage3_oid.as_deref(), Some(oid_c.as_str()));
         assert_eq!(records[3].record_type, GitCheckpointRecordType::Untracked);
         assert_eq!(records[3].path, "untracked -> \"x\t文.txt");
+    }
+
+    #[test]
+    fn checkpoint_status_requires_one_full_head_oid() {
+        let head_oid = "a".repeat(40);
+        let status = format!("# branch.oid {head_oid}\0? untracked.txt\0");
+
+        let (resolved_head_oid, records, truncated) =
+            parse_checkpoint_status(status.as_bytes(), false).expect("checkpoint status parses");
+
+        assert_eq!(resolved_head_oid, head_oid);
+        assert!(!truncated);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].path, "untracked.txt");
+
+        for invalid in [
+            "? missing-head.txt\0",
+            "# branch.oid (initial)\0",
+            "# branch.oid abcdef\0",
+            "# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0# branch.oid bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\0",
+        ] {
+            assert!(matches!(
+                parse_checkpoint_status(invalid.as_bytes(), false),
+                Err(GitInspectionError::InvalidCheckpointStatus)
+            ));
+        }
     }
 
     #[test]

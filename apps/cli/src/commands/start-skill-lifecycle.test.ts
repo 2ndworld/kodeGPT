@@ -97,7 +97,7 @@ function baseDependencies(events: string[]) {
       truncated: false
     }),
     searchBounded: async () => ({ matches: [], truncated: false, truncationReasons: [] }),
-    gitCheckpoint: async () => ({ schemaVersion: 1 as const, records: [], truncated: false }),
+    gitCheckpoint: async () => ({ schemaVersion: 1 as const, headOid: "1".repeat(40), records: [], truncated: false }),
     gitCheckpointPatch: async () => {
       throw new Error("not used");
     },

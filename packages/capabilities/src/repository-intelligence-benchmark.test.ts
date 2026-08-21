@@ -127,7 +127,11 @@ function benchmarkFixture() {
       changedPaths: [],
       summary: { changedFiles: 0 },
       truncated: false,
-      fingerprint: "b".repeat(64)
+      fingerprint: "b".repeat(64),
+      sourceState: {
+        headOid: "2".repeat(40),
+        changesFingerprint: "b".repeat(64)
+      }
     }),
     search: (input: CodeSearchInput) => searchCode(workspace, lexicalSearch, input),
     verify: async (_input: VerifyListInput): Promise<VerifyListResult> => ({

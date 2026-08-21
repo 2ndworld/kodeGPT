@@ -187,7 +187,11 @@ const typedGitChangesResult: GitChangesResult = {
   patchArtifact: { uri: "artifact://ka_git_changes_fixture", bytes: 64 },
   patchCoverage: { staged: true, worktree: true, untracked: false },
   truncated: false,
-  fingerprint: "a".repeat(64)
+  fingerprint: "a".repeat(64),
+  sourceState: {
+    headOid: "1".repeat(40),
+    changesFingerprint: "a".repeat(64)
+  }
 };
 
 const typedGitMutationResult: GitLocalMutationResult = {
