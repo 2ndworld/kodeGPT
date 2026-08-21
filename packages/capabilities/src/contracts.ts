@@ -569,6 +569,7 @@ export interface VerifyRunResult {
   workspaceId: string;
   recipe: VerificationRecipe;
   operation: VerificationOperationResult;
+  sourceState: SourceStateRef;
 }
 
 export interface FilePatchInput {

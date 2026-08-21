@@ -261,6 +261,10 @@ const typedVerifyRunResult: VerifyRunResult = {
       sizeBytes: 3,
       sourceTruncated: false
     }
+  },
+  sourceState: {
+    headOid: "1".repeat(40),
+    changesFingerprint: "a".repeat(64)
   }
 };
 

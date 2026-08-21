@@ -715,7 +715,8 @@ export const VerifyRunResultSchema: z.ZodType<VerifyRunResult> = z
     schemaVersion: z.literal(1),
     workspaceId: z.string().min(1),
     recipe: verificationRecipeSchema,
-    operation: verificationOperationSchema
+    operation: verificationOperationSchema,
+    sourceState: SourceStateRefSchema
   })
   .strict();
 

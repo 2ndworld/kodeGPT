@@ -34,6 +34,8 @@ function service(options: {
   allowedExecutables?: readonly string[];
   availability?: Partial<Record<string, { executableAvailable: boolean; sandboxAvailable: boolean }>>;
   run?: VerificationExecutionAdapter["run"];
+  sourceStateError?: unknown;
+  onSourceState?: () => void;
   onPathIdentity?: (path: string) => void;
   onRead?: (path: string) => void;
   onTree?: (scope: "literal" | "semantic" | undefined) => void;
@@ -109,9 +111,25 @@ function service(options: {
         throw new Error("verification discovery must not execute anything");
       })
   };
+  const git = {
+    checkpoint: async () => {
+      options.onSourceState?.();
+      if (options.sourceStateError !== undefined) throw options.sourceStateError;
+      return {
+        schemaVersion: 1 as const,
+        headOid: "f".repeat(40),
+        records: [],
+        truncated: false
+      };
+    },
+    checkpointPatch: async () => {
+      throw new Error("source-state binding must not request patch presentation");
+    }
+  };
 
   return new NativeCapabilityService(
     createTestCapabilityDependencies({
+      git,
       verification: { workspace, availability, execution }
     })
   );
@@ -515,6 +533,7 @@ describe("safe verification recipes", () => {
 
   it("runs a configured recipe through the existing execution adapter with exact launch fields", async () => {
     const calls: unknown[] = [];
+    const events: string[] = [];
     const capability = service({
       verificationConfig: {
         schemaVersion: 1,
@@ -530,7 +549,9 @@ describe("safe verification recipes", () => {
       },
       allowDynamicExecutables: true,
       allowedExecutables: [],
+      onSourceState: () => events.push("source-state"),
       run: async (input) => {
+        events.push("run");
         calls.push(input);
         return {
           schemaVersion: 1,
@@ -560,6 +581,11 @@ describe("safe verification recipes", () => {
       background: true
     });
     expect(result.operation.operationId).toBe("op_config_verify");
+    expect(result.sourceState).toEqual({
+      headOid: "f".repeat(40),
+      changesFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+    });
+    expect(events).toEqual(["source-state", "run"]);
     expect(calls).toEqual([
       {
         workspaceId: "ws_config_run",
@@ -570,6 +596,38 @@ describe("safe verification recipes", () => {
         background: true
       }
     ]);
+  });
+
+  it("fails before process launch when source-state binding cannot be established", async () => {
+    let runCalls = 0;
+    const capability = service({
+      verificationConfig: {
+        schemaVersion: 1,
+        recipes: {
+          pytest: {
+            label: "Python tests",
+            category: "test",
+            logicalExecutable: "pytest",
+            argv: ["-q"],
+            cwd: "."
+          }
+        }
+      },
+      allowDynamicExecutables: true,
+      allowedExecutables: [],
+      sourceStateError: Object.assign(new Error("invalid checkpoint"), {
+        code: "RUNTIME_PROTOCOL_INVALID"
+      }),
+      run: async () => {
+        runCalls += 1;
+        throw new Error("process must not launch");
+      }
+    });
+
+    await expect(
+      capability.runVerification({ workspaceId: "ws_source_state_failure", recipeId: "config:pytest" })
+    ).rejects.toMatchObject({ code: "GIT_STATUS_INVALID" });
+    expect(runCalls).toBe(0);
   });
 
   it("re-reads repository config before run and never executes stale listed launch data", async () => {

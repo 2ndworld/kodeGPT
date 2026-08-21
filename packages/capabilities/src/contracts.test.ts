@@ -496,7 +496,11 @@ describe("capability contracts", () => {
         schemaVersion: 1,
         workspaceId: "ws_1",
         recipe,
-        operation
+        operation,
+        sourceState: {
+          headOid: "1".repeat(40),
+          changesFingerprint: "a".repeat(64)
+        }
       })
     ).toMatchObject({ workspaceId: "ws_1", recipe: { id: "package:test" }, operation: { operationId: "op_verify" } });
   });
