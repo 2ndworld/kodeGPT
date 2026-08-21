@@ -12,7 +12,7 @@ Live installed baseline before release closure: `surface 0.18 / 76 public tools`
 
 This candidate upgrades existing repository-intelligence capabilities without adding a public MCP tool. TypeScript/JavaScript source can now use bounded compiler-AST evidence for declarations, identifier references, relative import/export relationships, and source regions. `code.search` may truthfully return `precision:"structural"` for supported parser-backed symbol/definition/reference queries; exact text/path behavior remains unchanged. Unsupported languages, including Rust in this phase, remain truthful heuristic fallback.
 
-`context.build` adds optional `focus?: string`, which requires an explicit workspace-relative `target` path. When structural evidence is trustworthy, selected target/test/dependency evidence may include `region:{startLine,endLine}` and `content` contains only that complete region. Existing `maxBytes` remains the aggregate returned-content bound. Focused target inspection is exact-file scoped so large-repository aggregate symbol/file limits do not erase the explicitly requested target symbol region.
+`context.build` adds optional `focus?: string`, which requires an explicit workspace-relative `target` path. When structural evidence is trustworthy, selected target/test/dependency evidence may include `region:{startLine,endLine}` and `content` contains only that complete region. Existing `maxBytes` remains the aggregate returned-content bound. For the explicitly focused target, the existing bounded source read is analyzed directly with the structural parser, so large-repository aggregate symbol/file limits do not erase the requested target region and `workspace.inspect` is not asked to treat a file as a tree root.
 
 No LSP daemon, vector database, model dependency, background index, workflow engine, plugin VM, autonomous agent runtime, generic provider authority, or new public file primitive was introduced.
 
@@ -53,9 +53,10 @@ Representative `buildContext` evidence:
 - structural reference search returned 23 actual references in the bounded capability scope;
 - `code.search(query:"calculateInvoice",mode:"reference")`, where that identifier appears only inside test fixture strings/comments in the real source scope, returned 0 structural references;
 - `code.impact(target:"buildContext",kind:"symbol")` resolved the target to `packages/capabilities/src/context-build.ts`, identified related tests, affected area `packages/capabilities`, and truthfully reported truncation when the configured dependent/search bound was reached;
-- before the exact-target inspection fix, the full workspace carried `INSPECT_ANALYSIS_FILE_LIMIT_REACHED`, `INSPECT_ANALYSIS_FILE_SKIPPED`, and `INSPECT_SYMBOL_LIMIT_REACHED`, which caused focused target metadata to be absent despite structural search succeeding;
-- regression fix `a480ea5` retained the full workspace evidence for summary/candidate ranking but performs one bounded exact-target inspection when `focus` is present;
-- after the fix, focused `buildContext` returned complete target region `86-239`, `truncated:false`, with 6,072 returned target bytes versus a 22,970-byte whole-file baseline: 26.43% of the full target file;
+- the full workspace carried `INSPECT_ANALYSIS_FILE_LIMIT_REACHED`, `INSPECT_ANALYSIS_FILE_SKIPPED`, and `INSPECT_SYMBOL_LIMIT_REACHED`, so aggregate symbol metadata alone could not reliably supply the focused target region despite structural search succeeding;
+- the first regression attempt (`a480ea5`) used an exact-file `workspace.inspect` call and passed adapter-level dogfood, but exact-active-release dogfood after the initial `0.19` cutover exposed that native tree inspection does not accept a file as its root and returned `CAPABILITY_INTERNAL`;
+- the hotfix removes that invalid inspection and derives the focused target region from the existing bounded target source read using the same structural parser, with conservative whole-file fallback when the source is unsupported, incomplete, or ambiguous;
+- production-path hotfix dogfood returned structural `buildContext` definition at line 87 plus complete focused region `87-244`, `truncated:false`, with 6,160 target bytes versus a 23,126-byte whole-file baseline: 26.64%;
 - aggregate `maxBytes=32768` remained exact. Full-workspace limit warnings remained visible rather than being hidden or reclassified.
 
 ## Focused and package verification

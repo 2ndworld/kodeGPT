@@ -19,6 +19,7 @@ import {
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
 import { isSemanticDiscoveryPath } from "./semantic-scope.js";
+import { analyzeStructuralFile } from "./structural-analysis.js";
 
 export const INTENT_WEIGHTS = {
   understand: { target: 100, changed: 40, tests: 20, config: 50, search: 30 },
@@ -91,10 +92,6 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
-  const focusedTargetWorkspace =
-    input.focus === undefined || input.target === undefined
-      ? undefined
-      : await adapter.inspect({ workspaceId: input.workspaceId, path: input.target, maxEntries: 1 });
   const targetArea =
     input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
@@ -152,9 +149,13 @@ export async function buildContext(
 
     try {
       const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
-      const region = selectFocusRegion(candidate, workspace, focusedTargetWorkspace, input, focusEvidence);
+      const focusedTarget =
+        input.focus !== undefined && input.target !== undefined && candidate.path === input.target;
+      let region = focusedTarget
+        ? undefined
+        : selectFocusRegion(candidate, workspace, input, focusEvidence);
       const sourceReadLimit =
-        region === undefined
+        region === undefined && !focusedTarget
           ? readLimit
           : Math.min(MAX_CONTEXT_MAX_BYTES, Math.max(readLimit, MAX_CONTEXT_REGION_SOURCE_BYTES));
       let read = await adapter.readFile(input.workspaceId, candidate.path, {
@@ -166,6 +167,10 @@ export async function buildContext(
         warnings.push(`invalid-read-result:${candidate.path}`);
         truncated = true;
         continue;
+      }
+
+      if (focusedTarget && read.eof) {
+        region = selectFocusedTargetRegion(candidate.path, read.contents, input.focus!);
       }
 
       if (region !== undefined && read.eof) {
@@ -355,24 +360,10 @@ function scopeSearchEvidence(
 function selectFocusRegion(
   candidate: Candidate,
   workspace: WorkspaceInspectResult,
-  focusedTargetWorkspace: WorkspaceInspectResult | undefined,
   input: ContextBuildInput,
   focusEvidence: EvidenceResult<CodeSearchResult> | undefined
 ): SourceRegion | undefined {
   if (input.target === undefined || input.focus === undefined) return undefined;
-
-  if (candidate.path === input.target) {
-    return uniqueRegion(
-      (focusedTargetWorkspace ?? workspace).symbols
-        .filter(
-          (symbol) =>
-            symbol.path === candidate.path &&
-            symbol.name === input.focus &&
-            symbol.region !== undefined
-        )
-        .map((symbol) => symbol.region!)
-    );
-  }
 
   if (
     focusEvidence === undefined ||
@@ -391,6 +382,20 @@ function selectFocusRegion(
     });
   }
   return uniqueRegion(regions);
+}
+
+function selectFocusedTargetRegion(
+  path: string,
+  contents: string,
+  focus: string
+): SourceRegion | undefined {
+  const analysis = analyzeStructuralFile({ path, contents });
+  if (analysis?.precision !== "structural") return undefined;
+  return uniqueRegion(
+    analysis.symbols
+      .filter((symbol) => symbol.name === focus && symbol.region !== undefined)
+      .map((symbol) => symbol.region!)
+  );
 }
 
 function enclosingSymbolRegion(

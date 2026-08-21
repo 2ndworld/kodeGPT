@@ -274,7 +274,7 @@ describe("context.build", () => {
     );
   });
 
-  it("uses an exact-target inspection when full-workspace structural aggregation omits the focused symbol", async () => {
+  it("derives the focused target region from the bounded target source when aggregate symbols omit it", async () => {
     const targetLines = [
       "// prelude",
       "// prelude 2",
@@ -292,23 +292,8 @@ describe("context.build", () => {
     const inspectCalls: WorkspaceInspectInput[] = [];
     fixture.adapter.inspect = async (input) => {
       inspectCalls.push(input);
-      const result = await originalInspect(input);
-      if (input.path !== TARGET) return result;
-      return {
-        ...result,
-        root: TARGET,
-        symbols: [
-          {
-            name: "workspaceManager",
-            kind: "function" as const,
-            path: TARGET,
-            line: 3,
-            exported: true,
-            region: { startLine: 3, endLine: 5 }
-          }
-        ],
-        warnings: []
-      };
+      if (input.path !== undefined) throw new Error("file-root inspection is unsupported");
+      return originalInspect(input);
     };
 
     const result = await buildContext(fixture.adapter, {
@@ -319,7 +304,7 @@ describe("context.build", () => {
       maxBytes: 1024
     });
 
-    expect(inspectCalls).toContainEqual({ workspaceId: "ws_1", path: TARGET, maxEntries: 1 });
+    expect(inspectCalls).toEqual([{ workspaceId: "ws_1" }]);
     expect(result.selectedFiles.find((file) => file.path === TARGET)).toMatchObject({
       path: TARGET,
       reason: "exact-target",
