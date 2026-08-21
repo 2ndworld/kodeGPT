@@ -18,7 +18,10 @@ import type {
 import { KernelRpcError } from "./kernel-client.js";
 import type {
   WorkspaceCheckpoint,
-  WorkspaceCheckpointBody
+  WorkspaceCheckpointBody,
+  WorkspaceCheckpointSourceStateRef,
+  WorkspaceContinuityInfo,
+  WorkspaceContinuityRecord
 } from "./workspace-checkpoint-store.js";
 
 export interface KernelTransport {
@@ -47,6 +50,7 @@ export interface OpenWorkspace {
 
 export interface WorkspaceInfo extends OpenWorkspace {
   checkpoint?: WorkspaceCheckpoint;
+  continuity?: WorkspaceContinuityInfo;
 }
 
 export type WorkspaceCheckpointMutationInput =
@@ -55,6 +59,7 @@ export type WorkspaceCheckpointMutationInput =
       operation: "upsert";
       expectedRevision?: number;
       checkpoint: WorkspaceCheckpointBody;
+      capturedSourceState: WorkspaceCheckpointSourceStateRef;
     }
   | {
       workspaceId: string;
@@ -75,10 +80,11 @@ export type WorkspaceCheckpointMutationResult =
     };
 
 interface WorkspaceCheckpointStorage {
-  read(trustId: string): Promise<WorkspaceCheckpoint | undefined>;
+  readContinuity(trustId: string): Promise<WorkspaceContinuityRecord | undefined>;
   upsert(input: {
     trustId: string;
     body: WorkspaceCheckpointBody;
+    capturedSourceState: WorkspaceCheckpointSourceStateRef;
     expectedRevision?: number;
   }): Promise<WorkspaceCheckpoint>;
   clear(trustId: string, expectedRevision: number): Promise<void>;
@@ -772,8 +778,10 @@ export class WorkspaceManager {
     const workspace = publicWorkspace(state);
     if (this.#checkpointStore === undefined) return workspace;
     const trustId = requireReadyTrustId(state);
-    const checkpoint = await this.#checkpointStore.read(trustId);
-    return checkpoint === undefined ? workspace : { ...workspace, checkpoint };
+    const record = await this.#checkpointStore.readContinuity(trustId);
+    return record === undefined
+      ? workspace
+      : { ...workspace, checkpoint: record.checkpoint, continuity: record.continuity };
   }
 
   async checkpointWorkspace(
@@ -797,6 +805,7 @@ export class WorkspaceManager {
         const checkpoint = await checkpointStore.upsert({
           trustId,
           body: input.checkpoint,
+          capturedSourceState: input.capturedSourceState,
           ...(input.expectedRevision === undefined
             ? {}
             : { expectedRevision: input.expectedRevision })

@@ -6,7 +6,9 @@ import type { PersistentFilesystemIdentity, TrustedWorkspaceEntry } from "@kodeg
 import { KernelRpcError } from "./kernel-client.js";
 import type {
   WorkspaceCheckpoint,
-  WorkspaceCheckpointBody
+  WorkspaceCheckpointBody,
+  WorkspaceCheckpointSourceStateRef,
+  WorkspaceContinuityInfo
 } from "./workspace-checkpoint-store.js";
 import {
   WorkspaceCloseIncompleteError,
@@ -30,6 +32,11 @@ const TRUSTED_DEVELOP: TrustedWorkspaceEntry = {
   identity: IDENTITY,
   profileCeiling: "develop",
   trustedAt: "2026-08-09T00:00:00.000Z"
+};
+
+const SOURCE_STATE: WorkspaceCheckpointSourceStateRef = {
+  headOid: "1".repeat(40),
+  changesFingerprint: "a".repeat(64)
 };
 
 function deferred<T>() {
@@ -115,6 +122,7 @@ class FakeCheckpointStore {
   readonly calls: Array<{ operation: string; trustId: string; input?: unknown }> = [];
   readonly events: string[];
   current: WorkspaceCheckpoint | undefined;
+  continuity: WorkspaceContinuityInfo | undefined;
   upsertError: unknown;
   clearError: unknown;
   purgeError: unknown;
@@ -128,9 +136,19 @@ class FakeCheckpointStore {
     return this.current === undefined ? undefined : structuredClone(this.current);
   }
 
+  async readContinuity(trustId: string) {
+    this.calls.push({ operation: "readContinuity", trustId });
+    if (this.current === undefined) return undefined;
+    return {
+      checkpoint: structuredClone(this.current),
+      continuity: structuredClone(this.continuity ?? { schemaVersion: 1 as const, milestones: [] })
+    };
+  }
+
   async upsert(input: {
     trustId: string;
     body: WorkspaceCheckpointBody;
+    capturedSourceState: WorkspaceCheckpointSourceStateRef;
     expectedRevision?: number;
   }): Promise<WorkspaceCheckpoint> {
     this.events.push("store:upsert");
@@ -142,6 +160,11 @@ class FakeCheckpointStore {
       ...structuredClone(input.body),
       updatedAt: "2026-08-20T08:00:00.000Z"
     };
+    this.continuity = {
+      schemaVersion: 1,
+      capturedSourceState: structuredClone(input.capturedSourceState),
+      milestones: this.continuity?.milestones ?? []
+    };
     return structuredClone(this.current);
   }
 
@@ -150,6 +173,7 @@ class FakeCheckpointStore {
     this.calls.push({ operation: "clear", trustId, input: { expectedRevision } });
     if (this.clearError !== undefined) throw this.clearError;
     this.current = undefined;
+    this.continuity = undefined;
   }
 
   async purge(trustId: string): Promise<void> {
@@ -157,6 +181,7 @@ class FakeCheckpointStore {
     this.calls.push({ operation: "purge", trustId });
     if (this.purgeError !== undefined) throw this.purgeError;
     this.current = undefined;
+    this.continuity = undefined;
   }
 }
 
@@ -634,6 +659,19 @@ describe("WorkspaceManager", () => {
       ...checkpointBody(),
       updatedAt: "2026-08-20T07:00:00.000Z"
     };
+    checkpoints.continuity = {
+      schemaVersion: 1,
+      capturedSourceState: SOURCE_STATE,
+      milestones: [
+        {
+          revision: 0 + 1,
+          status: "active",
+          objective: "Earlier checkpoint",
+          sourceState: SOURCE_STATE,
+          updatedAt: "2026-08-20T06:59:00.000Z"
+        }
+      ]
+    };
     const operationIds = ["op_checkpoint_upsert", "op_checkpoint_clear"];
     const manager = new WorkspaceManager({
       kernel,
@@ -649,16 +687,22 @@ describe("WorkspaceManager", () => {
 
     await expect(manager.workspaceInfo(opened.id)).resolves.toMatchObject({
       id: "ws_checkpoint",
-      checkpoint: { revision: 1, objective: "Continue workspace implementation" }
+      checkpoint: { revision: 1, objective: "Continue workspace implementation" },
+      continuity: {
+        schemaVersion: 1,
+        capturedSourceState: SOURCE_STATE,
+        milestones: [{ revision: 1, objective: "Earlier checkpoint" }]
+      }
     });
-    expect(checkpoints.calls).toEqual([{ operation: "read", trustId: "trust_fixture" }]);
+    expect(checkpoints.calls).toEqual([{ operation: "readContinuity", trustId: "trust_fixture" }]);
 
     const updated = await manager.checkpointWorkspace({
       workspaceId: opened.id,
       operation: "upsert",
       expectedRevision: 1,
-      checkpoint: checkpointBody({ objective: "Finish checkpoint wiring" })
-    });
+      checkpoint: checkpointBody({ objective: "Finish checkpoint wiring" }),
+      capturedSourceState: SOURCE_STATE
+    } as never);
     expect(updated).toMatchObject({
       schemaVersion: 1,
       operation: "upsert",
@@ -678,7 +722,7 @@ describe("WorkspaceManager", () => {
     expect(checkpoints.calls.at(-1)).toMatchObject({
       operation: "upsert",
       trustId: "trust_fixture",
-      input: { expectedRevision: 1 }
+      input: { expectedRevision: 1, capturedSourceState: SOURCE_STATE }
     });
 
     events.length = 0;
@@ -719,7 +763,8 @@ describe("WorkspaceManager", () => {
       manager.checkpointWorkspace({
         workspaceId: "ws_checkpoint_audit",
         operation: "upsert",
-        checkpoint: checkpointBody()
+        checkpoint: checkpointBody(),
+        capturedSourceState: SOURCE_STATE
       })
     ).rejects.toThrow("checkpoint audit failed");
     expect(events).toEqual(["audit:decision"]);
@@ -732,7 +777,8 @@ describe("WorkspaceManager", () => {
       manager.checkpointWorkspace({
         workspaceId: "ws_checkpoint_audit",
         operation: "upsert",
-        checkpoint: checkpointBody()
+        checkpoint: checkpointBody(),
+        capturedSourceState: SOURCE_STATE
       })
     ).rejects.toThrow("checkpoint store failed");
     expect(events).toEqual(["audit:decision", "store:upsert", "audit:failed"]);
@@ -745,7 +791,8 @@ describe("WorkspaceManager", () => {
       manager.checkpointWorkspace({
         workspaceId: "ws_checkpoint_audit",
         operation: "upsert",
-        checkpoint: checkpointBody({ objective: "durable before success audit" })
+        checkpoint: checkpointBody({ objective: "durable before success audit" }),
+        capturedSourceState: SOURCE_STATE
       })
     ).rejects.toThrow("checkpoint audit failed");
     expect(events).toEqual(["audit:decision", "store:upsert", "audit:success"]);
@@ -771,7 +818,8 @@ describe("WorkspaceManager", () => {
       manager.checkpointWorkspace({
         workspaceId: "ws_checkpoint_closed",
         operation: "upsert",
-        checkpoint: checkpointBody()
+        checkpoint: checkpointBody(),
+        capturedSourceState: SOURCE_STATE
       })
     ).rejects.toBeInstanceOf(WorkspaceNotFoundError);
     expect(checkpoints.calls).toEqual([]);

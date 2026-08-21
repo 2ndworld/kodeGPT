@@ -61,10 +61,10 @@ import type {
   PreviewStatusResult,
   TrustedWorkspaceSummary,
   VisualVerificationManager,
+  WorkspaceCheckpointBody,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
-  WorkspaceCheckpointMutationInput,
   WorkspaceCheckpointMutationResult,
   WorkspaceInfo,
   WorkspaceTreeEntry
@@ -97,6 +97,19 @@ export interface WorkspaceCloseResult {
   ok: true;
 }
 
+export type WorkspaceCheckpointToolInput =
+  | {
+      workspaceId: string;
+      operation: "upsert";
+      expectedRevision?: number;
+      checkpoint: WorkspaceCheckpointBody;
+    }
+  | {
+      workspaceId: string;
+      operation: "clear";
+      expectedRevision: number;
+    };
+
 export interface WorkspaceUntrustResult {
   trustId: string;
   removed: boolean;
@@ -116,7 +129,7 @@ export interface WorkspaceToolContext {
   }): MaybePromise<TrustedWorkspaceSummary>;
   untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
-  checkpoint(input: WorkspaceCheckpointMutationInput): MaybePromise<WorkspaceCheckpointMutationResult>;
+  checkpoint(input: WorkspaceCheckpointToolInput): MaybePromise<WorkspaceCheckpointMutationResult>;
   info(input: { workspaceId: string }): MaybePromise<WorkspaceInfo>;
   readFile(input: {
     workspaceId: string;
@@ -417,7 +430,13 @@ export function createKodegptToolContext(options: {
         await options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
-      checkpoint: (input) => options.workspaceManager.checkpointWorkspace(input),
+      checkpoint: async (input) => {
+        if (input.operation === "clear") {
+          return options.workspaceManager.checkpointWorkspace(input);
+        }
+        const capturedSourceState = (await native.gitChanges({ workspaceId: input.workspaceId })).sourceState;
+        return options.workspaceManager.checkpointWorkspace({ ...input, capturedSourceState });
+      },
       info: ({ workspaceId }) => options.workspaceManager.workspaceInfo(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
