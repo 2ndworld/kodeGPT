@@ -15,6 +15,11 @@ import {
   type CodeSearchTruncationReason
 } from "./contracts.js";
 import { CapabilityError } from "./errors.js";
+import { analyzeStructuralFile } from "./structural-analysis.js";
+
+const MAX_STRUCTURAL_SEARCH_FILES = 64;
+const MAX_STRUCTURAL_SEARCH_FILE_BYTES = 128 * 1024;
+const MAX_STRUCTURAL_SEARCH_TOTAL_BYTES = 4 * 1024 * 1024;
 
 export async function searchCode(
   workspaceInspection: WorkspaceInspectionAdapter,
@@ -37,17 +42,40 @@ export async function searchCode(
     lowLevelMax,
     "semantic"
   );
-  const classified = classifyMatches(lowLevel.matches, input.query, mode);
+  if (mode === "text") {
+    const classified = classifyMatches(lowLevel.matches, input.query, mode);
+    const truncationReasons = orderedReasons([
+      ...lowLevel.truncationReasons,
+      ...(classified.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+    ]);
+    return {
+      schemaVersion: CAPABILITY_SCHEMA_VERSION,
+      mode,
+      precision: "exact",
+      matches: classified.slice(0, maxResults),
+      truncated: truncationReasons.length > 0,
+      truncationReasons
+    };
+  }
+
+  const structural = await classifyStructuralMatches(
+    workspaceInspection,
+    input.workspaceId,
+    input.query,
+    mode,
+    lowLevel.matches
+  );
   const truncationReasons = orderedReasons([
     ...lowLevel.truncationReasons,
-    ...(classified.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+    ...structural.truncationReasons,
+    ...(structural.matches.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
   ]);
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     mode,
-    precision: mode === "text" ? "exact" : "heuristic",
-    matches: classified.slice(0, maxResults),
+    precision: structural.fullyStructural ? "structural" : "heuristic",
+    matches: structural.matches.slice(0, maxResults),
     truncated: truncationReasons.length > 0,
     truncationReasons
   };
@@ -81,6 +109,132 @@ async function searchPaths(
     truncated: truncationReasons.length > 0,
     truncationReasons
   };
+}
+
+async function classifyStructuralMatches(
+  workspace: WorkspaceInspectionAdapter,
+  workspaceId: string,
+  query: string,
+  mode: "symbol" | "definition" | "reference",
+  lowLevelMatches: CapabilitySearchMatch[]
+): Promise<{
+  matches: CodeSearchMatch[];
+  fullyStructural: boolean;
+  truncationReasons: CodeSearchTruncationReason[];
+}> {
+  if (lowLevelMatches.length === 0) {
+    return { matches: [], fullyStructural: false, truncationReasons: [] };
+  }
+
+  const byPath = new Map<string, CapabilitySearchMatch[]>();
+  for (const match of lowLevelMatches) {
+    const existing = byPath.get(match.path);
+    if (existing === undefined) byPath.set(match.path, [match]);
+    else existing.push(match);
+  }
+
+  const matches: CodeSearchMatch[] = [];
+  const reasons = new Set<CodeSearchTruncationReason>();
+  let fullyStructural = true;
+  let analyzedFiles = 0;
+  let totalBytes = 0;
+
+  for (const [path, pathMatches] of byPath) {
+    const remainingBytes = MAX_STRUCTURAL_SEARCH_TOTAL_BYTES - totalBytes;
+    if (analyzedFiles >= MAX_STRUCTURAL_SEARCH_FILES || remainingBytes <= 0) {
+      reasons.add("SCAN_BYTE_LIMIT");
+      fullyStructural = false;
+      matches.push(...classifyMatches(pathMatches, query, mode));
+      continue;
+    }
+
+    let read: Awaited<ReturnType<WorkspaceInspectionAdapter["readFile"]>>;
+    try {
+      read = await workspace.readFile(workspaceId, path, {
+        offset: 0,
+        maxBytes: Math.min(MAX_STRUCTURAL_SEARCH_FILE_BYTES, remainingBytes)
+      });
+    } catch {
+      fullyStructural = false;
+      matches.push(...classifyMatches(pathMatches, query, mode));
+      continue;
+    }
+    analyzedFiles += 1;
+    totalBytes += read.bytesRead;
+
+    if (!read.eof) {
+      reasons.add("FILE_SIZE_LIMIT");
+      fullyStructural = false;
+      matches.push(...classifyMatches(pathMatches, query, mode));
+      continue;
+    }
+    if (!sourceMatchesCandidateEvidence(read.contents, pathMatches)) {
+      fullyStructural = false;
+      matches.push(...classifyMatches(pathMatches, query, mode));
+      continue;
+    }
+
+    const analysis = analyzeStructuralFile({ path, contents: read.contents });
+    if (analysis === undefined || analysis.precision !== "structural") {
+      fullyStructural = false;
+      matches.push(...classifyMatches(pathMatches, query, mode));
+      continue;
+    }
+
+    matches.push(...structuralMatches(analysis, read.contents, query, mode));
+  }
+
+  return {
+    matches,
+    fullyStructural,
+    truncationReasons: orderedReasons([...reasons])
+  };
+}
+
+function sourceMatchesCandidateEvidence(contents: string, matches: CapabilitySearchMatch[]): boolean {
+  const lines = contents.split(/\r?\n/);
+  return matches.every((match) => match.line > 0 && lines[match.line - 1] === match.lineText);
+}
+
+function structuralMatches(
+  analysis: ReturnType<typeof analyzeStructuralFile> & {},
+  contents: string,
+  query: string,
+  mode: "symbol" | "definition" | "reference"
+): CodeSearchMatch[] {
+  if (analysis === undefined) return [];
+  const lines = contents.split(/\r?\n/);
+  const result: CodeSearchMatch[] = [];
+
+  if (mode !== "reference") {
+    for (const symbol of analysis.symbols) {
+      if (symbol.name !== query) continue;
+      const preview = lines[symbol.line - 1] ?? "";
+      const column = identifierColumn(preview, query);
+      if (column === undefined) continue;
+      result.push({ path: symbol.path, line: symbol.line, column, kind: mode, preview });
+    }
+  }
+
+  if (mode !== "definition") {
+    for (const reference of analysis.references) {
+      if (reference.name !== query) continue;
+      result.push({
+        path: reference.path,
+        line: reference.line,
+        column: reference.column,
+        kind: mode,
+        preview: lines[reference.line - 1] ?? ""
+      });
+    }
+  }
+
+  return result.sort(
+    (left, right) =>
+      compareText(left.path, right.path) ||
+      (left.line ?? 0) - (right.line ?? 0) ||
+      (left.column ?? 0) - (right.column ?? 0)
+  );
 }
 
 function classifyMatches(

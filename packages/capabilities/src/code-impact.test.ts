@@ -113,9 +113,7 @@ describe("code.impact", () => {
       resolvedPaths: ["packages/core/src/helper.ts"]
     });
     expect(result.dependents).toEqual([
-      { path: "packages/app/src/use.ts", relationship: "reference", line: 1 },
       { path: "packages/app/src/use.ts", relationship: "reference", line: 2 },
-      { path: "packages/core/src/helper.test.ts", relationship: "reference", line: 1 },
       { path: "packages/core/src/helper.test.ts", relationship: "reference", line: 2 }
     ]);
     expect(result.relatedTests).toEqual(["packages/core/src/helper.test.ts"]);

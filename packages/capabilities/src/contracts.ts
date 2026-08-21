@@ -64,7 +64,7 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
 
 export type NativeCapabilityId = (typeof NATIVE_CAPABILITY_IDS)[number];
 export type CodeSearchMode = "text" | "path" | "symbol" | "definition" | "reference";
-export type CodeSearchPrecision = "exact" | "lexical" | "heuristic";
+export type CodeSearchPrecision = "exact" | "lexical" | "structural" | "heuristic";
 export type StructuralPrecision = "structural" | "heuristic";
 export type StructuralLanguage = "typescript" | "javascript" | "rust";
 export type CodeSearchTruncationReason =
