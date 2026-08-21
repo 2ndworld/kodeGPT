@@ -61,10 +61,10 @@ import type {
   PreviewStatusResult,
   TrustedWorkspaceSummary,
   VisualVerificationManager,
+  WorkspaceCheckpointBody,
   WorkspaceFileReadResult,
   WorkspaceFileWritePrecondition,
   WorkspaceManager,
-  WorkspaceCheckpointMutationInput,
   WorkspaceCheckpointMutationResult,
   WorkspaceInfo,
   WorkspaceTreeEntry
@@ -84,6 +84,7 @@ import {
   type SystemDiscoverInput,
   type SystemDiscoverResult
 } from "./discovery.js";
+import { composeResumeSynthesis, type ResumeSynthesis } from "./resume-context.js";
 
 export type JsonObject = Record<string, unknown>;
 export type MaybePromise<T> = Promise<T> | T;
@@ -96,6 +97,19 @@ export type WorkspaceProcessOperationResult = Awaited<ReturnType<ExecutionManage
 export interface WorkspaceCloseResult {
   ok: true;
 }
+
+export type WorkspaceCheckpointToolInput =
+  | {
+      workspaceId: string;
+      operation: "upsert";
+      expectedRevision?: number;
+      checkpoint: WorkspaceCheckpointBody;
+    }
+  | {
+      workspaceId: string;
+      operation: "clear";
+      expectedRevision: number;
+    };
 
 export interface WorkspaceUntrustResult {
   trustId: string;
@@ -116,7 +130,7 @@ export interface WorkspaceToolContext {
   }): MaybePromise<TrustedWorkspaceSummary>;
   untrust(input: { trustId: string }): MaybePromise<WorkspaceUntrustResult>;
   close(input: { workspaceId: string }): MaybePromise<WorkspaceCloseResult>;
-  checkpoint(input: WorkspaceCheckpointMutationInput): MaybePromise<WorkspaceCheckpointMutationResult>;
+  checkpoint(input: WorkspaceCheckpointToolInput): MaybePromise<WorkspaceCheckpointMutationResult>;
   info(input: { workspaceId: string }): MaybePromise<WorkspaceInfo>;
   readFile(input: {
     workspaceId: string;
@@ -235,8 +249,10 @@ export interface VerifyToolContext {
   run(input: VerifyRunInput): Promise<VerifyRunResult>;
 }
 
+export type ContextBuildToolResult = ContextBuildResult & { resume?: ResumeSynthesis };
+
 export interface ContextToolContext {
-  build(input: ContextBuildInput): Promise<ContextBuildResult>;
+  build(input: ContextBuildInput): Promise<ContextBuildToolResult>;
 }
 
 export interface CiToolContext {
@@ -417,7 +433,13 @@ export function createKodegptToolContext(options: {
         await options.preview?.releaseWorkspace?.(workspaceId);
         return { ok: true };
       },
-      checkpoint: (input) => options.workspaceManager.checkpointWorkspace(input),
+      checkpoint: async (input) => {
+        if (input.operation === "clear") {
+          return options.workspaceManager.checkpointWorkspace(input);
+        }
+        const capturedSourceState = (await native.gitChanges({ workspaceId: input.workspaceId })).sourceState;
+        return options.workspaceManager.checkpointWorkspace({ ...input, capturedSourceState });
+      },
       info: ({ workspaceId }) => options.workspaceManager.workspaceInfo(workspaceId),
       readFile: ({ workspaceId, path, offset, maxBytes }) =>
         options.workspaceManager.readFile(workspaceId, path, { offset, maxBytes }),
@@ -520,7 +542,28 @@ export function createKodegptToolContext(options: {
       run: (input) => native.runVerification(input)
     },
     context: {
-      build: (input) => native.buildContext(input)
+      build: async (input) => {
+        const base = await native.buildContext(input);
+        if (input.intent !== "resume") return base;
+        const resume = await composeResumeSynthesis(
+          {
+            workspaceInfo: (workspaceId) => options.workspaceManager.workspaceInfo(workspaceId),
+            gitRange: (rangeInput) => native.gitRange(rangeInput),
+            processStatus: (workspaceId, operationId) =>
+              options.executionManager.status(workspaceId, operationId, 0),
+            previewInspect: async (previewInput) => preview.inspect(previewInput),
+            repository: (workspaceId) => remoteCi.repository({ workspaceId }),
+            prInspect: (prInput) => githubRead.prInspect(prInput),
+            ciRun: (runInput) => remoteCi.run(runInput),
+            artifactProbe: async (uri) => {
+              await options.artifactStore.read(uri, { offset: 0, maxBytes: 1 });
+            }
+          },
+          input.workspaceId,
+          base
+        );
+        return { ...base, resume };
+      }
     },
     ci: {
       repository: (input) => remoteCi.repository(input),

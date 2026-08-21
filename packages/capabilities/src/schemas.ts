@@ -723,7 +723,7 @@ export const VerifyRunResultSchema: z.ZodType<VerifyRunResult> = z
 export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
   .object({
     workspaceId: z.string().min(1),
-    intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
+    intent: z.enum(["understand", "implement", "debug", "review", "verify", "resume"]),
     target: z.string().min(1).optional(),
     focus: z.string().min(1).max(512).optional(),
     maxBytes: z.number().int().positive().max(MAX_CONTEXT_MAX_BYTES).safe().optional()
@@ -765,7 +765,7 @@ const contextWorkspaceSummarySchema = z
 export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
   .object({
     schemaVersion: z.literal(1),
-    intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
+    intent: z.enum(["understand", "implement", "debug", "review", "verify", "resume"]),
     target: z.string().min(1).optional(),
     evidenceStatus: z
       .object({

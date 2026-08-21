@@ -4,8 +4,12 @@ import { join, resolve } from "node:path";
 
 export const WORKSPACE_CHECKPOINT_SCHEMA_VERSION = 1 as const;
 export const WORKSPACE_CHECKPOINT_MAX_BYTES = 16 * 1024;
+export const WORKSPACE_CONTINUITY_PERSISTENCE_SCHEMA_VERSION = 2 as const;
+export const WORKSPACE_CONTINUITY_MAX_BYTES = 32 * 1024;
+export const WORKSPACE_MILESTONE_MAX_COUNT = 8;
 
 const MAX_OBJECTIVE_BYTES = 2 * 1024;
+const MAX_MILESTONE_OBJECTIVE_BYTES = 512;
 const MAX_NEXT_ACTIONS = 8;
 const MAX_NEXT_ACTION_BYTES = 512;
 const MAX_EVIDENCE_REFS = 16;
@@ -15,6 +19,7 @@ const MAX_BLOCKER_BYTES = 2 * 1024;
 const MAX_NOTES_BYTES = 4 * 1024;
 const TRUST_ID_PATTERN = /^trust_[a-f0-9]{32}$/;
 const HEAD_OID_PATTERN = /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
+const CHANGES_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 
 export type WorkspaceCheckpointStatus = "active" | "blocked" | "complete";
 export type WorkspaceCheckpointEvidenceKind =
@@ -47,6 +52,30 @@ export interface WorkspaceCheckpoint extends WorkspaceCheckpointBody {
   schemaVersion: typeof WORKSPACE_CHECKPOINT_SCHEMA_VERSION;
   revision: number;
   updatedAt: string;
+}
+
+export interface WorkspaceCheckpointSourceStateRef {
+  headOid: string;
+  changesFingerprint: string;
+}
+
+export interface WorkspaceMilestone {
+  revision: number;
+  status: WorkspaceCheckpointStatus;
+  objective?: string;
+  sourceState?: WorkspaceCheckpointSourceStateRef;
+  updatedAt: string;
+}
+
+export interface WorkspaceContinuityInfo {
+  schemaVersion: 1;
+  capturedSourceState?: WorkspaceCheckpointSourceStateRef;
+  milestones: WorkspaceMilestone[];
+}
+
+export interface WorkspaceContinuityRecord {
+  checkpoint: WorkspaceCheckpoint;
+  continuity: WorkspaceContinuityInfo;
 }
 
 export type WorkspaceCheckpointErrorCode =
@@ -83,20 +112,31 @@ export class WorkspaceCheckpointStore {
 
   async read(trustId: string): Promise<WorkspaceCheckpoint | undefined> {
     validateTrustId(trustId);
-    return this.#readUnlocked(trustId);
+    return (await this.#readContinuityUnlocked(trustId))?.checkpoint;
+  }
+
+  async readContinuity(trustId: string): Promise<WorkspaceContinuityRecord | undefined> {
+    validateTrustId(trustId);
+    return this.#readContinuityUnlocked(trustId);
   }
 
   async upsert(input: {
     trustId: string;
     body: WorkspaceCheckpointBody;
+    capturedSourceState: WorkspaceCheckpointSourceStateRef;
     expectedRevision?: number;
   }): Promise<WorkspaceCheckpoint> {
     validateTrustId(input.trustId);
     validateExpectedRevision(input.expectedRevision);
     const body = normalizeBody(input.body);
+    const capturedSourceState = normalizeSourceState(
+      input.capturedSourceState,
+      "captured source state"
+    );
 
     return this.#serialize(input.trustId, async () => {
-      const current = await this.#readUnlocked(input.trustId);
+      const currentRecord = await this.#readContinuityUnlocked(input.trustId);
+      const current = currentRecord?.checkpoint;
       if (current === undefined) {
         if (input.expectedRevision !== undefined) {
           throw new WorkspaceCheckpointError(
@@ -131,7 +171,21 @@ export class WorkspaceCheckpointStore {
         updatedAt
       };
       ensureSerializedBound(checkpoint);
-      await this.#writeUnlocked(input.trustId, checkpoint);
+      const milestones = [...(currentRecord?.continuity.milestones ?? [])];
+      if (current !== undefined) {
+        milestones.push(
+          compactMilestone(current, currentRecord?.continuity.capturedSourceState)
+        );
+      }
+      const continuity: WorkspaceContinuityRecord = {
+        checkpoint,
+        continuity: {
+          schemaVersion: 1,
+          capturedSourceState,
+          milestones: milestones.slice(-WORKSPACE_MILESTONE_MAX_COUNT)
+        }
+      };
+      await this.#writeContinuityUnlocked(input.trustId, continuity);
       return cloneCheckpoint(checkpoint);
     });
   }
@@ -167,6 +221,10 @@ export class WorkspaceCheckpointStore {
   }
 
   async #readUnlocked(trustId: string): Promise<WorkspaceCheckpoint | undefined> {
+    return (await this.#readContinuityUnlocked(trustId))?.checkpoint;
+  }
+
+  async #readContinuityUnlocked(trustId: string): Promise<WorkspaceContinuityRecord | undefined> {
     let text: string;
     try {
       text = await readFile(this.#pathFor(trustId), "utf8");
@@ -174,10 +232,10 @@ export class WorkspaceCheckpointStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
-    if (Buffer.byteLength(text, "utf8") > WORKSPACE_CHECKPOINT_MAX_BYTES) {
+    if (Buffer.byteLength(text, "utf8") > WORKSPACE_CONTINUITY_MAX_BYTES) {
       throw new WorkspaceCheckpointError(
         "CHECKPOINT_LIMIT_EXCEEDED",
-        "Persisted workspace checkpoint exceeds the maximum size"
+        "Persisted workspace continuity exceeds the maximum size"
       );
     }
 
@@ -191,15 +249,25 @@ export class WorkspaceCheckpointStore {
         { cause: error }
       );
     }
-    return parseCheckpoint(value);
+    return parseContinuity(value);
   }
 
-  async #writeUnlocked(trustId: string, checkpoint: WorkspaceCheckpoint): Promise<void> {
-    const serialized = `${JSON.stringify(checkpoint)}\n`;
-    if (Buffer.byteLength(serialized, "utf8") > WORKSPACE_CHECKPOINT_MAX_BYTES) {
+  async #writeContinuityUnlocked(
+    trustId: string,
+    record: WorkspaceContinuityRecord
+  ): Promise<void> {
+    const serialized = `${JSON.stringify({
+      schemaVersion: WORKSPACE_CONTINUITY_PERSISTENCE_SCHEMA_VERSION,
+      current: record.checkpoint,
+      ...(record.continuity.capturedSourceState === undefined
+        ? {}
+        : { capturedSourceState: record.continuity.capturedSourceState }),
+      milestones: record.continuity.milestones
+    })}\n`;
+    if (Buffer.byteLength(serialized, "utf8") > WORKSPACE_CONTINUITY_MAX_BYTES) {
       throw new WorkspaceCheckpointError(
         "CHECKPOINT_LIMIT_EXCEEDED",
-        "Workspace checkpoint exceeds the maximum size"
+        "Workspace continuity exceeds the maximum size"
       );
     }
 
@@ -249,6 +317,97 @@ export class WorkspaceCheckpointStore {
   #pathFor(trustId: string): string {
     return join(this.#directory, `${trustId}.json`);
   }
+}
+
+function parseContinuity(value: unknown): WorkspaceContinuityRecord {
+  if (!isRecord(value)) {
+    throw invalid("Workspace continuity must be an object");
+  }
+  if (value.schemaVersion === WORKSPACE_CHECKPOINT_SCHEMA_VERSION) {
+    return {
+      checkpoint: parseCheckpoint(value),
+      continuity: { schemaVersion: 1, milestones: [] }
+    };
+  }
+  if (value.schemaVersion !== WORKSPACE_CONTINUITY_PERSISTENCE_SCHEMA_VERSION) {
+    throw new WorkspaceCheckpointError(
+      "CHECKPOINT_SCHEMA_UNSUPPORTED",
+      `Unsupported workspace checkpoint schema version: ${String(value.schemaVersion)}`
+    );
+  }
+  if (!exactKeys(value, ["schemaVersion", "current", "capturedSourceState", "milestones"])) {
+    throw invalid("Workspace continuity contains unknown fields");
+  }
+  const checkpoint = parseCheckpoint(value.current);
+  const capturedSourceState =
+    value.capturedSourceState === undefined
+      ? undefined
+      : normalizeSourceState(value.capturedSourceState, "captured source state");
+  if (!Array.isArray(value.milestones)) {
+    throw invalid("Workspace continuity milestones must be an array");
+  }
+  if (value.milestones.length > WORKSPACE_MILESTONE_MAX_COUNT) {
+    throw limit("Workspace continuity has too many milestones");
+  }
+  const milestones = value.milestones.map((milestone) => normalizeMilestone(milestone));
+  return cloneContinuityRecord({
+    checkpoint,
+    continuity: {
+      schemaVersion: 1,
+      ...(capturedSourceState === undefined ? {} : { capturedSourceState }),
+      milestones
+    }
+  });
+}
+
+function normalizeSourceState(value: unknown, label: string): WorkspaceCheckpointSourceStateRef {
+  if (!isRecord(value) || !exactKeys(value, ["headOid", "changesFingerprint"])) {
+    throw invalid(`Workspace checkpoint ${label} is invalid`);
+  }
+  if (typeof value.headOid !== "string" || !HEAD_OID_PATTERN.test(value.headOid)) {
+    throw invalid(`Workspace checkpoint ${label} head OID is invalid`);
+  }
+  if (
+    typeof value.changesFingerprint !== "string" ||
+    !CHANGES_FINGERPRINT_PATTERN.test(value.changesFingerprint)
+  ) {
+    throw invalid(`Workspace checkpoint ${label} fingerprint is invalid`);
+  }
+  return {
+    headOid: value.headOid.toLowerCase(),
+    changesFingerprint: value.changesFingerprint
+  };
+}
+
+function normalizeMilestone(value: unknown): WorkspaceMilestone {
+  if (!isRecord(value) || !exactKeys(value, ["revision", "status", "objective", "sourceState", "updatedAt"])) {
+    throw invalid("Workspace continuity milestone is invalid");
+  }
+  if (!Number.isSafeInteger(value.revision) || (value.revision as number) <= 0) {
+    throw invalid("Workspace continuity milestone revision is invalid");
+  }
+  if (!isStatus(value.status)) {
+    throw invalid("Workspace continuity milestone status is invalid");
+  }
+  const objective = optionalBoundedString(
+    value.objective,
+    MAX_MILESTONE_OBJECTIVE_BYTES,
+    "milestone objective"
+  );
+  const sourceState =
+    value.sourceState === undefined
+      ? undefined
+      : normalizeSourceState(value.sourceState, "milestone source state");
+  if (typeof value.updatedAt !== "string" || !isCanonicalTimestamp(value.updatedAt)) {
+    throw invalid("Workspace continuity milestone timestamp is invalid");
+  }
+  return {
+    revision: value.revision as number,
+    status: value.status,
+    ...(objective === undefined ? {} : { objective }),
+    ...(sourceState === undefined ? {} : { sourceState }),
+    updatedAt: value.updatedAt
+  };
 }
 
 function parseCheckpoint(value: unknown): WorkspaceCheckpoint {
@@ -414,6 +573,31 @@ function normalizeEvidence(value: unknown): WorkspaceCheckpointBody["evidenceRef
   };
 }
 
+function compactMilestone(
+  checkpoint: WorkspaceCheckpoint,
+  sourceState: WorkspaceCheckpointSourceStateRef | undefined
+): WorkspaceMilestone {
+  return {
+    revision: checkpoint.revision,
+    status: checkpoint.status,
+    ...(checkpoint.objective === undefined
+      ? {}
+      : { objective: compactUtf8(checkpoint.objective, MAX_MILESTONE_OBJECTIVE_BYTES) }),
+    ...(sourceState === undefined ? {} : { sourceState: cloneSourceState(sourceState) }),
+    updatedAt: checkpoint.updatedAt
+  };
+}
+
+function compactUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  let output = "";
+  for (const character of value) {
+    if (Buffer.byteLength(output + character, "utf8") > maxBytes) break;
+    output += character;
+  }
+  return output;
+}
+
 function optionalBoundedString(
   value: unknown,
   maxBytes: number,
@@ -498,6 +682,37 @@ function cloneCheckpoint(checkpoint: WorkspaceCheckpoint): WorkspaceCheckpoint {
     revision: checkpoint.revision,
     ...cloneBody(checkpoint),
     updatedAt: checkpoint.updatedAt
+  };
+}
+
+function cloneSourceState(
+  sourceState: WorkspaceCheckpointSourceStateRef
+): WorkspaceCheckpointSourceStateRef {
+  return { ...sourceState };
+}
+
+function cloneMilestone(milestone: WorkspaceMilestone): WorkspaceMilestone {
+  return {
+    revision: milestone.revision,
+    status: milestone.status,
+    ...(milestone.objective === undefined ? {} : { objective: milestone.objective }),
+    ...(milestone.sourceState === undefined
+      ? {}
+      : { sourceState: cloneSourceState(milestone.sourceState) }),
+    updatedAt: milestone.updatedAt
+  };
+}
+
+function cloneContinuityRecord(record: WorkspaceContinuityRecord): WorkspaceContinuityRecord {
+  return {
+    checkpoint: cloneCheckpoint(record.checkpoint),
+    continuity: {
+      schemaVersion: 1,
+      ...(record.continuity.capturedSourceState === undefined
+        ? {}
+        : { capturedSourceState: cloneSourceState(record.continuity.capturedSourceState) }),
+      milestones: record.continuity.milestones.map((milestone) => cloneMilestone(milestone))
+    }
   };
 }
 

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,8 +25,22 @@ const RUNTIME = join(TARGET, "debug", "kodegpt-runtime");
 const PROTOCOL_VERSION = "2026-07-28";
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
 const CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities";
-const PORT = 43_139;
 const temporaryRoots: string[] = [];
+
+async function availablePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address !== null ? address.port : undefined;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+  if (port === undefined) throw new Error("failed to allocate local test port");
+  return port;
+}
 
 function buildRuntime(): void {
   const result = spawnSync(
@@ -185,6 +200,7 @@ afterAll(async () => {
 
 describe("hybrid skill interoperability release fixtures", () => {
   it("serves live skills through MCP, pins locally, and preserves immutable snapshots across mutation and deletion", async () => {
+    const port = await availablePort();
     const stateRoot = await tempRoot("kodegpt-task10-state-");
     const sourceRoot = await tempRoot("kodegpt-task10-source-");
     const executionMarker = join(sourceRoot, "portable", "script-was-executed");
@@ -250,10 +266,10 @@ describe("hybrid skill interoperability release fixtures", () => {
     let volatileId = "";
     let volatileFingerprint = "";
 
-    const first = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: PORT });
+    const first = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port });
     try {
       const toolInventory = await rawMcpRequest(
-        PORT,
+        port,
         credential.token,
         "tools/list",
         { _meta: requestMeta() },
@@ -274,7 +290,7 @@ describe("hybrid skill interoperability release fixtures", () => {
       }
 
       const listed = textJson(
-        await callTool(PORT, credential.token, "skill.list", {}, "req_skill_list_live")
+        await callTool(port, credential.token, "skill.list", {}, "req_skill_list_live")
       );
       expect(listed.skills).toHaveLength(4);
       const portable = listed.skills.find((skill: any) => skill.name === "portable");
@@ -287,7 +303,7 @@ describe("hybrid skill interoperability release fixtures", () => {
       expect(declaredProvider?.compatibility?.classification).toBe("PROVIDER_REQUIRED");
       const unsupported = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.list",
           { compatibility: "UNSUPPORTED", limit: 1 },
@@ -303,7 +319,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const providerInspected = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.inspect",
           { skillId: provider.skillId },
@@ -317,7 +333,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const declaredProviderInspected = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.inspect",
           { skillId: declaredProvider.skillId },
@@ -335,7 +351,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const inspected = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.inspect",
           { skillId: portableId },
@@ -363,7 +379,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const volatileInspected = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.inspect",
           { skillId: volatileId },
@@ -374,7 +390,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const loaded = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.load",
           {
@@ -398,7 +414,7 @@ describe("hybrid skill interoperability release fixtures", () => {
       await expect(access(executionMarker)).rejects.toThrow();
 
       await expectToolError(
-        PORT,
+        port,
         credential.token,
         "skill.load",
         {
@@ -427,11 +443,11 @@ describe("hybrid skill interoperability release fixtures", () => {
       skillDocument("volatile", "Volatile release skill", "Changed volatile instructions.\n")
     );
 
-    const second = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: PORT });
+    const second = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port });
     try {
       const pinnedLoad = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.load",
           { skillId: portableId, fingerprint: portableFingerprint },
@@ -444,7 +460,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const current = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.inspect",
           { skillId: portableId },
@@ -456,7 +472,7 @@ describe("hybrid skill interoperability release fixtures", () => {
 
       const pinnedList = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.list",
           { pinned: true },
@@ -466,7 +482,7 @@ describe("hybrid skill interoperability release fixtures", () => {
       expect(pinnedList.skills).toContainEqual(expect.objectContaining({ skillId: portableId, pinned: true }));
 
       await expectToolError(
-        PORT,
+        port,
         credential.token,
         "skill.inspect",
         { skillId: volatileId, fingerprint: volatileFingerprint },
@@ -478,11 +494,11 @@ describe("hybrid skill interoperability release fixtures", () => {
     }
 
     await rm(sourceRoot, { recursive: true, force: true });
-    const third = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port: PORT });
+    const third = await startKodegpt({ runtimePath: RUNTIME, stateRoot, port });
     try {
       const pinnedAfterDeletion = textJson(
         await callTool(
-          PORT,
+          port,
           credential.token,
           "skill.load",
           { skillId: portableId, fingerprint: portableFingerprint },

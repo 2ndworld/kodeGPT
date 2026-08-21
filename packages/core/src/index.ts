@@ -25,6 +25,9 @@ export type {
 export {
   WORKSPACE_CHECKPOINT_MAX_BYTES,
   WORKSPACE_CHECKPOINT_SCHEMA_VERSION,
+  WORKSPACE_CONTINUITY_MAX_BYTES,
+  WORKSPACE_CONTINUITY_PERSISTENCE_SCHEMA_VERSION,
+  WORKSPACE_MILESTONE_MAX_COUNT,
   WorkspaceCheckpointError,
   WorkspaceCheckpointStore
 } from "./workspace-checkpoint-store.js";
@@ -33,7 +36,11 @@ export type {
   WorkspaceCheckpointBody,
   WorkspaceCheckpointErrorCode,
   WorkspaceCheckpointEvidenceKind,
-  WorkspaceCheckpointStatus
+  WorkspaceCheckpointSourceStateRef,
+  WorkspaceCheckpointStatus,
+  WorkspaceContinuityInfo,
+  WorkspaceContinuityRecord,
+  WorkspaceMilestone
 } from "./workspace-checkpoint-store.js";
 
 export { ExecutionManager } from "./execution-manager.js";

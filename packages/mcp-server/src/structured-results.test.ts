@@ -96,7 +96,7 @@ import {
   WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
 } from "./annotations.js";
 import type { KodegptToolContext, WorkspaceToolContext } from "./tool-context.js";
-import { registerKodegptTools } from "./tools.js";
+import { ContextBuildToolResultSchema, registerKodegptTools } from "./tools.js";
 
 type CapturedHandler = (...args: never[]) => Promise<unknown>;
 
@@ -1035,7 +1035,26 @@ describe("structured MCP tool results", () => {
       notes: "Keep Git state authoritative.",
       updatedAt: "2026-08-20T08:00:00.000Z"
     };
-    context.workspace.info = async () => ({ ...typedWorkspaceListResult[0]!, checkpoint });
+    const continuity = {
+      schemaVersion: 1 as const,
+      capturedSourceState: {
+        headOid: "1".repeat(40),
+        changesFingerprint: "b".repeat(64)
+      },
+      milestones: [
+        {
+          revision: 1,
+          status: "active" as const,
+          objective: "Earlier checkpoint",
+          sourceState: {
+            headOid: "0".repeat(40),
+            changesFingerprint: "c".repeat(64)
+          },
+          updatedAt: "2026-08-20T07:00:00.000Z"
+        }
+      ]
+    };
+    context.workspace.info = async () => ({ ...typedWorkspaceListResult[0]!, checkpoint, continuity });
     Object.assign(context.workspace, {
       checkpoint: async (input: { operation: "upsert" | "clear" }) =>
         input.operation === "upsert"
@@ -1081,7 +1100,14 @@ describe("structured MCP tool results", () => {
     const info = (await handlers.get("workspace.info")!({ workspaceId: "ws_1" } as never)) as {
       structuredContent?: unknown;
     };
-    expect(info.structuredContent).toMatchObject({ checkpoint: { revision: 2 } });
+    expect(info.structuredContent).toMatchObject({
+      checkpoint: { revision: 2 },
+      continuity: {
+        schemaVersion: 1,
+        capturedSourceState: continuity.capturedSourceState,
+        milestones: [{ revision: 1, objective: "Earlier checkpoint" }]
+      }
+    });
     for (const forbidden of ["trustId", "capabilityId", "deviceMajor", "inode"] ) {
       expect(JSON.stringify(info.structuredContent)).not.toContain(forbidden);
     }
@@ -1224,7 +1250,7 @@ describe("structured MCP tool results", () => {
     const definition = definitions.get("context.build");
     expect(handler).toBeDefined();
     expect(definition?.inputSchema).toBe(ContextBuildInputSchema);
-    expect(definition?.outputSchema).toBe(ContextBuildResultSchema);
+    expect(definition?.outputSchema).toBe(ContextBuildToolResultSchema);
     expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
 
     const result = (await handler!({
@@ -1245,6 +1271,57 @@ describe("structured MCP tool results", () => {
     });
     expect(result.structuredContent).toEqual(typedContextBuildResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+  });
+
+  it("accepts additive resume synthesis only for context.build resume intent", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+    const context = makeContext();
+    const resumeResult = {
+      ...typedContextBuildResult,
+      intent: "resume" as const,
+      resume: {
+        schemaVersion: 1 as const,
+        checkpointPresent: true as const,
+        checkpoint: {
+          schemaVersion: 1 as const,
+          revision: 2,
+          objective: "Resume implementation",
+          status: "active" as const,
+          nextActions: ["Continue"],
+          evidenceRefs: [{ kind: "note" as const, ref: "decision" }],
+          updatedAt: "2026-08-21T00:00:00.000Z"
+        },
+        checkpointState: {
+          relation: "fresh" as const,
+          reasons: ["SOURCE_STATE_MATCH" as const],
+          capturedSourceState: typedGitChangesResult.sourceState,
+          currentSourceState: typedGitChangesResult.sourceState
+        },
+        milestones: [],
+        evidence: [
+          {
+            kind: "note" as const,
+            ref: "decision",
+            availability: "informational" as const
+          }
+        ],
+        warnings: []
+      }
+    };
+    context.context.build = async () => resumeResult as never;
+    registerKodegptTools(server, context);
+
+    const result = (await handlers.get("context.build")!({
+      workspaceId: "ws_1",
+      intent: "resume"
+    } as never)) as { structuredContent?: unknown };
+
+    expect(result.structuredContent).toEqual(resumeResult);
   });
 
   it("keeps file.patch schemas, mutating annotations, and structured fallback aligned", async () => {

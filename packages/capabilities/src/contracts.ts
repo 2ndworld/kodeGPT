@@ -73,7 +73,7 @@ export type CodeSearchTruncationReason =
   | "SCAN_BYTE_LIMIT"
   | "MATCH_LIMIT"
   | "SNIPPET_BYTE_LIMIT";
-export type ContextIntent = "understand" | "implement" | "debug" | "review" | "verify";
+export type ContextIntent = "understand" | "implement" | "debug" | "review" | "verify" | "resume";
 export type VerificationCategory =
   | "test"
   | "lint"
