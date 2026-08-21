@@ -210,6 +210,16 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
     );
     await writeFile(join(workspaceB, "other.txt"), "workspace-b\n");
     runGit(workspaceA, ["init", "-q"]);
+    runGit(workspaceA, [
+      "-c",
+      "user.name=KodeGPT",
+      "-c",
+      "user.email=kodegpt@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "initial"
+    ]);
     await writeFile(
       join(workspaceA, ".git/info/exclude"),
       "/frontend/\n/skills/\n/node_modules/\n/.worktrees/\n/target/\n"
