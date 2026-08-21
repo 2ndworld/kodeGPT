@@ -1,10 +1,15 @@
 # KodeGPT Capability Intelligence Discovery Readiness
 
 Date: 2026-08-21
-Status: **READY FOR PR / EXACT-HEAD CI — merge, deployment, refreshed host inventory, and live closure still pending**
+Status: **MERGED / CI VERIFIED / DEPLOYED / ACTIVE-RELEASE DOGFOOD PASS — ChatGPT action-inventory rescan pending**
 Baseline: `b3d502c598ec6595bec4e5427dc9f3305ff264a4`
-Reviewed implementation head: `9c1a484` (`fix: derive action search limit from catalog`)
-Target public contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.18 / 76 tools`
+Accepted feature head: `4f349c9efc54746f6c480a3e573244be63ef34c6`
+Merge: PR #58 → `b228101f2b44d8ef797642ada7e7ef4e2b3e0e7f`
+Exact-head push CI: `32436939565` — SUCCESS
+Exact-head PR CI: `32455801204` — SUCCESS
+Merged-main CI: `32456224911` — SUCCESS
+Live contract: `runtime 0.1 / protocol 2026-07-28 / surface 0.18 / 76 tools`
+Installed production: active `rel_fda9290d7ee09062dd6a656b56292683`; rollback `rel_c1322f951732540765edefb4f86c95db`
 
 ## Scope
 
@@ -87,7 +92,11 @@ Production-composition full-stack dogfood exposes a real workspace Agent Skill c
 
 Intent-aware `skill.list(query)` is covered through adapter/MCP tests and deterministic ranking tests; no new `skill.search` tool exists. `skill.inspect.requirementGraph` is covered through live catalog inspection and public deep-clone tests.
 
-Live installed-service / refreshed-ChatGPT-host evidence is intentionally **not** claimed yet. The currently connected installed KodeGPT service predates this candidate and still exposes the older action inventory. Deployment and host action refresh are closure gates after merge.
+The immutable installed service is now active on `rel_fda9290d7ee09062dd6a656b56292683` with previous `rel_c1322f951732540765edefb4f86c95db` retained as rollback. Candidate `service install` staged the new release while the old `0.17 / 75` release remained running/listener-ready; explicit `service restart` then promoted the candidate. Post-cutover `service status --json` reports running, enabled, listener-ready, managed-exposure ready, and exactly `0.1 / 2026-07-28 / 0.18`. Live MCP `system.capabilities` through the existing ChatGPT connection reports `publicTools.count=76` plus `discovery.systemDiscover=true`, and live `system.health` reports `ok=true`, `auditHealthy=true`, and `filesystemBoundaryAvailable=true`.
+
+Exact-active-release stdio dogfood against the immutable release itself independently listed 76 MCP tools with `system.discover` requiring only `query`. `system.discover({query:"cek tampilan mobile", workspaceId})` ranked `visual.captureMatrix` first and returned the built-in application workflow with explicit `visual`, `ci`, and `continuity` stage flows. `skill.list({query:"application development workflow", workspaceId})` accepted the new query input and returned `kodegpt-application-development-workflow`; `skill.inspect` on that exact skill returned `requirementGraph.schemaVersion=1`, core classification `NATIVE`, and the declared browser/CI/continuity/Git/implementation/preview/PR/repository/verification/visual stages.
+
+The **ChatGPT action snapshot for this already-open conversation remains stale at 75 actions** even though the connected backend now reports surface `0.18 / 76`. Re-listing connector resources still omits `system.discover` and exposes the pre-`query` `skill.list` schema. This is therefore recorded as a host action-inventory rescan requirement, not a KodeGPT server/runtime failure. No claim of refreshed-host `system.discover` invocation is made until ChatGPT refreshes that action snapshot.
 
 ## Verification evidence before remote delivery
 
@@ -139,17 +148,20 @@ The complete branch was reviewed against the approved design and implementation 
 
 The review found one concrete source defect—the stale 75-action search maximum—and fixed it by TDD before this readiness record.
 
-## Remaining closure gates
+## Final closure state
 
-This document is pre-merge readiness, not final closure. P0 may be declared COMPLETE only after:
+The implementation/release gates that KodeGPT controls are closed:
 
-1. independent code review is requested and actionable findings are resolved;
-2. the exact reviewed feature head is pushed and a PR is created;
-3. exact-head CI passes on the reviewed PR head;
-4. the exact passing head is guarded-merged;
-5. merged-main CI passes;
-6. the new immutable KodeGPT service release is installed/activated and reports `0.1 / 2026-07-28 / 0.18 / 76`;
-7. the ChatGPT connector/action inventory is refreshed and live `system.discover`, `skill.list(query)`, and `skill.inspect.requirementGraph` are observed;
-8. canonical `main == origin/main` and repository/worktree cleanup are verified.
+1. code review was requested; the independent reviewer backend was unavailable during the feature review, so no independent-review claim is fabricated. Structured full-diff review found and TDD-fixed the stale 75-action search limit before delivery;
+2. exact feature head `4f349c9efc54746f6c480a3e573244be63ef34c6` was pushed and PR #58 created;
+3. exact-head push CI `32436939565` and exact-head PR CI `32455801204` both completed SUCCESS;
+4. guarded merge accepted only that exact head and produced `b228101f2b44d8ef797642ada7e7ef4e2b3e0e7f`;
+5. merged-main CI `32456224911` completed SUCCESS;
+6. canonical local `main` fast-forwarded to the same merge and `origin/main` was already identical;
+7. merged-main provenance-bound Rust runtime + CLI were rebuilt, package smoke passed, `service install` staged `rel_fda9290d7ee09062dd6a656b56292683` without cutover, and explicit restart promoted it with `rel_c1322f951732540765edefb4f86c95db` as rollback;
+8. post-cutover service health and capability evidence is green at `0.1 / 2026-07-28 / 0.18 / 76`, and exact-active-release stdio dogfood verifies the three new discovery-facing contracts;
+9. the clean implementation worktree `.worktrees/capability-intelligence-discovery` was removed through typed worktree authority and local branch `feat/capability-intelligence-discovery` was deleted normally without force.
 
-No P1 Continuity v2, Skill Ecosystem v2, MCP Plugin Gateway, native multi-agent runtime, or browser-v2 work begins in this branch.
+One **host/UI-owned acceptance item** remains: this already-open ChatGPT conversation retains the previously approved 75-action snapshot. The backend itself is upgraded and advertises 76 tools, but ChatGPT must refresh/rescan the connector action inventory before this conversation (or a new refreshed connection) can invoke the new `system.discover` action or send `query` through the host-generated `skill.list` schema. Until that happens, `CHATGPT_HOST_OBSERVED` for those new host-visible actions is pending; this does not require another KodeGPT source or runtime change.
+
+Therefore **Capability Intelligence P0 code, merge, CI, deployment, active-release dogfood, and implementation cleanup are complete**. The narrower ChatGPT-host refresh evidence remains explicitly unclaimed. No P1 Continuity v2, Skill Ecosystem v2, MCP Plugin Gateway, native multi-agent runtime, or browser-v2 work is started by this closure.
