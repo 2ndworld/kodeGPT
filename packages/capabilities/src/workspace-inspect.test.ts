@@ -87,13 +87,15 @@ describe("workspace.inspect", () => {
       path: "packages/demo/src/index.ts",
       kind: "source-index"
     });
-    expect(result.symbols).toContainEqual({
-      name: "service",
-      kind: "function",
-      path: "packages/demo/src/service.ts",
-      line: 1,
-      exported: true
-    });
+    expect(result.symbols).toContainEqual(
+      expect.objectContaining({
+        name: "service",
+        kind: "function",
+        path: "packages/demo/src/service.ts",
+        line: 1,
+        exported: true
+      })
+    );
     expect(result.relationships).toEqual(
       expect.arrayContaining([
         { from: "packages/demo/src/index.ts", to: "packages/demo/src/service.ts", kind: "imports" },

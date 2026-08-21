@@ -868,10 +868,10 @@ export function registerKodegptTools(
       outputSchema: ContextBuildResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, intent, target, maxBytes }) =>
+    async ({ workspaceId, intent, target, focus, maxBytes }) =>
       nativeCapabilityResult(async () =>
         ContextBuildResultSchema.parse(
-          await context.context.build({ workspaceId, intent, target, maxBytes })
+          await context.context.build({ workspaceId, intent, target, focus, maxBytes })
         )
       )
   );

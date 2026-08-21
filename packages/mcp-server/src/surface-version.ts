@@ -1,1 +1,1 @@
-export const MCP_SURFACE_VERSION = "0.18" as const;
+export const MCP_SURFACE_VERSION = "0.19" as const;

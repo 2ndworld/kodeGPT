@@ -309,6 +309,7 @@ const typedContextBuildResult: ContextBuildResult = {
       path: "src/main.ts",
       reason: "exact-target",
       content: "export const value = 1;\n",
+      region: { startLine: 1, endLine: 1 },
       truncated: false
     }
   ],
@@ -1204,7 +1205,13 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const context = makeContext();
+    let capturedInput: unknown;
+    context.context.build = async (input) => {
+      capturedInput = input;
+      return typedContextBuildResult;
+    };
+    registerKodegptTools(server, context);
     const handler = handlers.get("context.build");
     const definition = definitions.get("context.build");
     expect(handler).toBeDefined();
@@ -1215,11 +1222,19 @@ describe("structured MCP tool results", () => {
     const result = (await handler!({
       workspaceId: "ws_1",
       intent: "review",
-      target: "src/main.ts"
+      target: "src/main.ts",
+      focus: "value"
     } as never)) as {
       content: Array<{ type: string; text: string }>;
       structuredContent?: unknown;
     };
+    expect(capturedInput).toEqual({
+      workspaceId: "ws_1",
+      intent: "review",
+      target: "src/main.ts",
+      focus: "value",
+      maxBytes: undefined
+    });
     expect(result.structuredContent).toEqual(typedContextBuildResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });

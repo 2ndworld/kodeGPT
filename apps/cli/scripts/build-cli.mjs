@@ -42,7 +42,17 @@ await build({
     "playwright-core/*",
     "yaml"
   ],
-  banner: { js: "#!/usr/bin/env node" },
+  banner: {
+    js: [
+      "#!/usr/bin/env node",
+      'import { createRequire as __kodegptCreateRequire } from "node:module";',
+      'import { dirname as __kodegptDirname } from "node:path";',
+      'import { fileURLToPath as __kodegptFileURLToPath } from "node:url";',
+      "const require = __kodegptCreateRequire(import.meta.url);",
+      "const __filename = __kodegptFileURLToPath(import.meta.url);",
+      "const __dirname = __kodegptDirname(__filename);"
+    ].join("\n")
+  },
   legalComments: "none"
 });
 await chmod(tmpOut, 0o755);

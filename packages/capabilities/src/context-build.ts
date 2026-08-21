@@ -11,6 +11,7 @@ import {
   type ContextWorkspaceSummary,
   type GitChangesInput,
   type GitChangesResult,
+  type SourceRegion,
   type VerifyListInput,
   type VerifyListResult,
   type WorkspaceInspectInput,
@@ -68,6 +69,7 @@ const TIER_BASE: Record<CandidateKind, number> = {
 };
 const TARGET_FILE_BUDGET_SHARE = 0.5;
 const NON_TARGET_FILE_BUDGET_SHARE = 0.25;
+const MAX_CONTEXT_REGION_SOURCE_BYTES = 128 * 1024;
 
 export interface ContextBuildAdapter {
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
@@ -89,10 +91,15 @@ export async function buildContext(
   const maxBytes = input.maxBytes ?? DEFAULT_CONTEXT_MAX_BYTES;
 
   const workspace = await adapter.inspect({ workspaceId: input.workspaceId });
+  const focusedTargetWorkspace =
+    input.focus === undefined || input.target === undefined
+      ? undefined
+      : await adapter.inspect({ workspaceId: input.workspaceId, path: input.target, maxEntries: 1 });
   const targetArea =
     input.target === undefined ? undefined : resolveTargetArea(workspace, input.target);
   const gitEvidence = await collectGitEvidence(adapter, input.workspaceId);
   const searchEvidence = await collectSearchEvidence(adapter, input, targetArea);
+  const focusEvidence = await collectFocusReferenceEvidence(adapter, input, targetArea);
   const verificationEvidence = await collectVerificationEvidence(adapter, input.workspaceId, input.target);
   const git = gitEvidence.state === "unavailable" ? undefined : gitEvidence.value;
   const search = scopeSearchEvidence(
@@ -100,21 +107,29 @@ export async function buildContext(
     input.target,
     targetArea
   );
+  const focusReferences =
+    focusEvidence === undefined || focusEvidence.state === "unavailable" ? [] : focusEvidence.value.matches;
+  const searchState = mergeEvidenceStates(searchEvidence.state, focusEvidence?.state);
   const verifications =
     verificationEvidence.state === "unavailable" ? [] : verificationEvidence.value.recipes;
 
   const candidates = selectCandidates(workspace, git, search, input.intent, input.target);
-  const relevantMatches = sortedMatches(
-    search.matches.filter(
+  const relevantMatches = sortedMatches([
+    ...search.matches.filter(
+      (match) => match.path === input.target || isSemanticDiscoveryPath(match.path)
+    ),
+    ...focusReferences.filter(
       (match) => match.path === input.target || isSemanticDiscoveryPath(match.path)
     )
-  );
+  ]);
   const workspaceSummary = summarizeWorkspace(workspace, input.target, targetArea);
   const warnings = [...workspace.warnings];
   if (gitEvidence.state === "unavailable") warnings.push("git-evidence-unavailable");
   else if (gitEvidence.value.truncated) warnings.push("git-change-evidence-truncated");
   if (searchEvidence.state === "unavailable") warnings.push("search-evidence-unavailable");
   else if (searchEvidence.value.truncated) warnings.push("search-evidence-truncated");
+  if (focusEvidence?.state === "unavailable") warnings.push("focus-search-evidence-unavailable");
+  else if (focusEvidence?.state === "incomplete") warnings.push("focus-search-evidence-truncated");
   if (verificationEvidence.state === "unavailable") {
     warnings.push("verification-evidence-unavailable");
   }
@@ -123,7 +138,7 @@ export async function buildContext(
   let truncated =
     workspace.truncated ||
     gitEvidence.state !== "available" ||
-    searchEvidence.state !== "available" ||
+    searchState !== "available" ||
     verificationEvidence.state !== "available";
   const selectedFiles: ContextSelectedFile[] = [];
 
@@ -136,11 +151,43 @@ export async function buildContext(
     }
 
     try {
-      const read = await adapter.readFile(input.workspaceId, candidate.path, {
+      const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
+      const region = selectFocusRegion(candidate, workspace, focusedTargetWorkspace, input, focusEvidence);
+      const sourceReadLimit =
+        region === undefined
+          ? readLimit
+          : Math.min(MAX_CONTEXT_MAX_BYTES, Math.max(readLimit, MAX_CONTEXT_REGION_SOURCE_BYTES));
+      let read = await adapter.readFile(input.workspaceId, candidate.path, {
         offset: 0,
-        maxBytes: candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined)
+        maxBytes: sourceReadLimit
       });
-      const actualBytes = Buffer.byteLength(read.contents, "utf8");
+      let actualBytes = Buffer.byteLength(read.contents, "utf8");
+      if (actualBytes !== read.bytesRead) {
+        warnings.push(`invalid-read-result:${candidate.path}`);
+        truncated = true;
+        continue;
+      }
+
+      if (region !== undefined && read.eof) {
+        const content = sliceLineRegion(read.contents, region);
+        const regionBytes = content === undefined ? Number.POSITIVE_INFINITY : Buffer.byteLength(content, "utf8");
+        if (content !== undefined && regionBytes <= readLimit && regionBytes <= remaining) {
+          selectedFiles.push({
+            path: candidate.path,
+            reason: candidate.reason,
+            content,
+            region,
+            truncated: false
+          });
+          totalBytes += regionBytes;
+          continue;
+        }
+      }
+
+      if (sourceReadLimit !== readLimit) {
+        read = await adapter.readFile(input.workspaceId, candidate.path, { offset: 0, maxBytes: readLimit });
+        actualBytes = Buffer.byteLength(read.contents, "utf8");
+      }
       if (actualBytes !== read.bytesRead || actualBytes > remaining) {
         warnings.push(`invalid-read-result:${candidate.path}`);
         truncated = true;
@@ -177,7 +224,7 @@ export async function buildContext(
     evidenceStatus: {
       workspace: workspace.truncated ? "incomplete" : "available",
       git: gitEvidence.state,
-      search: searchEvidence.state,
+      search: searchState,
       verification: verificationEvidence.state
     },
     workspace: workspaceSummary,
@@ -238,6 +285,39 @@ async function collectSearchEvidence(
   }
 }
 
+async function collectFocusReferenceEvidence(
+  adapter: ContextBuildAdapter,
+  input: ContextBuildInput,
+  targetArea: string | undefined
+): Promise<EvidenceResult<CodeSearchResult> | undefined> {
+  if (input.focus === undefined) return undefined;
+  try {
+    const value = await adapter.search({
+      workspaceId: input.workspaceId,
+      query: input.focus,
+      mode: "reference",
+      ...(targetArea === undefined || targetArea === "." ? {} : { path: targetArea }),
+      maxResults: 100
+    });
+    return { state: value.truncated ? "incomplete" : "available", value };
+  } catch (error) {
+    if (isKnownSourceFailure(error, SEARCH_EVIDENCE_UNAVAILABLE_CODES)) {
+      return { state: "unavailable" };
+    }
+    throw error;
+  }
+}
+
+function mergeEvidenceStates(
+  primary: ContextEvidenceState,
+  secondary: ContextEvidenceState | undefined
+): ContextEvidenceState {
+  if (secondary === undefined) return primary;
+  if (primary === "available" && secondary === "available") return "available";
+  if (primary === "unavailable" && secondary === "unavailable") return "unavailable";
+  return "incomplete";
+}
+
 async function collectVerificationEvidence(
   adapter: ContextBuildAdapter,
   workspaceId: string,
@@ -270,6 +350,88 @@ function scopeSearchEvidence(
       (match) => match.path === target || sameArea(match.path, targetArea)
     )
   };
+}
+
+function selectFocusRegion(
+  candidate: Candidate,
+  workspace: WorkspaceInspectResult,
+  focusedTargetWorkspace: WorkspaceInspectResult | undefined,
+  input: ContextBuildInput,
+  focusEvidence: EvidenceResult<CodeSearchResult> | undefined
+): SourceRegion | undefined {
+  if (input.target === undefined || input.focus === undefined) return undefined;
+
+  if (candidate.path === input.target) {
+    return uniqueRegion(
+      (focusedTargetWorkspace ?? workspace).symbols
+        .filter(
+          (symbol) =>
+            symbol.path === candidate.path &&
+            symbol.name === input.focus &&
+            symbol.region !== undefined
+        )
+        .map((symbol) => symbol.region!)
+    );
+  }
+
+  if (
+    focusEvidence === undefined ||
+    focusEvidence.state === "unavailable" ||
+    focusEvidence.value.precision !== "structural"
+  ) {
+    return undefined;
+  }
+
+  const regions: SourceRegion[] = [];
+  for (const match of focusEvidence.value.matches) {
+    if (match.path !== candidate.path || match.line === undefined) continue;
+    regions.push(enclosingSymbolRegion(workspace, candidate.path, match.line) ?? {
+      startLine: match.line,
+      endLine: match.line
+    });
+  }
+  return uniqueRegion(regions);
+}
+
+function enclosingSymbolRegion(
+  workspace: WorkspaceInspectResult,
+  path: string,
+  line: number
+): SourceRegion | undefined {
+  return workspace.symbols
+    .filter(
+      (symbol) =>
+        symbol.path === path &&
+        symbol.region !== undefined &&
+        symbol.region.startLine <= line &&
+        symbol.region.endLine >= line
+    )
+    .sort((left, right) => {
+      const leftRegion = left.region!;
+      const rightRegion = right.region!;
+      return (
+        leftRegion.endLine - leftRegion.startLine - (rightRegion.endLine - rightRegion.startLine) ||
+        leftRegion.startLine - rightRegion.startLine ||
+        compareLexical(left.name, right.name)
+      );
+    })[0]?.region;
+}
+
+function uniqueRegion(regions: SourceRegion[]): SourceRegion | undefined {
+  const unique = new Map<string, SourceRegion>();
+  for (const region of regions) unique.set(`${region.startLine}:${region.endLine}`, region);
+  return unique.size === 1 ? [...unique.values()][0] : undefined;
+}
+
+function sliceLineRegion(contents: string, region: SourceRegion): string | undefined {
+  const starts = [0];
+  for (let index = 0; index < contents.length; index += 1) {
+    if (contents[index] === "\n") starts.push(index + 1);
+  }
+  if (region.startLine > starts.length || region.endLine > starts.length) return undefined;
+  const start = starts[region.startLine - 1]!;
+  const end = region.endLine < starts.length ? starts[region.endLine]! : contents.length;
+  return contents.slice(start, end);
 }
 
 function summarizeWorkspace(
@@ -475,6 +637,17 @@ function validateInput(input: ContextBuildInput): void {
   }
   if (input.target !== undefined && !isSafeRelativePath(input.target)) {
     throw new CapabilityError("CAPABILITY_INPUT_INVALID", "Context target must be a safe relative path");
+  }
+  if (input.focus !== undefined) {
+    if (input.target === undefined) {
+      throw new CapabilityError("CAPABILITY_INPUT_INVALID", "Context focus requires an explicit target");
+    }
+    if (input.focus.length === 0 || input.focus.length > 512 || input.focus.includes("\0")) {
+      throw new CapabilityError(
+        "CAPABILITY_INPUT_INVALID",
+        "Context focus must contain between 1 and 512 safe characters"
+      );
+    }
   }
   if (
     input.maxBytes !== undefined &&

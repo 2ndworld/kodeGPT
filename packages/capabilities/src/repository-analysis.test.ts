@@ -41,8 +41,20 @@ describe("repository analysis", () => {
 
     expect(result.symbols).toEqual(
       expect.arrayContaining([
-        { name: "start", kind: "function", path: "src/index.ts", line: 1, exported: true },
-        { name: "helper", kind: "variable", path: "src/helper.ts", line: 1, exported: true },
+        expect.objectContaining({
+          name: "start",
+          kind: "function",
+          path: "src/index.ts",
+          line: 1,
+          exported: true
+        }),
+        expect.objectContaining({
+          name: "helper",
+          kind: "variable",
+          path: "src/helper.ts",
+          line: 1,
+          exported: true
+        }),
         { name: "worker", kind: "module", path: "src/lib.rs", line: 1, exported: true },
         { name: "Engine", kind: "struct", path: "src/lib.rs", line: 2, exported: true },
         { name: "run", kind: "function", path: "src/worker.rs", line: 1, exported: true }
@@ -57,6 +69,64 @@ describe("repository analysis", () => {
       ])
     );
     expect(result.warnings).toEqual([]);
+  });
+
+  it("extracts nested declarations and multiline imports structurally", async () => {
+    const files = {
+      "src/index.ts": [
+        "import {",
+        "  helper as renamedHelper",
+        '} from "./helper.js";',
+        "",
+        "export function outer(",
+        "  value: number",
+        ") {",
+        "  function inner() {",
+        "    return renamedHelper(value);",
+        "  }",
+        "  return inner();",
+        "}"
+      ].join("\n"),
+      "src/helper.ts": "export function helper(value: number) { return value; }\n"
+    };
+
+    const result = await analyzeRepository(adapter(files), "ws_1", entries(Object.keys(files)));
+
+    expect(result.symbols).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "outer",
+          kind: "function",
+          path: "src/index.ts",
+          region: { startLine: 5, endLine: 12 }
+        }),
+        expect.objectContaining({
+          name: "inner",
+          kind: "function",
+          path: "src/index.ts",
+          region: { startLine: 8, endLine: 10 }
+        })
+      ])
+    );
+    expect(result.relationships).toContainEqual({
+      from: "src/index.ts",
+      to: "src/helper.ts",
+      kind: "imports"
+    });
+  });
+
+  it("keeps valid structural evidence when a sibling source has parser diagnostics", async () => {
+    const files = {
+      "src/broken.ts": "export function broken( { return 1; }",
+      "src/good.ts": "export function good() { return 1; }"
+    };
+
+    const result = await analyzeRepository(adapter(files), "ws_1", entries(Object.keys(files)));
+
+    expect(result.symbols).toContainEqual(
+      expect.objectContaining({ name: "good", path: "src/good.ts", kind: "function" })
+    );
+    expect(result.warnings).toContain("STRUCTURAL_PARSE_FAILED");
   });
 
   it("omits unresolved imports and de-duplicates deterministic relationships", async () => {

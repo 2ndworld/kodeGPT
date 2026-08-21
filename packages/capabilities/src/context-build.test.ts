@@ -175,6 +175,171 @@ describe("context.build", () => {
     );
   });
 
+  it("slices structurally focused target and related test regions within the existing byte budget", async () => {
+    const target = "packages/core/src/large.ts";
+    const relatedTest = "packages/core/src/large.test.ts";
+    const targetLines = Array.from({ length: 260 }, (_, index) => `// distant-target-${index + 1}`);
+    targetLines[179] = "export function calculateInvoice(";
+    targetLines[180] = "  subtotal: number";
+    targetLines[181] = ") {";
+    for (let line = 183; line < 220; line += 1) targetLines[line - 1] = `  const step${line} = subtotal + ${line};`;
+    targetLines[219] = "}";
+    const testLines = Array.from({ length: 150 }, (_, index) => `// distant-test-${index + 1}`);
+    testLines[89] = "function testCalculateInvoice() {";
+    testLines[99] = "  expect(calculateInvoice(1)).toBeDefined();";
+    testLines[129] = "}";
+    const targetContents = targetLines.join("\n");
+    const testContents = testLines.join("\n");
+    const fixture = sources({
+      [target]: targetContents,
+      [relatedTest]: testContents,
+      "packages/core/src/helper.ts": "helper\n",
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n"
+    });
+    const originalInspect = fixture.adapter.inspect;
+    fixture.adapter.inspect = async (input) => ({
+      ...(await originalInspect(input)),
+      symbols: [
+        {
+          name: "calculateInvoice",
+          kind: "function" as const,
+          path: target,
+          line: 180,
+          exported: true,
+          region: { startLine: 180, endLine: 220 }
+        },
+        {
+          name: "testCalculateInvoice",
+          kind: "function" as const,
+          path: relatedTest,
+          line: 90,
+          exported: false,
+          region: { startLine: 90, endLine: 130 }
+        }
+      ],
+      relationships: [{ from: relatedTest, to: target, kind: "tests" as const }]
+    });
+    const originalSearch = fixture.adapter.search;
+    fixture.adapter.search = async (input) => {
+      if (input.mode === "reference") {
+        return {
+          schemaVersion: 1,
+          mode: "reference",
+          precision: "structural",
+          matches: [
+            {
+              path: relatedTest,
+              line: 100,
+              column: 10,
+              kind: "reference",
+              preview: testLines[99]
+            }
+          ],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      return originalSearch(input);
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "implement",
+      target,
+      focus: "calculateInvoice",
+      maxBytes: 8 * 1024
+    });
+
+    const selectedTarget = result.selectedFiles.find((file) => file.path === target);
+    const selectedTest = result.selectedFiles.find((file) => file.path === relatedTest);
+    expect(selectedTarget).toMatchObject({
+      path: target,
+      reason: "exact-target",
+      region: { startLine: 180, endLine: 220 },
+      truncated: false
+    });
+    expect(selectedTarget?.content).toContain("export function calculateInvoice(");
+    expect(selectedTarget?.content).not.toContain("distant-target-1");
+    expect(selectedTest).toMatchObject({
+      path: relatedTest,
+      reason: "related-test",
+      region: { startLine: 90, endLine: 130 },
+      truncated: false
+    });
+    expect(selectedTest?.content).toContain("calculateInvoice(1)");
+    expect(selectedTest?.content).not.toContain("// distant-test-1\n");
+    expect(result.totalBytes).toBeLessThan(
+      Buffer.byteLength(targetContents, "utf8") + Buffer.byteLength(testContents, "utf8")
+    );
+  });
+
+  it("uses an exact-target inspection when full-workspace structural aggregation omits the focused symbol", async () => {
+    const targetLines = [
+      "// prelude",
+      "// prelude 2",
+      "export function workspaceManager() {",
+      "  return 1;",
+      "}",
+      "// distant"
+    ];
+    const fixture = sources({
+      [TARGET]: targetLines.join("\n"),
+      "package.json": "root-manifest\n",
+      "packages/core/package.json": "core-manifest\n"
+    }, { workspaceWarnings: ["INSPECT_SYMBOL_LIMIT_REACHED"] });
+    const originalInspect = fixture.adapter.inspect;
+    const inspectCalls: WorkspaceInspectInput[] = [];
+    fixture.adapter.inspect = async (input) => {
+      inspectCalls.push(input);
+      const result = await originalInspect(input);
+      if (input.path !== TARGET) return result;
+      return {
+        ...result,
+        root: TARGET,
+        symbols: [
+          {
+            name: "workspaceManager",
+            kind: "function" as const,
+            path: TARGET,
+            line: 3,
+            exported: true,
+            region: { startLine: 3, endLine: 5 }
+          }
+        ],
+        warnings: []
+      };
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "implement",
+      target: TARGET,
+      focus: "workspaceManager",
+      maxBytes: 1024
+    });
+
+    expect(inspectCalls).toContainEqual({ workspaceId: "ws_1", path: TARGET, maxEntries: 1 });
+    expect(result.selectedFiles.find((file) => file.path === TARGET)).toMatchObject({
+      path: TARGET,
+      reason: "exact-target",
+      region: { startLine: 3, endLine: 5 },
+      content: "export function workspaceManager() {\n  return 1;\n}\n",
+      truncated: false
+    });
+  });
+
+  it("rejects focus without an explicit target path", async () => {
+    const fixture = sources({});
+    await expect(
+      buildContext(fixture.adapter, {
+        workspaceId: "ws_1",
+        intent: "understand",
+        focus: "calculateInvoice"
+      })
+    ).rejects.toMatchObject({ code: "CAPABILITY_INPUT_INVALID" });
+  });
+
   it("returns a target-scoped workspace summary and filters search and verification noise", async () => {
     const fixture = sources({
       [TARGET]: "target\n",

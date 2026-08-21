@@ -98,6 +98,13 @@ export type {
   GitPatchCoverage,
   NativeCapabilityId,
   PatchFileAction,
+  SourceRegion,
+  StructuralFileAnalysis,
+  StructuralLanguage,
+  StructuralPrecision,
+  StructuralReferenceEvidence,
+  StructuralRelationshipEvidence,
+  StructuralSymbolEvidence,
   VerificationCategory,
   VerificationOperationResult,
   VerificationOperationState,
@@ -145,6 +152,12 @@ export type {
   WorkspaceInspectionAdapter
 } from "./adapters.js";
 export { CapabilityError, toPublicCapabilityError } from "./errors.js";
+export {
+  analyzeStructuralFile,
+  MAX_STRUCTURAL_RELATIONSHIPS_PER_FILE,
+  MAX_STRUCTURAL_REFERENCES_PER_FILE,
+  MAX_STRUCTURAL_SYMBOLS_PER_FILE
+} from "./structural-analysis.js";
 export * from "./github-repository-identity.js";
 export * from "./remote-ci/index.js";
 export * from "./provider-gateway/index.js";
@@ -198,6 +211,8 @@ export {
   GitRangeResultSchema,
   GitDiffHistoryInputSchema,
   GitDiffHistoryResultSchema,
+  SourceRegionSchema,
+  StructuralFileAnalysisSchema,
   VerifyListInputSchema,
   VerifyListResultSchema,
   VerifyRunInputSchema,

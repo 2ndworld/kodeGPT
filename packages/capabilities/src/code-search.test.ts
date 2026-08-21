@@ -16,11 +16,18 @@ function service(options: {
   search?: CapabilitySearchMatch[];
   searchTruncated?: boolean;
   searchTruncationReasons?: CodeSearchTruncationReason[];
+  files?: Record<string, string>;
   onTree?: (scope: "literal" | "semantic" | undefined) => void;
   onSearch?: (scope: "literal" | "semantic" | undefined) => void;
 }): NativeCapabilityService {
   const workspaceInspection: WorkspaceInspectionAdapter = {
-    readFile: async () => ({ contents: "", bytesRead: 0, eof: true }),
+    readFile: async (_workspaceId, path, readOptions) => {
+      const contents = options.files?.[path] ?? "";
+      const maxBytes = readOptions?.maxBytes ?? Number.MAX_SAFE_INTEGER;
+      const encoded = Buffer.from(contents);
+      const chunk = encoded.subarray(0, maxBytes).toString("utf8");
+      return { contents: chunk, bytesRead: Buffer.byteLength(chunk), eof: encoded.byteLength <= maxBytes };
+    },
     tree: async (_workspaceId, _path, _maxEntries, scope) => {
       options.onTree?.(scope);
       return {
@@ -153,6 +160,77 @@ describe("code.search", () => {
       { path: "src/main.ts", line: 2, column: 1, kind: "symbol", preview: "foo();" }
     ]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("uses structural TypeScript definitions for multiline and nested declarations", async () => {
+    const contents = [
+      "export function outer(",
+      "  value: number",
+      ") {",
+      "  function inner() {",
+      "    return value;",
+      "  }",
+      "  return inner();",
+      "}"
+    ].join("\n");
+    const capability = service({
+      files: { "src/main.ts": contents },
+      search: [{ path: "src/main.ts", line: 4, lineText: "  function inner() {" }]
+    });
+
+    const result = await capability.searchCode({
+      workspaceId: "ws_structural_definition",
+      query: "inner",
+      mode: "definition"
+    });
+
+    expect(result.precision).toBe("structural");
+    expect(result.matches).toEqual([
+      {
+        path: "src/main.ts",
+        line: 4,
+        column: 12,
+        kind: "definition",
+        preview: "  function inner() {"
+      }
+    ]);
+  });
+
+  it("uses structural references and excludes comment, string, and property-name false positives", async () => {
+    const contents = [
+      'const note = "calculateInvoice should not count";',
+      "// calculateInvoice should not count either",
+      "const metadata = { calculateInvoice: true };",
+      "export function run() {",
+      "  return calculateInvoice();",
+      "}"
+    ].join("\n");
+    const capability = service({
+      files: { "src/main.ts": contents },
+      search: [
+        { path: "src/main.ts", line: 1, lineText: 'const note = "calculateInvoice should not count";' },
+        { path: "src/main.ts", line: 2, lineText: "// calculateInvoice should not count either" },
+        { path: "src/main.ts", line: 3, lineText: "const metadata = { calculateInvoice: true };" },
+        { path: "src/main.ts", line: 5, lineText: "  return calculateInvoice();" }
+      ]
+    });
+
+    const result = await capability.searchCode({
+      workspaceId: "ws_structural_reference",
+      query: "calculateInvoice",
+      mode: "reference"
+    });
+
+    expect(result.precision).toBe("structural");
+    expect(result.matches).toEqual([
+      {
+        path: "src/main.ts",
+        line: 5,
+        column: 10,
+        kind: "reference",
+        preview: "  return calculateInvoice();"
+      }
+    ]);
   });
 
   it.each([

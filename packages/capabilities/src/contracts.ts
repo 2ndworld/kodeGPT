@@ -64,7 +64,9 @@ export const NATIVE_CAPABILITY_IDS = Object.freeze([
 
 export type NativeCapabilityId = (typeof NATIVE_CAPABILITY_IDS)[number];
 export type CodeSearchMode = "text" | "path" | "symbol" | "definition" | "reference";
-export type CodeSearchPrecision = "exact" | "lexical" | "heuristic";
+export type CodeSearchPrecision = "exact" | "lexical" | "structural" | "heuristic";
+export type StructuralPrecision = "structural" | "heuristic";
+export type StructuralLanguage = "typescript" | "javascript" | "rust";
 export type CodeSearchTruncationReason =
   | "TREE_LIMIT"
   | "FILE_SIZE_LIMIT"
@@ -102,6 +104,46 @@ export type WorkspaceInspectSymbolKind =
 export type WorkspaceInspectRelationshipKind = "imports" | "tests" | "module";
 export type FilePatchMode = "check" | "apply";
 export type PatchFileAction = "create" | "update" | "delete";
+
+export interface SourceRegion {
+  startLine: number;
+  endLine: number;
+}
+
+export interface StructuralSymbolEvidence {
+  name: string;
+  kind: WorkspaceInspectSymbolKind;
+  path: string;
+  line: number;
+  exported: boolean;
+  region?: SourceRegion;
+}
+
+export interface StructuralReferenceEvidence {
+  name: string;
+  path: string;
+  line: number;
+  column: number;
+  kind: "definition" | "reference";
+  region?: SourceRegion;
+}
+
+export interface StructuralRelationshipEvidence {
+  from: string;
+  to: string;
+  kind: WorkspaceInspectRelationshipKind;
+  precision: StructuralPrecision;
+}
+
+export interface StructuralFileAnalysis {
+  path: string;
+  language: StructuralLanguage;
+  precision: StructuralPrecision;
+  symbols: StructuralSymbolEvidence[];
+  references: StructuralReferenceEvidence[];
+  relationships: StructuralRelationshipEvidence[];
+  warnings: string[];
+}
 
 export interface CapabilityArtifactMetadata {
   schemaVersion: 1;
@@ -143,6 +185,7 @@ export interface WorkspaceInspectSymbol {
   path: string;
   line: number;
   exported: boolean;
+  region?: SourceRegion;
 }
 
 export interface WorkspaceInspectRelationship {
@@ -549,6 +592,7 @@ export interface ContextBuildInput {
   workspaceId: string;
   intent: ContextIntent;
   target?: string;
+  focus?: string;
   maxBytes?: number;
 }
 
@@ -574,6 +618,7 @@ export interface ContextSelectedFile {
   path: string;
   reason: string;
   content?: string;
+  region?: SourceRegion;
   truncated: boolean;
 }
 

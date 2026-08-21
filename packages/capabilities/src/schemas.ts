@@ -43,6 +43,11 @@ import {
   type GitRangeResult,
   type GitDiffHistoryInput,
   type GitDiffHistoryResult,
+  type SourceRegion,
+  type StructuralFileAnalysis,
+  type StructuralReferenceEvidence,
+  type StructuralRelationshipEvidence,
+  type StructuralSymbolEvidence,
   type VerificationRecipe,
   type VerifyListInput,
   type VerifyListResult,
@@ -77,6 +82,62 @@ const workspaceInspectRelativePathSchema = z
   .string()
   .min(1)
   .refine((value) => !value.startsWith("/") && !value.split("/").includes(".."));
+
+const structuralPrecisionSchema = z.enum(["structural", "heuristic"]);
+const structuralLanguageSchema = z.enum(["typescript", "javascript", "rust"]);
+
+export const SourceRegionSchema: z.ZodType<SourceRegion> = z
+  .object({
+    startLine: z.number().int().positive().safe(),
+    endLine: z.number().int().positive().safe()
+  })
+  .strict()
+  .refine((value) => value.endLine >= value.startLine, {
+    message: "Source region endLine must be greater than or equal to startLine"
+  });
+
+const structuralSymbolEvidenceSchema: z.ZodType<StructuralSymbolEvidence> = z
+  .object({
+    name: z.string().min(1),
+    kind: workspaceInspectSymbolKindSchema,
+    path: workspaceInspectRelativePathSchema,
+    line: z.number().int().positive().safe(),
+    exported: z.boolean(),
+    region: SourceRegionSchema.optional()
+  })
+  .strict();
+
+const structuralReferenceEvidenceSchema: z.ZodType<StructuralReferenceEvidence> = z
+  .object({
+    name: z.string().min(1),
+    path: workspaceInspectRelativePathSchema,
+    line: z.number().int().positive().safe(),
+    column: z.number().int().positive().safe(),
+    kind: z.enum(["definition", "reference"]),
+    region: SourceRegionSchema.optional()
+  })
+  .strict();
+
+const structuralRelationshipEvidenceSchema: z.ZodType<StructuralRelationshipEvidence> = z
+  .object({
+    from: workspaceInspectRelativePathSchema,
+    to: workspaceInspectRelativePathSchema,
+    kind: workspaceInspectRelationshipKindSchema,
+    precision: structuralPrecisionSchema
+  })
+  .strict();
+
+export const StructuralFileAnalysisSchema: z.ZodType<StructuralFileAnalysis> = z
+  .object({
+    path: workspaceInspectRelativePathSchema,
+    language: structuralLanguageSchema,
+    precision: structuralPrecisionSchema,
+    symbols: z.array(structuralSymbolEvidenceSchema),
+    references: z.array(structuralReferenceEvidenceSchema),
+    relationships: z.array(structuralRelationshipEvidenceSchema),
+    warnings: z.array(z.string())
+  })
+  .strict();
 
 export const WorkspaceInspectInputSchema: z.ZodType<WorkspaceInspectInput> = z
   .object({
@@ -131,7 +192,8 @@ export const WorkspaceInspectResultSchema: z.ZodType<WorkspaceInspectResult> = z
           kind: workspaceInspectSymbolKindSchema,
           path: workspaceInspectRelativePathSchema,
           line: z.number().int().positive().safe(),
-          exported: z.boolean()
+          exported: z.boolean(),
+          region: SourceRegionSchema.optional()
         })
         .strict()
     ),
@@ -150,7 +212,7 @@ export const WorkspaceInspectResultSchema: z.ZodType<WorkspaceInspectResult> = z
   .strict();
 
 const codeSearchModeSchema = z.enum(["text", "path", "symbol", "definition", "reference"]);
-const codeSearchPrecisionSchema = z.enum(["exact", "lexical", "heuristic"]);
+const codeSearchPrecisionSchema = z.enum(["exact", "lexical", "structural", "heuristic"]);
 const codeSearchTruncationReasonSchema = z.enum([
   "TREE_LIMIT",
   "FILE_SIZE_LIMIT",
@@ -650,9 +712,14 @@ export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
     workspaceId: z.string().min(1),
     intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
     target: z.string().min(1).optional(),
+    focus: z.string().min(1).max(512).optional(),
     maxBytes: z.number().int().positive().max(MAX_CONTEXT_MAX_BYTES).safe().optional()
   })
-  .strict();
+  .strict()
+  .refine((value) => value.focus === undefined || value.target !== undefined, {
+    path: ["focus"],
+    message: "Context focus requires an explicit target"
+  });
 
 const contextEvidenceStateSchema = z.enum(["available", "incomplete", "unavailable"]);
 const contextWorkspaceSummarySchema = z
@@ -703,6 +770,7 @@ export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
           path: z.string().min(1),
           reason: z.string().min(1),
           content: z.string().optional(),
+          region: SourceRegionSchema.optional(),
           truncated: z.boolean()
         })
         .strict()
