@@ -22,7 +22,11 @@ class FakePreview implements PreviewBrowserAdapter {
     url: "http://127.0.0.1:4173/",
     processState: "running",
     reachable: true,
-    httpStatus: 200
+    httpStatus: 200,
+    sourceState: {
+      headOid: "1".repeat(40),
+      changesFingerprint: "a".repeat(64)
+    }
   };
 
   async inspect(): Promise<PreviewStatusResult> {

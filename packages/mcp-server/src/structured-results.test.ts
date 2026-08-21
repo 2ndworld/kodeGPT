@@ -1439,7 +1439,11 @@ describe("structured MCP tool results", () => {
       url: "http://127.0.0.1:3000/",
       processState: "running" as const,
       reachable: true,
-      httpStatus: 200
+      httpStatus: 200,
+      sourceState: {
+        headOid: "1".repeat(40),
+        changesFingerprint: "a".repeat(64)
+      }
     };
     context.preview.start = async () => previewResult;
     context.preview.inspect = async () => previewResult;

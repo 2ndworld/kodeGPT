@@ -292,9 +292,13 @@ export async function createProductionServiceStack(
         record: (input) => managers.workspaceManager.auditRemoteCi(input)
       }
     });
+    let nativeCapabilities: NativeCapabilityService;
     const executionManager = new ExecutionManager(managers.workspaceManager);
     const previewManager = new PreviewManager(executionManager, {
-      probe: new NodeLoopbackPreviewProbe()
+      probe: new NodeLoopbackPreviewProbe(),
+      sourceState: {
+        resolve: async (workspaceId) => (await nativeCapabilities.gitChanges({ workspaceId })).sourceState
+      }
     });
     const artifactStore = new ArtifactStore(kernel);
     browserManager = new BrowserManager(
@@ -308,7 +312,7 @@ export async function createProductionServiceStack(
     );
     const visualVerificationManager = new VisualVerificationManager(browserManager, artifactStore);
     const auditReader = new AuditReader(stateRoot);
-    const nativeCapabilities = new NativeCapabilityService({
+    nativeCapabilities = new NativeCapabilityService({
       workspace: {
         inspection: {
           readFile: (workspaceId, path, readOptions) =>

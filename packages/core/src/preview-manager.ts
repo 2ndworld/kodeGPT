@@ -25,6 +25,15 @@ export interface PreviewProbe {
   inspect(input: { port: number; requestPath: string }): Promise<PreviewProbeResult>;
 }
 
+export interface EvidenceSourceStateRef {
+  headOid: string;
+  changesFingerprint: string;
+}
+
+export interface PreviewSourceStateAdapter {
+  resolve(workspaceId: string): Promise<EvidenceSourceStateRef>;
+}
+
 export class NodeLoopbackPreviewProbe implements PreviewProbe {
   portInUse(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -96,6 +105,7 @@ export interface PreviewStatusResult {
   exitCode?: number;
   reachable: boolean;
   httpStatus: number | null;
+  sourceState: EvidenceSourceStateRef;
 }
 
 type PreviewRecord = {
@@ -105,6 +115,7 @@ type PreviewRecord = {
   port: number;
   requestPath: string;
   url: string;
+  sourceState: EvidenceSourceStateRef;
 };
 
 export class PreviewManagerError extends Error {
@@ -120,6 +131,7 @@ export class PreviewManagerError extends Error {
 export class PreviewManager {
   readonly #process: PreviewProcessAdapter;
   readonly #probe: PreviewProbe;
+  readonly #sourceState: PreviewSourceStateAdapter;
   readonly #idFactory: () => string;
   readonly #sleep: (ms: number) => Promise<void>;
   readonly #previews = new Map<string, PreviewRecord>();
@@ -129,12 +141,14 @@ export class PreviewManager {
     process: PreviewProcessAdapter,
     options: {
       probe: PreviewProbe;
+      sourceState: PreviewSourceStateAdapter;
       idFactory?: () => string;
       sleep?: (ms: number) => Promise<void>;
     }
   ) {
     this.#process = process;
     this.#probe = options.probe;
+    this.#sourceState = options.sourceState;
     this.#idFactory =
       options.idFactory ?? (() => `pv_${randomUUID().replaceAll("-", "")}`);
     this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -159,6 +173,9 @@ export class PreviewManager {
       if (this.#previews.has(previewId)) {
         throw new TypeError("Preview ID factory returned a duplicate preview ID");
       }
+      const sourceState = validateEvidenceSourceStateRef(
+        await this.#sourceState.resolve(input.workspaceId)
+      );
       const operation = await this.#process.run({
         workspaceId: input.workspaceId,
         logicalExecutable: input.logicalExecutable,
@@ -173,7 +190,8 @@ export class PreviewManager {
         operationId: operation.operationId,
         port: input.port,
         requestPath,
-        url: `http://127.0.0.1:${input.port}${requestPath}`
+        url: `http://127.0.0.1:${input.port}${requestPath}`,
+        sourceState
       };
       this.#previews.set(previewId, record);
       this.#pendingStarts -= 1;
@@ -315,6 +333,17 @@ function resultFrom(
     processState: operation.state,
     ...(operation.exitCode === undefined ? {} : { exitCode: operation.exitCode }),
     reachable: probe.reachable,
-    httpStatus: probe.httpStatus
+    httpStatus: probe.httpStatus,
+    sourceState: { ...record.sourceState }
   };
+}
+
+function validateEvidenceSourceStateRef(value: EvidenceSourceStateRef): EvidenceSourceStateRef {
+  if (
+    !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.headOid) ||
+    !/^[0-9a-f]{64}$/.test(value.changesFingerprint)
+  ) {
+    throw new TypeError("Preview source state is invalid");
+  }
+  return { ...value };
 }
