@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import * as schemas from "./schemas.js";
 
+type StructuralAnalyzerModule = typeof import("./structural-analysis.js");
+
+async function structuralAnalyzer(): Promise<StructuralAnalyzerModule> {
+  return import("./structural-analysis.js");
+}
+
 type RuntimeSchema = {
   parse(value: unknown): unknown;
 };
@@ -66,5 +72,58 @@ describe("structural repository evidence contracts", () => {
         references: [{ ...value.references[0], line: 0 }]
       })
     ).toThrow();
+  });
+});
+
+describe("bounded structural analysis dispatch", () => {
+  it("routes TypeScript structurally and Rust to explicit heuristic fallback", async () => {
+    const { analyzeStructuralFile } = await structuralAnalyzer();
+
+    const typescript = analyzeStructuralFile({
+      path: "src/invoice.ts",
+      contents: "export function calculateInvoice() { return 1; }"
+    });
+    const rust = analyzeStructuralFile({
+      path: "src/lib.rs",
+      contents: "pub fn calculate_invoice() -> i32 { 1 }"
+    });
+
+    expect(typescript).toMatchObject({
+      language: "typescript",
+      precision: "structural",
+      warnings: []
+    });
+    expect(rust).toMatchObject({
+      language: "rust",
+      precision: "heuristic",
+      warnings: ["STRUCTURAL_FALLBACK_HEURISTIC"]
+    });
+    expect(analyzeStructuralFile({ path: "src/tool.py", contents: "def tool(): pass" })).toBeUndefined();
+  });
+
+  it("marks parser-diagnostic TypeScript as incomplete instead of claiming clean structural precision", async () => {
+    const { analyzeStructuralFile } = await structuralAnalyzer();
+    const result = analyzeStructuralFile({
+      path: "src/broken.ts",
+      contents: "export function broken( { return 1; }"
+    });
+
+    expect(result).toBeDefined();
+    expect(result?.precision).toBe("heuristic");
+    expect(result?.warnings).toContain("STRUCTURAL_PARSE_FAILED");
+  });
+
+  it("bounds structural records and keeps deterministic ordering", async () => {
+    const { analyzeStructuralFile, MAX_STRUCTURAL_SYMBOLS_PER_FILE } = await structuralAnalyzer();
+    const contents = Array.from({ length: MAX_STRUCTURAL_SYMBOLS_PER_FILE + 20 }, (_, index) =>
+      `export const value${String(index).padStart(4, "0")} = ${index};`
+    ).join("\n");
+
+    const first = analyzeStructuralFile({ path: "src/generated.ts", contents });
+    const second = analyzeStructuralFile({ path: "src/generated.ts", contents });
+
+    expect(first?.symbols).toHaveLength(MAX_STRUCTURAL_SYMBOLS_PER_FILE);
+    expect(first?.warnings).toContain("STRUCTURAL_SYMBOL_LIMIT_REACHED");
+    expect(second).toEqual(first);
   });
 });

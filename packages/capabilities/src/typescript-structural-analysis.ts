@@ -25,6 +25,8 @@ export function analyzeTypeScriptSource(input: AnalyzeTypeScriptSourceInput): St
     true,
     scriptKindForPath(input.path)
   );
+  const parseDiagnostics =
+    (source as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
   const symbols: StructuralSymbolEvidence[] = [];
   const references: StructuralReferenceEvidence[] = [];
   const relationships = new Map<string, StructuralRelationshipEvidence>();
@@ -51,11 +53,11 @@ export function analyzeTypeScriptSource(input: AnalyzeTypeScriptSourceInput): St
   return {
     path: input.path,
     language,
-    precision: "structural",
+    precision: parseDiagnostics.length === 0 ? "structural" : "heuristic",
     symbols,
     references,
     relationships: [...relationships.values()].sort(compareRelationships),
-    warnings: []
+    warnings: parseDiagnostics.length === 0 ? [] : ["STRUCTURAL_PARSE_FAILED"]
   };
 }
 
