@@ -1,7 +1,7 @@
 # KodeGPT Capability Intelligence Discovery Readiness
 
 Date: 2026-08-21
-Status: **MERGED / CI VERIFIED / DEPLOYED / ACTIVE-RELEASE DOGFOOD PASS — ChatGPT action-inventory rescan pending**
+Status: **MERGED / CI VERIFIED / DEPLOYED / ACTIVE-RELEASE DOGFOOD PASS / REFRESHED CHATGPT-HOST PASS**
 Baseline: `b3d502c598ec6595bec4e5427dc9f3305ff264a4`
 Accepted feature head: `4f349c9efc54746f6c480a3e573244be63ef34c6`
 Merge: PR #58 → `b228101f2b44d8ef797642ada7e7ef4e2b3e0e7f`
@@ -96,7 +96,7 @@ The immutable installed service is now active on `rel_fda9290d7ee09062dd6a656b56
 
 Exact-active-release stdio dogfood against the immutable release itself independently listed 76 MCP tools with `system.discover` requiring only `query`. `system.discover({query:"cek tampilan mobile", workspaceId})` ranked `visual.captureMatrix` first and returned the built-in application workflow with explicit `visual`, `ci`, and `continuity` stage flows. `skill.list({query:"application development workflow", workspaceId})` accepted the new query input and returned `kodegpt-application-development-workflow`; `skill.inspect` on that exact skill returned `requirementGraph.schemaVersion=1`, core classification `NATIVE`, and the declared browser/CI/continuity/Git/implementation/preview/PR/repository/verification/visual stages.
 
-The **ChatGPT action snapshot for this already-open conversation remains stale at 75 actions** even though the connected backend now reports surface `0.18 / 76`. Re-listing connector resources still omits `system.discover` and exposes the pre-`query` `skill.list` schema. This is therefore recorded as a host action-inventory rescan requirement, not a KodeGPT server/runtime failure. No claim of refreshed-host `system.discover` invocation is made until ChatGPT refreshes that action snapshot.
+A fresh ChatGPT conversation received the refreshed action snapshot and directly exercised the new host-visible contracts. Host `system.capabilities` reported `mcpSurfaceVersion="0.18"`, `publicTools.count=76`, `discovery.systemDiscover=true`, catalog version 1, requirement-graph version 1, and deterministic ranking. Host `system.discover({query:"cek tampilan mobile"})` and the workspace-scoped variant both succeeded with `visual.captureMatrix` ranked first; host `skill.list({workspaceId,query:"application development workflow",limit:20})` accepted `query` and returned `kodegpt-application-development-workflow`; host `skill.inspect` on that result returned `requirementGraph.schemaVersion=1`, core `NATIVE`, and the declared browser, CI, continuity, Git-delivery, implementation, preview, pull-request, repository-understanding, verification, and visual stages. This is refreshed ChatGPT-host evidence, not an inference from backend stdio tests.
 
 ## Verification evidence before remote delivery
 
@@ -162,6 +162,6 @@ The implementation/release gates that KodeGPT controls are closed:
 8. post-cutover service health and capability evidence is green at `0.1 / 2026-07-28 / 0.18 / 76`, and exact-active-release stdio dogfood verifies the three new discovery-facing contracts;
 9. the clean implementation worktree `.worktrees/capability-intelligence-discovery` was removed through typed worktree authority and local branch `feat/capability-intelligence-discovery` was deleted normally without force.
 
-One **host/UI-owned acceptance item** remains: this already-open ChatGPT conversation retains the previously approved 75-action snapshot. The backend itself is upgraded and advertises 76 tools, but ChatGPT must refresh/rescan the connector action inventory before this conversation (or a new refreshed connection) can invoke the new `system.discover` action or send `query` through the host-generated `skill.list` schema. Until that happens, `CHATGPT_HOST_OBSERVED` for those new host-visible actions is pending; this does not require another KodeGPT source or runtime change.
+The refreshed ChatGPT-host acceptance item is now closed. A fresh conversation exposed the `0.18 / 76` action snapshot, `system.discover`, the optional `skill.list(query)` input, and additive `skill.inspect.requirementGraph`; all were invoked successfully through the actual ChatGPT connector. This host-level evidence matches the independently verified exact-active-release stdio contract and required no additional KodeGPT source or runtime change.
 
-Therefore **Capability Intelligence P0 code, merge, CI, deployment, active-release dogfood, and implementation cleanup are complete**. The narrower ChatGPT-host refresh evidence remains explicitly unclaimed. No P1 Continuity v2, Skill Ecosystem v2, MCP Plugin Gateway, native multi-agent runtime, or browser-v2 work is started by this closure.
+Therefore **Capability Intelligence P0 code, merge, CI, deployment, active-release dogfood, refreshed ChatGPT-host acceptance, and implementation cleanup are complete**. No P1 Continuity v2, Skill Ecosystem v2, MCP Plugin Gateway, native multi-agent runtime, or browser-v2 work is started by this closure.
