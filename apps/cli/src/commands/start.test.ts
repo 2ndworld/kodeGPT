@@ -255,7 +255,17 @@ describe("kodegpt start orchestration", () => {
         developerEnvironmentRegistry: true,
         inheritsHostEnvironment: false
       });
-      expect(capabilities.publicTools).toBeDefined();
+      expect(capabilities.mcpSurfaceVersion).toBe("0.18");
+      expect(capabilities.publicTools).toMatchObject({ count: 76 });
+      expect((capabilities.publicTools as { families: Record<string, string[]> }).families.system).toContain(
+        "system.discover"
+      );
+      expect(capabilities.discovery).toEqual({
+        systemDiscover: true,
+        publicActionCatalogVersion: 1,
+        skillRequirementGraphVersion: 1,
+        deterministicRanking: true
+      });
     } finally {
       await stack.close();
     }

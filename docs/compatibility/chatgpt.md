@@ -1,6 +1,6 @@
 # ChatGPT Compatibility Claim Gate
 
-Status date: 2026-08-20.
+Status date: 2026-08-21.
 
 KodeGPT must distinguish deterministic MCP conformance from ChatGPT-host compatibility. Passing KodeGPT's local protocol, security, Apps, and packaging suites is necessary but is not evidence that a specific ChatGPT plan/workspace can connect to or invoke every KodeGPT capability.
 
@@ -33,7 +33,7 @@ The compatibility claim is therefore scoped to observed evidence:
 - If Apps UI is unavailable, semantic tools and text/structured fallback must still remain meaningful.
 - After the MCP tool inventory or tool input definitions change, the ChatGPT app/connector actions must be refreshed/rescanned before new host evidence is collected. ChatGPT may retain an approved/frozen tool snapshot; a running server with a newer surface version does not by itself prove the host is using that newer inventory.
 
-Development Efficiency v2 established semantic surface `0.16` with exactly 75 public tools by removing `file.search`, `deploy.preview.create`, and `deploy.preview.inspect`. The unreleased Developer Environment + Workspace Continuity candidate advances the semantic surface to `0.17` while retaining exactly 75 public tools: it adds bounded CAS-backed `workspace.checkpoint` and removes the unused metadata-only `extension.list` one-for-one. `workspace.info` gains an optional checkpoint field; Agent Skills remain the reusable extension path and no executable plugin/session/agent runtime is introduced. Public lexical repository search remains available through `code.search(mode:"text")`, backed by retained private search authority. Historical host evidence for `0.16` and older surfaces remains historical and must not be treated as `0.17` evidence; the ChatGPT connector/action inventory must be refreshed before collecting `0.17` host evidence.
+Development Efficiency v2 established semantic surface `0.16` with exactly 75 public tools by removing `file.search`, `deploy.preview.create`, and `deploy.preview.inspect`; the later Developer Environment + Workspace Continuity baseline retained 75 tools at surface `0.17` by adding bounded CAS-backed `workspace.checkpoint` and removing the unused metadata-only `extension.list` one-for-one. The current Capability Intelligence Discovery candidate advances the semantic surface to `0.18` with exactly 76 public tools by adding only read-only `system.discover`. It also adds deterministic optional `skill.list(query)` ranking and additive `skill.inspect.requirementGraph` core/stage evidence while preserving Agent Skills as data/guidance rather than an executable plugin, session, workflow, or agent runtime. Public lexical repository search remains available through `code.search(mode:"text")`, backed by retained private search authority. Historical host evidence for `0.17`, `0.16`, and older surfaces remains historical and must not be treated as `0.18` evidence; the ChatGPT connector/action inventory must be refreshed before collecting `0.18` host evidence.
 
 For the reconciled `0.3` candidate, begin host acceptance by calling `system.capabilities` and require `mcpProtocolVersion:"2026-07-28"` plus `mcpSurfaceVersion:"0.3"`. A still-running `0.2` connector is a stale deployment and must not be used as evidence that the `0.3` candidate passed or failed host behavior; restart/reinstall the exact candidate first.
 

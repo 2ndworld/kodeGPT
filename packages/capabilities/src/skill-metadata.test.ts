@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import * as capabilities from "./index.js";
 
 describe("native capability semantic metadata", () => {
+  it("derives native purpose and aliases from the public action catalog", () => {
+    for (const id of capabilities.NATIVE_CAPABILITY_IDS) {
+      const native = capabilities.getNativeCapabilitySemanticMetadata(id);
+      const action = capabilities.getPublicActionDescriptor(id);
+      expect(native.purpose).toBe(action.purpose);
+      expect(native.semanticAliases).toEqual(action.aliases);
+    }
+  });
+
   it("has exactly one immutable metadata entry for every existing native capability", () => {
     const registry = (capabilities as Record<string, unknown>).NATIVE_CAPABILITY_SEMANTICS as
       | Record<string, { id: string; purpose: string; semanticAliases: readonly string[] }>

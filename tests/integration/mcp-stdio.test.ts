@@ -2,6 +2,9 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
+import { searchPublicActions } from "../../packages/capabilities/src/public-action-search.js";
+import { rankSkillsForQuery } from "../../packages/skills/src/skill-search.js";
+import { discoverKodegpt } from "../../packages/mcp-server/src/discovery.js";
 import { serveKodegptStdio } from "../../packages/mcp-server/src/stdio.js";
 import type { KodegptToolContext } from "../../packages/mcp-server/src/tool-context.js";
 import {
@@ -188,6 +191,16 @@ const context: KodegptToolContext = {
   },
   system: {
     capabilities: async () => ({ filesystemBoundaryAvailable: true }),
+    discover: async (input) =>
+      discoverKodegpt(input, {
+        searchActions: searchPublicActions,
+        rankSkills: rankSkillsForQuery,
+        listSkills: async () => ({ schemaVersion: 1, skills: [], truncated: false, truncationReasons: [] }),
+        inspectSkill: async () => {
+          throw new Error("no skill candidates");
+        },
+        workspaceInfo: async ({ workspaceId }) => ({ id: workspaceId } as never)
+      }),
     health: async () => ({ ok: true })
   }
 };
@@ -330,6 +343,76 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
         tools.map((tool) => [tool.name, tool.inputSchema.required ?? []])
       );
       expect(required).toEqual(EXPECTED_MCP_REQUIRED_BY_NAME);
+
+      const mobileDiscoverResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-system-discover-mobile",
+        method: "tools/call",
+        params: {
+          name: "system.discover",
+          arguments: { query: "cek tampilan mobile", workspaceId: "ws_stdio" },
+          _meta: meta()
+        }
+      });
+      const mobileDiscoverPayload = await mobileDiscoverResponse;
+      const mobileDiscovery = JSON.parse(mobileDiscoverPayload.result.content[0].text);
+      expect(mobileDiscovery.actions.slice(0, 3).map((match: { id: string }) => match.id)).toContain(
+        "visual.captureMatrix"
+      );
+
+      const resumeDiscoverResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-system-discover-resume",
+        method: "tools/call",
+        params: {
+          name: "system.discover",
+          arguments: { query: "lanjutkan pekerjaan sebelumnya" },
+          _meta: meta()
+        }
+      });
+      const resumeDiscoverPayload = await resumeDiscoverResponse;
+      const resumeDiscovery = JSON.parse(resumeDiscoverPayload.result.content[0].text);
+      const workspaceInfo = resumeDiscovery.actions.find(
+        (action: { id: string }) => action.id === "workspace.info"
+      );
+      expect(workspaceInfo.availability).toEqual({
+        status: "CONTEXT_REQUIRED",
+        reasons: ["WORKSPACE_REQUIRED"]
+      });
+
+      const exactBoundResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-system-discover-512",
+        method: "tools/call",
+        params: {
+          name: "system.discover",
+          arguments: { query: "x".repeat(512) },
+          _meta: meta()
+        }
+      });
+      const exactBoundPayload = await exactBoundResponse;
+      expect(exactBoundPayload.error).toBeUndefined();
+      expect(JSON.parse(exactBoundPayload.result.content[0].text)).toMatchObject({
+        schemaVersion: 1,
+        query: "x".repeat(512)
+      });
+
+      const overByteResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-system-discover-over-byte",
+        method: "tools/call",
+        params: {
+          name: "system.discover",
+          arguments: { query: "é".repeat(300) },
+          _meta: meta()
+        }
+      });
+      const overBytePayload = await overByteResponse;
+      expect(overBytePayload.error ?? overBytePayload.result?.isError).toBeTruthy();
 
       const writeResponse = nextMessage(stdout);
       writeMessage(stdin, {

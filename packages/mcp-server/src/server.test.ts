@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { listPublicActionDescriptors } from "@kodegpt/capabilities";
 import { describe, expect, it } from "vitest";
 
 import { MCP_SURFACE_VERSION } from "./surface-version.js";
@@ -71,6 +75,7 @@ const LOCKED_SURFACE = [
   { name: "skill.inspect", required: ["skillId"] },
   { name: "skill.load", required: ["skillId"] },
   { name: "system.capabilities", required: [] },
+  { name: "system.discover", required: ["query"] },
   { name: "system.health", required: [] },
   { name: "trust.list", required: [] },
   { name: "verify.list", required: ["workspaceId"] },
@@ -88,11 +93,24 @@ const LOCKED_SURFACE = [
 const expectedTools = LOCKED_SURFACE.map(({ name }) => name);
 
 describe("KodeGPT MCP semantic surface", () => {
+  it("derives the public surface from the authoritative public action catalog", () => {
+    const surface = listSurfaceTools();
+    expect(surface).toEqual(
+      listPublicActionDescriptors().map(({ id, requiredInputs }) => ({
+        name: id,
+        required: [...requiredInputs]
+      }))
+    );
+
+    const toolsSource = readFileSync(fileURLToPath(new URL("./tools.ts", import.meta.url)), "utf8");
+    expect(toolsSource).not.toContain("const SURFACE_TOOLS");
+  });
+
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.17");
+    expect(MCP_SURFACE_VERSION).toBe("0.18");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(75);
+    expect(surface).toHaveLength(76);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",

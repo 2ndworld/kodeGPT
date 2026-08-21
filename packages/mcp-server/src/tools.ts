@@ -61,6 +61,7 @@ import {
   VerifyRunResultSchema,
   WorkspaceInspectInputSchema,
   WorkspaceInspectResultSchema,
+  listPublicActionDescriptors,
   toPublicCapabilityError
 } from "@kodegpt/capabilities";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -314,91 +315,10 @@ export const WorkspaceCheckpointResultSchema = z.discriminatedUnion("operation",
     .strict()
 ]);
 
-const SURFACE_TOOLS = Object.freeze([
-  { name: "artifact.read", required: ["uri"] },
-  { name: "browser.openPreview", required: ["workspaceId", "previewId"] },
-  { name: "browser.inspect", required: ["workspaceId", "previewId"] },
-  { name: "browser.click", required: ["workspaceId", "previewId", "target"] },
-  { name: "browser.type", required: ["workspaceId", "previewId", "target", "text"] },
-  { name: "browser.screenshot", required: ["workspaceId", "previewId"] },
-  { name: "browser.console", required: ["workspaceId", "previewId"] },
-  { name: "browser.networkFailures", required: ["workspaceId", "previewId"] },
-  { name: "visual.captureMatrix", required: ["workspaceId", "previewId"] },
-  { name: "visual.compare", required: ["workspaceId", "previewId", "referenceArtifact"] },
-  { name: "ci.failure", required: ["runId"] },
-  { name: "ci.rerun", required: ["runId"] },
-  { name: "ci.cancel", required: ["runId"] },
-  { name: "ci.dispatch", required: ["workflow", "ref"] },
-  { name: "ci.repository", required: [] },
-  { name: "ci.run", required: ["runId"] },
-  { name: "ci.runs", required: [] },
-  { name: "ci.status", required: [] },
-  { name: "code.impact", required: ["workspaceId", "target"] },
-  { name: "code.search", required: ["workspaceId", "query"] },
-  { name: "console.state", required: [] },
-  { name: "context.build", required: ["workspaceId", "intent"] },
-  {
-    name: "file.edit",
-    required: ["workspaceId", "path", "oldText", "newText", "expectedReplacements"]
-  },
-  { name: "file.read", required: ["workspaceId", "path"] },
-  { name: "file.patch", required: ["workspaceId", "patch"] },
-  { name: "file.tree", required: ["workspaceId"] },
-  { name: "file.write", required: ["workspaceId", "path", "content"] },
-  { name: "git.branchCreate", required: ["workspaceId", "name"] },
-  { name: "git.branchDelete", required: ["workspaceId", "name"] },
-  { name: "git.branchSwitch", required: ["workspaceId", "name"] },
-  { name: "git.worktreeCreate", required: ["workspaceId", "name", "branch"] },
-  { name: "git.worktreeRemove", required: ["workspaceId", "name"] },
-  { name: "git.changes", required: ["workspaceId"] },
-  { name: "git.commit", required: ["workspaceId", "message"] },
-  { name: "git.diff", required: ["workspaceId"] },
-  { name: "git.diffHistory", required: ["workspaceId", "baseRevision", "headRevision"] },
-  { name: "git.fetch", required: ["workspaceId", "ref"] },
-  { name: "git.log", required: ["workspaceId"] },
-  { name: "git.pull", required: ["workspaceId", "ref"] },
-  { name: "git.push", required: ["workspaceId", "ref"] },
-  { name: "git.range", required: ["workspaceId", "baseRevision", "headRevision"] },
-  { name: "git.show", required: ["workspaceId"] },
-  { name: "git.stage", required: ["workspaceId", "paths"] },
-  { name: "git.status", required: ["workspaceId"] },
-  { name: "github.issue.inspect", required: ["repository", "number"] },
-  { name: "github.issue.list", required: ["repository"] },
-  { name: "github.pr.create", required: ["repository", "title", "headBranch", "baseBranch"] },
-  { name: "github.pr.inspect", required: ["repository", "number"] },
-  { name: "github.pr.list", required: ["repository"] },
-  { name: "github.pr.merge", required: ["repository", "number", "expectedHeadOid"] },
-  { name: "github.repository.inspect", required: ["repository"] },
-  { name: "process.cancel", required: ["workspaceId", "operationId"] },
-  { name: "process.run", required: ["workspaceId", "logicalExecutable", "argv"] },
-  { name: "process.status", required: ["workspaceId", "operationId"] },
-  { name: "preview.inspect", required: ["workspaceId", "previewId"] },
-  { name: "preview.start", required: ["workspaceId", "logicalExecutable", "argv", "port"] },
-  { name: "preview.stop", required: ["workspaceId", "previewId"] },
-  { name: "profile.current", required: ["workspaceId"] },
-  { name: "profile.inspect", required: ["name"] },
-  { name: "skill.list", required: [] },
-  { name: "skill.inspect", required: ["skillId"] },
-  { name: "skill.load", required: ["skillId"] },
-  { name: "system.capabilities", required: [] },
-  { name: "system.health", required: [] },
-  { name: "trust.list", required: [] },
-  { name: "verify.list", required: ["workspaceId"] },
-  { name: "verify.run", required: ["workspaceId", "recipeId"] },
-  { name: "workspace.close", required: ["workspaceId"] },
-  { name: "workspace.checkpoint", required: ["workspaceId", "operation"] },
-  { name: "workspace.info", required: ["workspaceId"] },
-  { name: "workspace.inspect", required: ["workspaceId"] },
-  { name: "workspace.list", required: [] },
-  { name: "workspace.open", required: ["rootPath"] },
-  { name: "workspace.trust", required: ["rootPath"] },
-  { name: "workspace.untrust", required: ["trustId"] }
-] as const);
-
 export function listSurfaceTools(): Array<{ name: string; required: string[] }> {
-  return SURFACE_TOOLS.map((tool) => ({
-    name: tool.name,
-    required: [...tool.required]
+  return listPublicActionDescriptors().map(({ id, requiredInputs }) => ({
+    name: id,
+    required: [...requiredInputs]
   }));
 }
 
@@ -1439,19 +1359,20 @@ export function registerKodegptTools(
   server.registerTool(
     "skill.list",
     {
-      description: "List bounded registered/pinned skill metadata with static/source compatibility; with workspaceId, additionally discover conventional Agent Skills beneath that READY workspace.",
+      description: "List bounded registered/pinned skill metadata with static/source compatibility; with workspaceId, additionally discover conventional Agent Skills beneath that READY workspace; query applies deterministic local relevance ranking without executing skills.",
       inputSchema: {
         limit: z.number().int().positive().max(SKILL_TOOL_LIST_MAX).safe().optional(),
         sourceId: z.string().regex(/^ss_[a-f0-9]{32}$/).optional(),
         compatibility: z.enum(["NATIVE", "PARTIAL", "PROVIDER_REQUIRED", "UNSUPPORTED"]).optional(),
         pinned: z.boolean().optional(),
-        workspaceId: z.string().min(1).optional()
+        workspaceId: z.string().min(1).optional(),
+        query: z.string().min(1).max(512).optional()
       },
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ limit, sourceId, compatibility, pinned, workspaceId }) =>
+    async ({ limit, sourceId, compatibility, pinned, workspaceId, query }) =>
       skillToolResult(() =>
-        context.skill.list({ limit, sourceId, compatibility, pinned, workspaceId })
+        context.skill.list({ limit, sourceId, compatibility, pinned, workspaceId, query })
       )
   );
 
@@ -1497,6 +1418,20 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async () => structuredToolResult(await context.system.capabilities())
+  );
+
+  server.registerTool(
+    "system.discover",
+    {
+      description: "Deterministically find relevant KodeGPT actions, Agent Skills, and declared workflow stages for an intent without executing them.",
+      inputSchema: {
+        query: z.string().min(1).max(512),
+        workspaceId: z.string().min(1).optional(),
+        limit: z.number().int().positive().max(20).safe().optional()
+      },
+      annotations: READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) => structuredToolResult(await context.system.discover(input))
   );
 
   server.registerTool(

@@ -15,17 +15,20 @@ import {
   type SkillListResult,
   type SkillListTruncationReason,
   type SkillLoadResult,
+  type SkillRequirementGraph,
   type SkillLoadTextResource
 } from "./contracts.js";
 import { SkillError } from "./errors.js";
 import { SkillDocumentParseError, parseSkillDocument } from "./parser.js";
+import { rankSkillsForQuery } from "./skill-search.js";
 
 export type SkillCatalogToolSource = Pick<SkillCatalog, "list" | "inspect" | "loadRaw">;
 
 export function createSkillCatalogToolAdapter(source: SkillCatalogToolSource): SkillCatalogToolAdapter {
   return {
-    list: async ({ limit, sourceId, compatibility, pinned, workspaceId }) => {
+    list: async ({ limit, sourceId, compatibility, pinned, workspaceId, query }) => {
       const boundedLimit = requireListLimit(limit);
+      const boundedQuery = requireListQuery(query);
       const catalog = await source.list(workspaceId === undefined ? {} : { workspaceId });
       const filtered = catalog.skills.filter((skill) => {
         if (sourceId !== undefined && skill.sourceId !== sourceId) return false;
@@ -33,12 +36,17 @@ export function createSkillCatalogToolAdapter(source: SkillCatalogToolSource): S
         if (pinned !== undefined && skill.pinned !== pinned) return false;
         return true;
       });
-      const resultLimited = filtered.length > boundedLimit;
+      const ranked = boundedQuery === undefined
+        ? filtered
+        : rankSkillsForQuery(filtered, boundedQuery, {
+            workspaceSourceIds: new Set(catalog.workspaceSourceIds ?? [])
+          }).map((match) => match.skill);
+      const resultLimited = ranked.length > boundedLimit;
       const reasons = new Set<SkillListTruncationReason>(catalog.truncationReasons);
       if (resultLimited) reasons.add("RESULT_LIMIT");
       return {
         schemaVersion: SKILL_STATE_SCHEMA_VERSION,
-        skills: filtered.slice(0, boundedLimit).map(cloneCatalogEntry),
+        skills: ranked.slice(0, boundedLimit).map(cloneCatalogEntry),
         truncated: catalog.truncated || resultLimited,
         truncationReasons: orderListTruncationReasons(reasons)
       } satisfies SkillListResult;
@@ -109,10 +117,31 @@ function publicInspection(inspection: SkillCatalogInspection): SkillInspectResul
       guidance: inspection.capabilityPlan.guidance.map((step) => ({ ...step })),
       truncationReasons: [...inspection.capabilityPlan.truncationReasons]
     },
+    requirementGraph: cloneRequirementGraph(inspection.requirementGraph),
     frontmatter: publicFrontmatter(inspection.frontmatter),
     resources: inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: inspection.instructionBytes,
     bundleBytes: inspection.bundleBytes
+  };
+}
+
+function cloneRequirementGraph(graph: SkillRequirementGraph): SkillRequirementGraph {
+  return {
+    ...graph,
+    core: {
+      ...graph.core,
+      actions: graph.core.actions.map((action) => ({ ...action })),
+      inferredActions: [...graph.core.inferredActions],
+      missingActions: [...graph.core.missingActions]
+    },
+    stages: graph.stages.map((stage) => ({
+      ...stage,
+      actions: stage.actions.map((action) => ({ ...action })),
+      missingActions: [...stage.missingActions],
+      requiredCapabilities: [...stage.requiredCapabilities],
+      requiredProviders: [...stage.requiredProviders]
+    })),
+    truncationReasons: [...graph.truncationReasons]
   };
 }
 
@@ -164,6 +193,15 @@ function decodeUtf8(bytes: Uint8Array): string {
   } catch {
     throw new SkillError("SKILL_RESOURCE_UNSUPPORTED", "Skill resource is unsupported");
   }
+}
+
+function requireListQuery(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.normalize("NFKC").trim();
+  if (normalized.length === 0 || Buffer.byteLength(normalized, "utf8") > 512) {
+    throw new SkillError("SKILL_LOAD_LIMIT_EXCEEDED", "Skill query limit exceeded");
+  }
+  return normalized;
 }
 
 function requireListLimit(value: number | undefined): number {

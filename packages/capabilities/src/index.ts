@@ -26,6 +26,23 @@ export {
   MAX_GIT_REMOTE_NAME,
   NATIVE_CAPABILITY_IDS
 } from "./contracts.js";
+export {
+  PUBLIC_ACTION_IDS,
+  PUBLIC_ACTIONS,
+  getPublicActionDescriptor,
+  listPublicActionDescriptors
+} from "./public-actions.js";
+export type {
+  PublicActionDescriptor,
+  PublicActionId,
+  PublicActionRole,
+  PublicActionScope
+} from "./public-actions.js";
+export { normalizeDiscoveryQuery, searchPublicActions } from "./public-action-search.js";
+export type {
+  NormalizedDiscoveryQuery,
+  PublicActionSearchMatch
+} from "./public-action-search.js";
 export type {
   CapabilityArtifactMetadata,
   CodeImpactDependent,

@@ -33,6 +33,7 @@ export {
   type SkillCompatibilityAnalysisBasis,
   type SkillCompatibilityReport,
   type PersistedSkillSource,
+  type PublicActionRequirement,
   type PersistedSkillSourceIdentity,
   type SkillBundleFingerprintRecord,
   type SkillDiscoveryTruncationReason,
@@ -51,6 +52,9 @@ export {
   type SkillPinnedRawLoad,
   type SkillRawResource,
   type SkillResourceInventoryEntry,
+  type SkillRequirementGraph,
+  type SkillRequirementGraphTruncationReason,
+  type SkillRequirementStage,
   type SkillSourceAdmissionInput,
   type SkillSourceAdmissionResult,
   type SkillSourceReadBytesResult,
@@ -67,6 +71,17 @@ export {
 export { SkillCatalog, type SkillCatalogOptions } from "./catalog.js";
 export { buildSkillCapabilityPlan, resolveSkillCapabilityPlan } from "./capability-plan.js";
 export { analyzeSkillCompatibility } from "./compatibility.js";
+export {
+  readKodegptDeclaredRequirements,
+  type KodegptDeclaredRequirements,
+  type KodegptDeclaredStage
+} from "./declared-requirements.js";
+export { buildSkillRequirementGraph } from "./requirement-graph.js";
+export {
+  rankSkillsForQuery,
+  type SkillSearchMatch,
+  type SkillSearchOptions
+} from "./skill-search.js";
 export { SKILL_ERROR_CODES, SkillError, type SkillErrorCode } from "./errors.js";
 export { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 export { parseSkillDocument } from "./parser.js";

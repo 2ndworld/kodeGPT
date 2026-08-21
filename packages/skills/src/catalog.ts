@@ -29,6 +29,7 @@ import {
 } from "./contracts.js";
 import { buildSkillCapabilityPlan } from "./capability-plan.js";
 import { analyzeSkillCompatibility } from "./compatibility.js";
+import { buildSkillRequirementGraph } from "./requirement-graph.js";
 import { SkillError } from "./errors.js";
 import { fingerprintSkillBundle, fingerprintSkillDescriptor } from "./fingerprint.js";
 import { SkillDocumentParseError, parseSkillDocument } from "./parser.js";
@@ -63,6 +64,7 @@ interface DiscoveredSkill {
 
 interface DiscoveryResult {
   skills: DiscoveredSkill[];
+  sourceIds: string[];
   truncationReasons: SkillDiscoveryTruncationReason[];
 }
 
@@ -147,8 +149,16 @@ export class SkillCatalog {
     const orderedTruncationReasons = TRUNCATION_REASON_ORDER.filter((reason) =>
       truncationReasons.has(reason)
     );
+    let workspaceSourceIds: string[] | undefined;
+    if (input.workspaceId !== undefined) {
+      const globalSourceIds = new Set(
+        (await this.#sourceCall(() => this.#sources.listSources())).map((source) => source.sourceId)
+      );
+      workspaceSourceIds = discovery.sourceIds.filter((sourceId) => !globalSourceIds.has(sourceId));
+    }
     return {
       skills: [...entries.values()].sort(compareCatalogEntries),
+      ...(workspaceSourceIds === undefined ? {} : { workspaceSourceIds }),
       truncated: orderedTruncationReasons.length > 0,
       truncationReasons: orderedTruncationReasons
     };
@@ -419,6 +429,7 @@ export class SkillCatalog {
 
     return {
       skills: discovered,
+      sourceIds: sources.map((source) => source.sourceId),
       truncationReasons: TRUNCATION_REASON_ORDER.filter((reason) => truncationReasons.has(reason))
     };
   }
@@ -633,6 +644,7 @@ function inspectionFromBundle(bundle: BuiltBundle, pinned: boolean): SkillCatalo
       pinned
     },
     capabilityPlan: buildSkillCapabilityPlan(bundle.parsed, descriptor.compatibility),
+    requirementGraph: buildSkillRequirementGraph(bundle.parsed, descriptor.compatibility),
     frontmatter: frontmatterFrom(bundle.parsed),
     resources: bundle.inspection.resources.map((resource) => ({ ...resource })),
     instructionBytes: Buffer.byteLength(bundle.parsed.instructions, "utf8"),
@@ -655,6 +667,7 @@ function inspectionFromPinned(pinned: SkillPinnedRawLoad): SkillCatalogInspectio
   return {
     skill,
     capabilityPlan: buildSkillCapabilityPlan(parsed, skill.compatibility),
+    requirementGraph: buildSkillRequirementGraph(parsed, skill.compatibility),
     frontmatter: frontmatterFrom(parsed),
     resources,
     instructionBytes: Buffer.byteLength(parsed.instructions, "utf8"),

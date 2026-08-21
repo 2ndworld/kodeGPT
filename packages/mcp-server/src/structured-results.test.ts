@@ -421,6 +421,15 @@ function makeContext(): KodegptToolContext {
     },
     system: {
       capabilities: async () => ({}),
+      discover: async (input) => ({
+        schemaVersion: 1,
+        query: input.query,
+        actions: [],
+        skills: [],
+        flows: [],
+        truncated: false,
+        truncationReasons: []
+      }),
       health: async () => ({ ok: true })
     },
     code: {
@@ -469,6 +478,43 @@ function makeContext(): KodegptToolContext {
 }
 
 describe("structured MCP tool results", () => {
+  it("registers system.discover as read-only structured discovery without executing actions", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const definitions = new Map<string, Record<string, unknown>>();
+    const context = makeContext();
+    const discoveryResult = {
+      schemaVersion: 1 as const,
+      query: "check responsive UI",
+      actions: [],
+      skills: [],
+      flows: [],
+      truncated: false,
+      truncationReasons: []
+    };
+    context.system.discover = async () => discoveryResult;
+    const server = {
+      registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
+        definitions.set(name, definition);
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+
+    registerKodegptTools(server, context);
+    const definition = definitions.get("system.discover");
+    expect(definition).toBeDefined();
+    expect(definition?.annotations).toEqual(READ_ONLY_TOOL_ANNOTATIONS);
+    const input = z.object(definition?.inputSchema as z.ZodRawShape).strict();
+    expect(input.safeParse({ query: "check responsive UI", limit: 20 }).success).toBe(true);
+    expect(input.safeParse({ query: "", limit: 8 }).success).toBe(false);
+    expect(input.safeParse({ query: "check", limit: 21 }).success).toBe(false);
+
+    const response = (await handlers.get("system.discover")!({
+      query: "check responsive UI"
+    } as never)) as { structuredContent?: unknown; content?: Array<{ text?: string }> };
+    expect(response.structuredContent).toEqual(discoveryResult);
+    expect(response.content?.[0]?.text).toBe(JSON.stringify(discoveryResult));
+  });
+
   it("keeps file.write backward compatible while closing optional precondition input", () => {
     const definitions = new Map<string, Record<string, unknown>>();
     const server = {

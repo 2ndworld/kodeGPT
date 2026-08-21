@@ -15,6 +15,7 @@ async function fixtureRoot(): Promise<string> {
   roots.push(root);
   await mkdir(join(root, "packages/mcp-server/src"), { recursive: true });
   await mkdir(join(root, "packages/core/src"), { recursive: true });
+  await mkdir(join(root, "packages/capabilities/src"), { recursive: true });
   await mkdir(join(root, "crates/sandbox/src"), { recursive: true });
   await writeFile(join(root, "packages/mcp-server/src/server.ts"), "export const server = true;\n");
   await writeFile(join(root, "packages/core/src/runtime.ts"), "export const runtime = true;\n");
@@ -141,6 +142,23 @@ describe("forbidden product-code patterns", () => {
     const result = scan(root);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(rule);
+  });
+
+  it("allows reviewed typed CI mutation ids in the authoritative public action catalog only", async () => {
+    const root = await fixtureRoot();
+    await writeFile(
+      join(root, "packages/capabilities/src/public-actions.ts"),
+      'export const actions = ["ci.rerun", "ci.cancel", "ci.dispatch"];\n'
+    );
+    expect(scan(root).status).toBe(0);
+
+    await writeFile(
+      join(root, "packages/capabilities/src/unreviewed.ts"),
+      'export const actions = ["ci.rerun"];\n'
+    );
+    const result = scan(root);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("remote-ci-forbidden-surface");
   });
 
   it("ignores negative assertions in tests rather than treating them as product behavior", async () => {
