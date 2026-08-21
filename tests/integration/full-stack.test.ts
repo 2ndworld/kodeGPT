@@ -443,7 +443,7 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
       expect(codeSearch).toMatchObject({
         schemaVersion: 1,
         mode: "definition",
-        precision: "heuristic",
+        precision: "structural",
         truncated: false,
         truncationReasons: []
       });
