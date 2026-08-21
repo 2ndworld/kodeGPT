@@ -1,6 +1,6 @@
 ---
 name: kodegpt-application-development-workflow
-description: Use when developing or fixing an application end to end with KodeGPT to understand the repository, implement and verify changes, check preview/browser UI and visuals, create and deliver PRs, and inspect CI evidence.
+description: Use when developing, fixing, or resuming an application end to end with KodeGPT to reconcile continuity, understand the repository, implement and verify changes, check preview/browser UI and visuals, create and deliver PRs, and inspect CI evidence.
 metadata:
   kodegpt:
     requires:
@@ -22,6 +22,7 @@ metadata:
       - id: continuity
         description: Resume and reconcile bounded prior development state when continuation is requested.
         actions:
+          - context.build
           - workspace.info
           - workspace.checkpoint
           - git.status
@@ -105,9 +106,11 @@ When isolated branch work materially helps, the host may explicitly compose `git
 
 ## Resume / continuation
 
-When the user asks to continue, resume, or lanjutkan prior work, recover bounded coordination state before rebuilding repository context. Start with `workspace.info` for the active READY workspace. When a checkpoint is present, use its objective, status, next actions, evidence references, blocker, and notes as continuation hints, then validate the live repository with current Git evidence before acting; a checkpoint baseline is historical evidence and must never override the current branch, HEAD, or worktree state reported by Git. When no checkpoint is present, derive the active state from current Git evidence and the user's request.
+When the user asks to continue, resume, or lanjutkan prior work, start with `context.build(intent="resume")` for the active READY workspace. Use its normal repository context together with the additive resume synthesis; do not separately rescan Git merely to reconstruct the same source state. If deeper raw checkpoint details are needed, `workspace.info` remains available as a bounded read.
 
-Read `.ai-bridge/current-plan.md` only when there is explicit external-agent or cross-chat handoff context that makes that coordination file relevant; consult `.ai-bridge/agent-status.md`, `decisions.md`, or `open-questions.md` only when they are relevant to that active handoff. Treat an explicit `CLOSED`, `RECONCILED`, `CLEAN`, or equivalent terminal state as terminal and do not invent a new phase merely to keep working. Resolve the active objective and target before `context.build`. Do not create or update a workspace checkpoint automatically merely because this workflow is running; checkpoint mutation is an explicit bounded continuity action, not a conversation log or task scheduler.
+Interpret the resume relation deterministically. **fresh** means the checkpoint source state still matches current Git evidence and its continuation hints may be used as current evidence. **stale** means repository state moved; reconcile current files/Git/evidence before trusting next actions. **superseded** means the checkpoint describes history that has been replaced or diverged and should be treated as historical hints only. **unverifiable** means required evidence is unavailable or legacy; make the current repository authoritative and state what could not be verified. Never infer freshness from timestamps, branch names, commit messages, or conversation memory.
+
+Read `.ai-bridge/current-plan.md` only when there is explicit external-agent or cross-chat handoff context that makes that coordination file relevant; consult `.ai-bridge/agent-status.md`, `decisions.md`, or `open-questions.md` only when they are relevant to that active handoff. Treat an explicit `CLOSED`, `RECONCILED`, `CLEAN`, or equivalent terminal state as terminal and do not invent a new phase merely to keep working. Do not create or update a workspace checkpoint automatically merely because this workflow is running; checkpoint mutation is an explicit bounded continuity action, not a conversation log or task scheduler.
 
 ## Adaptive flow
 

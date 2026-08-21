@@ -220,7 +220,9 @@ describe("SkillCatalog live discovery", () => {
       "visual"
     ]);
     const stage = (id: string) => inspected.requirementGraph.stages.find((item) => item.id === id)!;
-    expect(stage("continuity").actions.map((action) => action.id)).toContain("workspace.info");
+    expect(stage("continuity").actions.map((action) => action.id)).toEqual(
+      expect.arrayContaining(["workspace.info", "context.build"])
+    );
     expect(stage("verification").actions.map((action) => action.id)).toEqual(
       expect.arrayContaining(["verify.run", "process.status", "process.cancel"])
     );
@@ -255,10 +257,15 @@ describe("SkillCatalog live discovery", () => {
     for (const behavior of [
       "Host owns orchestration",
       "Resume / continuation",
+      "`context.build(intent=\"resume\")`",
+      "fresh",
+      "stale",
+      "superseded",
+      "unverifiable",
       ".ai-bridge/current-plan.md",
       ".ai-bridge/agent-status.md",
       "do not invent a new phase",
-      "before `context.build`",
+      "do not separately rescan Git",
       "never blind retry",
       "Focused proof first",
       "`background: true`",
