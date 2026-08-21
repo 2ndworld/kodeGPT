@@ -256,11 +256,40 @@ The result must not imply transitive whole-program impact unless it actually com
 
 This is the main user-facing leverage of the structural work.
 
-### 10.1 Current limitation
+### 10.1 Explicit symbol focus
+
+Audit against the implemented `context.build` contract found that `target` is a workspace-relative **path**, not a symbol identifier. Region slicing must not guess which declaration inside a target file the user means.
+
+Add one optional bounded input to the existing tool/capability:
+
+```ts
+focus?: string
+```
+
+Rules:
+
+- `focus` is optional and requires `target`;
+- without `focus`, existing path-targeted whole-file behavior remains compatible;
+- with `focus`, KodeGPT performs structural symbol search scoped to the target area and prefers the exact target symbol region plus enclosing regions for actual structural references;
+- if no trustworthy region is available, fall back to the existing bounded file behavior rather than guessing;
+- no new public tool is introduced.
+
+Representative call:
+
+```text
+context.build({
+  workspaceId,
+  intent: "implement",
+  target: "packages/billing/src/invoice.ts",
+  focus: "calculateInvoice"
+})
+```
+
+### 10.2 Current limitation
 
 `context.build` selects relevant file candidates and reads bounded content, but a selected file is still usually represented as file content rather than a structural source region.
 
-### 10.2 New selection unit
+### 10.3 New selection unit
 
 Allow selected context evidence to represent either:
 
@@ -284,7 +313,7 @@ export interface ContextSelectedFile {
 
 A region indicates that `content` is the source slice for that line range, not the complete file.
 
-### 10.3 Region selection
+### 10.4 Region selection
 
 For target-scoped work, prefer in order:
 
@@ -297,7 +326,7 @@ For target-scoped work, prefer in order:
 
 Region boundaries should include a small deterministic amount of surrounding source context when necessary to keep declarations understandable.
 
-### 10.4 Budget accounting
+### 10.5 Budget accounting
 
 `maxBytes` continues to bound the complete context payload. Region slicing must reduce bytes; it must not become a reason to return more total evidence than the caller requested.
 

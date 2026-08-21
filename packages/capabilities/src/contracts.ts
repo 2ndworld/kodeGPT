@@ -592,6 +592,7 @@ export interface ContextBuildInput {
   workspaceId: string;
   intent: ContextIntent;
   target?: string;
+  focus?: string;
   maxBytes?: number;
 }
 
@@ -617,6 +618,7 @@ export interface ContextSelectedFile {
   path: string;
   reason: string;
   content?: string;
+  region?: SourceRegion;
   truncated: boolean;
 }
 

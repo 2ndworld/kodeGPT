@@ -712,9 +712,14 @@ export const ContextBuildInputSchema: z.ZodType<ContextBuildInput> = z
     workspaceId: z.string().min(1),
     intent: z.enum(["understand", "implement", "debug", "review", "verify"]),
     target: z.string().min(1).optional(),
+    focus: z.string().min(1).max(512).optional(),
     maxBytes: z.number().int().positive().max(MAX_CONTEXT_MAX_BYTES).safe().optional()
   })
-  .strict();
+  .strict()
+  .refine((value) => value.focus === undefined || value.target !== undefined, {
+    path: ["focus"],
+    message: "Context focus requires an explicit target"
+  });
 
 const contextEvidenceStateSchema = z.enum(["available", "incomplete", "unavailable"]);
 const contextWorkspaceSummarySchema = z
@@ -765,6 +770,7 @@ export const ContextBuildResultSchema: z.ZodType<ContextBuildResult> = z
           path: z.string().min(1),
           reason: z.string().min(1),
           content: z.string().optional(),
+          region: SourceRegionSchema.optional(),
           truncated: z.boolean()
         })
         .strict()

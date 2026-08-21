@@ -534,13 +534,15 @@ git commit -m "feat: improve structural code impact evidence"
 - Modify: `packages/capabilities/src/schemas.ts`
 
 **Interfaces:**
+- Add optional `focus?: string` to `ContextBuildInput`; it requires an explicit path `target`.
 - Add optional `region?: SourceRegion` to `ContextSelectedFile`.
 - `content` contains only that region when `region` is present.
+- Without `focus`, existing whole-file path-target behavior remains compatible.
 - `maxBytes` remains the total bound.
 
 - [ ] **Step 1: Write failing large-file slicing test**
 
-Create a large fixture with target function around lines 180-220 and related test around lines 90-130. Build context for the target and assert:
+Create a large fixture with target function around lines 180-220 and related test around lines 90-130. Build context with the target path plus explicit symbol `focus` and assert:
 
 ```ts
 expect(result.selectedFiles[0]).toMatchObject({
