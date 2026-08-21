@@ -189,6 +189,82 @@ const context: KodegptToolContext = {
     current: async () => ({ name: "observe" }),
     inspect: async ({ name }) => ({ name })
   },
+  code: {
+    search: async ({ query, mode }) => ({
+      schemaVersion: 1,
+      mode: mode ?? "text",
+      precision: mode === "definition" || mode === "reference" || mode === "symbol" ? "structural" : "exact",
+      matches: [
+        {
+          path: "src/main.ts",
+          line: 3,
+          column: 17,
+          kind: mode ?? "text",
+          preview: `export function ${query}() {}`
+        }
+      ],
+      truncated: false,
+      truncationReasons: []
+    }),
+    impact: async ({ target, kind }) => ({
+      schemaVersion: 1,
+      target: { kind: kind === "file" ? "file" : "symbol", value: target, resolvedPaths: ["src/main.ts"] },
+      dependents: [],
+      relatedTests: [],
+      affectedAreas: ["src"],
+      truncated: false,
+      truncationReasons: []
+    })
+  },
+  context: {
+    build: async ({ workspaceId, intent, target }) => ({
+      schemaVersion: 1,
+      intent,
+      ...(target === undefined ? {} : { target }),
+      evidenceStatus: {
+        workspace: "available",
+        git: "available",
+        search: "available",
+        verification: "available"
+      },
+      workspace: {
+        schemaVersion: 1,
+        workspaceId,
+        root: ".",
+        scope: target === undefined ? { kind: "workspace" as const } : { kind: "target" as const, area: "src" },
+        projectTypes: ["node-pnpm"],
+        languages: [{ name: "TypeScript", fileCount: 1 }],
+        entrypoints: [],
+        areas: [],
+        manifests: [],
+        warnings: [],
+        truncated: false
+      },
+      git: {
+        schemaVersion: 1,
+        workspaceId,
+        clean: true,
+        changedPaths: [],
+        summary: { changedFiles: 0 },
+        truncated: false,
+        fingerprint: "a".repeat(64)
+      },
+      selectedFiles: [
+        {
+          path: target ?? "src/main.ts",
+          reason: "exact-target",
+          content: "export function calculateInvoice() {}\n",
+          region: { startLine: 3, endLine: 3 },
+          truncated: false
+        }
+      ],
+      relevantMatches: [],
+      verifications: [],
+      warnings: [],
+      totalBytes: 38,
+      truncated: false
+    })
+  },
   system: {
     capabilities: async () => ({ filesystemBoundaryAvailable: true }),
     discover: async (input) =>
@@ -413,6 +489,60 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       });
       const overBytePayload = await overByteResponse;
       expect(overBytePayload.error ?? overBytePayload.result?.isError).toBeTruthy();
+
+      const structuralSearchResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-structural-search",
+        method: "tools/call",
+        params: {
+          name: "code.search",
+          arguments: {
+            workspaceId: "ws_stdio",
+            query: "calculateInvoice",
+            mode: "definition"
+          },
+          _meta: meta()
+        }
+      });
+      const structuralSearchPayload = await structuralSearchResponse;
+      expect(JSON.parse(structuralSearchPayload.result.content[0].text)).toMatchObject({
+        schemaVersion: 1,
+        mode: "definition",
+        precision: "structural",
+        matches: [{ path: "src/main.ts", line: 3, kind: "definition" }]
+      });
+
+      const focusedContextResponse = nextMessage(stdout);
+      writeMessage(stdin, {
+        jsonrpc: "2.0",
+        id: "stdio-focused-context",
+        method: "tools/call",
+        params: {
+          name: "context.build",
+          arguments: {
+            workspaceId: "ws_stdio",
+            intent: "implement",
+            target: "src/main.ts",
+            focus: "calculateInvoice"
+          },
+          _meta: meta()
+        }
+      });
+      const focusedContextPayload = await focusedContextResponse;
+      expect(JSON.parse(focusedContextPayload.result.content[0].text)).toMatchObject({
+        schemaVersion: 1,
+        intent: "implement",
+        target: "src/main.ts",
+        selectedFiles: [
+          {
+            path: "src/main.ts",
+            reason: "exact-target",
+            region: { startLine: 3, endLine: 3 },
+            truncated: false
+          }
+        ]
+      });
 
       const writeResponse = nextMessage(stdout);
       writeMessage(stdin, {
