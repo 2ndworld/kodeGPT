@@ -357,17 +357,15 @@ describe("KodeGPT v0.1 full-stack temporary-state flow", () => {
           port,
           credential.token,
           "system.discover",
-          { query: "lanjutkan pekerjaan sebelumnya" },
+          { query: "lanjutkan pekerjaan sebelumnya", workspaceId: openedA.id },
           "req_full_discover_resume"
         )
       );
-      const workspaceInfoDiscovery = resumeDiscovery.actions.find(
-        (action: { id: string }) => action.id === "workspace.info"
-      );
-      expect(workspaceInfoDiscovery).toBeDefined();
-      expect(workspaceInfoDiscovery.availability).toEqual({
-        status: "CONTEXT_REQUIRED",
-        reasons: ["WORKSPACE_REQUIRED"]
+      const resumeAction = resumeDiscovery.actions[0];
+      expect(resumeAction?.id).toBe("context.build");
+      expect(resumeAction?.availability).toEqual({
+        status: "AVAILABLE",
+        reasons: []
       });
       expect(await readFile(join(workspaceA, "tracked.txt"), "utf8")).toBe("before\n");
 
