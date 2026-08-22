@@ -5,6 +5,7 @@ import {
   enforceHttpRequestTrust,
   type HttpTrustConfig
 } from "@kodegpt/auth";
+import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 
@@ -60,8 +61,9 @@ export function createKodegptHttpHandler(options: {
   bearerAuthenticator: BearerAuthenticator;
   queryCredentialCompatibility?: boolean;
 }): KodegptHttpHandler {
+  const consoleState = new ConsoleStateStore();
   const mcp = createMcpHandler(
-    () => createKodegptMcpServer(options.toolContext),
+    () => createKodegptMcpServer(options.toolContext, consoleState),
     { legacy: "reject" }
   );
 

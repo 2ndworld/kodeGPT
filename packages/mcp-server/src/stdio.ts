@@ -1,5 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 
+import { ConsoleStateStore } from "@kodegpt/dev-console";
 import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { createKodegptMcpServer } from "./server.js";
@@ -17,9 +18,10 @@ export function serveKodegptStdio(
     streams === undefined
       ? new StdioServerTransport()
       : new StdioServerTransport(streams.stdin, streams.stdout);
+  const consoleState = new ConsoleStateStore();
 
   return serveStdio(
-    () => createKodegptMcpServer(toolContext),
+    () => createKodegptMcpServer(toolContext, consoleState),
     {
       legacy: "reject",
       transport
