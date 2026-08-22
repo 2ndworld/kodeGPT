@@ -49,6 +49,8 @@ export const EXPECTED_MCP_SURFACE_TOOLS = [
   { name: "github.issue.inspect", required: ["repository", "number"] },
   { name: "github.issue.list", required: ["repository"] },
   { name: "github.pr.create", required: ["repository", "title", "headBranch", "baseBranch"] },
+  { name: "github.pr.feedback.inspect", required: ["repository", "number"] },
+  { name: "github.pr.feedback.reply", required: ["repository", "number", "commentId", "expectedHeadOid", "body"] },
   { name: "github.pr.inspect", required: ["repository", "number"] },
   { name: "github.pr.list", required: ["repository"] },
   { name: "github.pr.merge", required: ["repository", "number", "expectedHeadOid"] },

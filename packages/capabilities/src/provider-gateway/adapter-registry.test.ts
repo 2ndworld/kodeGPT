@@ -88,18 +88,24 @@ describe("ProviderAdapterRegistry", () => {
       "github.repository.inspect",
       "github.pr.inspect",
       "github.pr.list",
+      "github.pr.feedback.reviews",
+      "github.pr.feedback.comments",
       "github.issue.inspect",
       "github.issue.list"
     ]);
     expect(registry.require("github.write.v1").mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.pr.create",
-      "github.pr.merge"
+      "github.pr.merge",
+      "github.pr.feedback.reply"
     ]);
     expect(() => registry.require("netlify.deploy.v1")).toThrowError(CapabilityError);
     expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
     expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
     expect(registry.requireMapping("github.pr.create").adapterOperationId).toBe("pr.create");
     expect(registry.requireMapping("github.pr.merge").adapterOperationId).toBe("pr.merge");
+    expect(registry.requireMapping("github.pr.feedback.reviews").adapterOperationId).toBe("pr.feedback.reviews");
+    expect(registry.requireMapping("github.pr.feedback.comments").adapterOperationId).toBe("pr.feedback.comments");
+    expect(registry.requireMapping("github.pr.feedback.reply").adapterOperationId).toBe("pr.feedback.reply");
   });
 
   it("resolves a compiled manifest and semantic mapping", () => {

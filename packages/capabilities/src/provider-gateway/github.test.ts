@@ -55,7 +55,7 @@ function rawPr(overrides: Record<string, unknown> = {}): Record<string, unknown>
     state: "closed",
     user: { login: "octocat", avatar_url: "https://avatars.githubusercontent.com/u/1" },
     base: { ref: "main", repo: { full_name: REPOSITORY, private: false } },
-    head: { ref: "feat/provider-gateway", repo: { full_name: "2ndworld/kodeGPT" } },
+    head: { ref: "feat/provider-gateway", sha: "a".repeat(40), repo: { full_name: "2ndworld/kodeGPT" } },
     merged: true,
     draft: false,
     html_url: "https://github.com/2ndworld/kodeGPT/pull/16",
@@ -128,7 +128,7 @@ describe("github.read.v1 provider adapter", () => {
     });
   });
 
-  it("compiles exactly five GET operations and exactly five remote-read semantic mappings", () => {
+  it("compiles exactly seven GET operations and exactly seven remote-read semantic mappings", () => {
     expect(GITHUB_READ_PROVIDER_MANIFEST.operations.map(({ id, method, origin, pathTemplate }) => ({
       id,
       method,
@@ -152,6 +152,18 @@ describe("github.read.v1 provider adapter", () => {
         method: "GET",
         origin: "https://api.github.com",
         pathTemplate: "/repos/{owner}/{repo}/pulls"
+      },
+      {
+        id: "pr.feedback.reviews",
+        method: "GET",
+        origin: "https://api.github.com",
+        pathTemplate: "/repos/{owner}/{repo}/pulls/{number}/reviews"
+      },
+      {
+        id: "pr.feedback.comments",
+        method: "GET",
+        origin: "https://api.github.com",
+        pathTemplate: "/repos/{owner}/{repo}/pulls/{number}/comments"
       },
       {
         id: "issue.inspect",
@@ -200,6 +212,22 @@ describe("github.read.v1 provider adapter", () => {
         retry: "none"
       },
       {
+        semanticCapabilityId: "github.pr.feedback.reviews",
+        adapterOperationId: "pr.feedback.reviews",
+        effect: "REMOTE_READ",
+        workspaceBinding: "NONE",
+        maxProviderRequests: 1,
+        retry: "none"
+      },
+      {
+        semanticCapabilityId: "github.pr.feedback.comments",
+        adapterOperationId: "pr.feedback.comments",
+        effect: "REMOTE_READ",
+        workspaceBinding: "NONE",
+        maxProviderRequests: 1,
+        retry: "none"
+      },
+      {
         semanticCapabilityId: "github.issue.inspect",
         adapterOperationId: "issue.inspect",
         effect: "REMOTE_READ",
@@ -231,6 +259,8 @@ describe("github.read.v1 provider adapter", () => {
     expect(operation("repository.inspect").allowedQueryKeys).toEqual([]);
     expect(operation("pr.inspect").allowedQueryKeys).toEqual([]);
     expect(operation("pr.list").allowedQueryKeys).toEqual(["state", "per_page"]);
+    expect(operation("pr.feedback.reviews").allowedQueryKeys).toEqual(["per_page"]);
+    expect(operation("pr.feedback.comments").allowedQueryKeys).toEqual(["per_page"]);
     expect(operation("issue.inspect").allowedQueryKeys).toEqual([]);
     expect(operation("issue.list").allowedQueryKeys).toEqual(["state", "per_page"]);
   });
@@ -448,6 +478,7 @@ describe("github.read.v1 provider adapter", () => {
       authorLogin: "octocat",
       baseBranch: "main",
       headBranch: "feat/provider-gateway",
+      headOid: "a".repeat(40),
       merged: true,
       draft: false,
       htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/16",
@@ -662,12 +693,14 @@ describe("github.read.v1 provider adapter", () => {
     })).toThrowError(expect.objectContaining({ code: "PROVIDER_RESPONSE_INVALID" }));
   });
 
-  it("registers the five mappings and rejects unknown GitHub semantic operations", () => {
+  it("registers the seven mappings and rejects unknown GitHub semantic operations", () => {
     const registry = new ProviderAdapterRegistry([GITHUB_READ_PROVIDER_MANIFEST]);
     expect(registry.list().map((candidate) => candidate.adapterId)).toEqual(["github.read.v1"]);
     expect(registry.requireMapping("github.repository.inspect").adapterOperationId).toBe("repository.inspect");
     expect(registry.requireMapping("github.pr.inspect").adapterOperationId).toBe("pr.inspect");
     expect(registry.requireMapping("github.pr.list").adapterOperationId).toBe("pr.list");
+    expect(registry.requireMapping("github.pr.feedback.reviews").adapterOperationId).toBe("pr.feedback.reviews");
+    expect(registry.requireMapping("github.pr.feedback.comments").adapterOperationId).toBe("pr.feedback.comments");
     expect(registry.requireMapping("github.issue.inspect").adapterOperationId).toBe("issue.inspect");
     expect(registry.requireMapping("github.issue.list").adapterOperationId).toBe("issue.list");
     expect(() => registry.requireMapping("github.issue.create")).toThrowError(

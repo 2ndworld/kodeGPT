@@ -5,9 +5,12 @@ import type { ProviderGatewayRuntime } from "./production.js";
 import {
   GITHUB_WRITE_PROVIDER_ADAPTER_ID,
   GitHubPrCreateResultSchema,
+  GitHubPrFeedbackReplyResultSchema,
   GitHubPrMergeResultSchema,
   type GitHubPrCreateInput,
   type GitHubPrCreateResult,
+  type GitHubPrFeedbackReplyInput,
+  type GitHubPrFeedbackReplyResult,
   type GitHubPrMergeInput,
   type GitHubPrMergeResult
 } from "./github-write.js";
@@ -15,6 +18,7 @@ import {
 export interface GitHubWriteToolAdapter {
   prCreate(input: GitHubPrCreateInput): Promise<GitHubPrCreateResult>;
   prMerge(input: GitHubPrMergeInput): Promise<GitHubPrMergeResult>;
+  prFeedbackReply(input: GitHubPrFeedbackReplyInput): Promise<GitHubPrFeedbackReplyResult>;
 }
 
 export function createGitHubWriteToolAdapter(
@@ -22,7 +26,9 @@ export function createGitHubWriteToolAdapter(
 ): GitHubWriteToolAdapter {
   return {
     prCreate: (input) => execute(runtime, "github.pr.create", input, GitHubPrCreateResultSchema),
-    prMerge: (input) => execute(runtime, "github.pr.merge", input, GitHubPrMergeResultSchema)
+    prMerge: (input) => execute(runtime, "github.pr.merge", input, GitHubPrMergeResultSchema),
+    prFeedbackReply: (input) =>
+      execute(runtime, "github.pr.feedback.reply", input, GitHubPrFeedbackReplyResultSchema)
   };
 }
 

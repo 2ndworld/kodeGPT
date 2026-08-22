@@ -15,14 +15,27 @@ describe("public action catalog", () => {
     expect((capabilities as Record<string, unknown>).listPublicActionDescriptors).toBe(listPublicActionDescriptors);
   });
 
-  it("contains the published 76-action discovery surface exactly once", () => {
-    expect(PUBLIC_ACTION_IDS).toHaveLength(76);
-    expect(new Set(PUBLIC_ACTION_IDS).size).toBe(76);
+  it("contains the published 78-action discovery surface exactly once", () => {
+    expect(PUBLIC_ACTION_IDS).toHaveLength(78);
+    expect(new Set(PUBLIC_ACTION_IDS).size).toBe(78);
     expect(PUBLIC_ACTION_IDS).toContain("workspace.info");
     expect(PUBLIC_ACTION_IDS).toContain("visual.captureMatrix");
     expect(PUBLIC_ACTION_IDS).toContain("github.pr.create");
+    expect(PUBLIC_ACTION_IDS).toContain("github.pr.feedback.inspect");
+    expect(PUBLIC_ACTION_IDS).toContain("github.pr.feedback.reply");
     expect(PUBLIC_ACTION_IDS).toContain("system.discover");
     expect(getPublicActionDescriptor("system.discover").requiredInputs).toEqual(["query"]);
+    expect(getPublicActionDescriptor("github.pr.feedback.inspect").requiredInputs).toEqual([
+      "repository",
+      "number"
+    ]);
+    expect(getPublicActionDescriptor("github.pr.feedback.reply").requiredInputs).toEqual([
+      "repository",
+      "number",
+      "commentId",
+      "expectedHeadOid",
+      "body"
+    ]);
   });
 
   it("provides complete immutable discovery metadata", () => {

@@ -255,8 +255,8 @@ describe("kodegpt start orchestration", () => {
         developerEnvironmentRegistry: true,
         inheritsHostEnvironment: false
       });
-      expect(capabilities.mcpSurfaceVersion).toBe("0.24");
-      expect(capabilities.publicTools).toMatchObject({ count: 76 });
+      expect(capabilities.mcpSurfaceVersion).toBe("0.25");
+      expect(capabilities.publicTools).toMatchObject({ count: 78 });
       expect((capabilities.publicTools as { families: Record<string, string[]> }).families.system).toContain(
         "system.discover"
       );
