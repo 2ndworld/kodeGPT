@@ -516,6 +516,103 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
     }
   });
 
+  it("retains historical CI failure observations across stateless HTTP tool calls", async () => {
+    const handler = createKodegptHttpHandler({
+      toolContext: {
+        ...toolContext,
+        workspace: {
+          ...toolContext.workspace,
+          list: async () => [{ id: "ws_test", canonicalRoot: "/tmp/ws-test" }]
+        },
+        ci: {
+          failure: async () => ({
+            truncated: false,
+            truncationReasons: [],
+            schemaVersion: 1,
+            workspaceId: "ws_test",
+            provider: "github",
+            repository: {
+              owner: "2ndworld",
+              name: "kodeGPT",
+              fullName: "2ndworld/kodeGPT"
+            },
+            runId: "32360350517",
+            job: {
+              id: "96398421795",
+              name: "Deterministic v0.1 gates",
+              status: "COMPLETED",
+              conclusion: "FAILURE",
+              startedAt: null,
+              completedAt: null,
+              url: null,
+              steps: []
+            },
+            failedStep: null,
+            reason: "STEP_FAILURE",
+            annotations: [],
+            logExcerpt: null
+          })
+        }
+      },
+      httpTrust: trust,
+      bearerAuthenticator: {
+        authenticate: async (authorization) => authorization === validAuthorization()
+      }
+    });
+    try {
+      const failureResponse = await post(
+        handler,
+        {
+          jsonrpc: "2.0",
+          id: "observe-ci-failure",
+          method: "tools/call",
+          params: {
+            name: "ci.failure",
+            arguments: { workspaceId: "ws_test", runId: "32360350517" },
+            _meta: meta()
+          }
+        },
+        {
+          authorization: validAuthorization(),
+          mcpMethod: "tools/call",
+          mcpName: "ci.failure"
+        }
+      );
+      expect(failureResponse.status).toBe(200);
+
+      const consoleResponse = await post(
+        handler,
+        {
+          jsonrpc: "2.0",
+          id: "read-console-after-ci-failure",
+          method: "tools/call",
+          params: {
+            name: "console.state",
+            arguments: {},
+            _meta: meta()
+          }
+        },
+        {
+          authorization: validAuthorization(),
+          mcpMethod: "tools/call",
+          mcpName: "console.state"
+        }
+      );
+      expect(consoleResponse.status).toBe(200);
+      const payload = (await consoleResponse.json()) as Record<string, any>;
+      expect(payload.result.structuredContent.cockpit.remote.ci).toMatchObject({
+        repository: "2ndworld/kodeGPT",
+        state: "FAIL",
+        failures: 1
+      });
+      expect(payload.result.structuredContent.cockpit.nextActions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kind: "inspect-ci-failure" })])
+      );
+    } finally {
+      await handler.close();
+    }
+  });
+
   it("rejects legacy GET and DELETE instead of exposing a session/SSE compatibility path", async () => {
     const handler = createHandler();
     try {

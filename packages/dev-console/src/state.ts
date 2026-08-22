@@ -506,6 +506,8 @@ function ciSummary(entry: TimedValue | undefined): NonNullable<ConsoleState["coc
       ? value.currentRevision
       : undefined;
   const run = isRecord(value.run) ? value.run : undefined;
+  const failureEvidence =
+    typeof value.runId === "string" && isRecord(value.job) && typeof value.reason === "string";
   const state =
     typeof value.state === "string"
       ? value.state
@@ -513,7 +515,9 @@ function ciSummary(entry: TimedValue | undefined): NonNullable<ConsoleState["coc
         ? run.conclusion
         : typeof run?.status === "string"
           ? run.status
-          : undefined;
+          : failureEvidence
+            ? "FAIL"
+            : undefined;
   const branch =
     typeof revision?.branch === "string"
       ? revision.branch
@@ -526,7 +530,7 @@ function ciSummary(entry: TimedValue | undefined): NonNullable<ConsoleState["coc
       : typeof run?.headOid === "string"
         ? run.headOid
         : undefined;
-  const failures = Array.isArray(value.failures) ? value.failures.length : 0;
+  const failures = Array.isArray(value.failures) ? value.failures.length : failureEvidence ? 1 : 0;
   return {
     repository: repositoryValue,
     ...(state === undefined ? {} : { state }),
