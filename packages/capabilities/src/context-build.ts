@@ -141,9 +141,25 @@ export async function buildContext(
     searchState !== "available" ||
     verificationEvidence.state !== "available";
   const selectedFiles: ContextSelectedFile[] = [];
+  const canGateDerivedCandidatesByFocus = input.focus !== undefined && focusEvidence?.state === "available";
 
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index]!;
+    const candidateHasFocusLineEvidence =
+      focusEvidence !== undefined &&
+      focusEvidence.state !== "unavailable" &&
+      focusEvidence.value.matches.some(
+        (match) => match.path === candidate.path && match.line !== undefined
+      );
+    if (
+      canGateDerivedCandidatesByFocus &&
+      candidate.kind !== "target" &&
+      candidate.kind !== "changed" &&
+      candidate.kind !== "config" &&
+      !candidateHasFocusLineEvidence
+    ) {
+      continue;
+    }
     const remaining = maxBytes - totalBytes;
     if (remaining <= 0) {
       truncated = true;
@@ -154,15 +170,9 @@ export async function buildContext(
       const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
       const focusedTarget =
         input.focus !== undefined && input.target !== undefined && candidate.path === input.target;
-      const focusedSourceCandidate =
-        focusEvidence !== undefined &&
-        focusEvidence.state !== "unavailable" &&
-        focusEvidence.value.matches.some(
-          (match) => match.path === candidate.path && match.line !== undefined
-        );
       let region = selectFocusRegion(candidate, workspace, input, focusEvidence);
       const sourceReadLimit =
-        region === undefined && !focusedTarget && !focusedSourceCandidate
+        region === undefined && !focusedTarget && !candidateHasFocusLineEvidence
           ? readLimit
           : Math.min(MAX_CONTEXT_MAX_BYTES, Math.max(readLimit, MAX_CONTEXT_REGION_SOURCE_BYTES));
       let read = await adapter.readFile(input.workspaceId, candidate.path, {
