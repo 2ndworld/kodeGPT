@@ -37,19 +37,25 @@ Completed during implementation:
 - workflow RED proved the host skill did not yet mention bounded CI wait; GREEN now requires `ci.status(waitMs: 30_000)` and preserves `never busy-poll` guidance;
 - surface RED produced only expected `0.21 -> 0.22` compatibility failures; surface GREEN passed 71/71 while preserving exactly 76 tools.
 
-## Remaining release gates
+## Final pre-merge verification
 
-Before merge:
+Fresh candidate verification completed on 2026-08-22:
 
-- focused aggregate Remote-CI + MCP structured + workflow + surface regression;
-- complete Vitest inventory;
-- `pnpm run typecheck`;
-- `pnpm run build`;
-- `cargo test --workspace`;
-- `pnpm run verify:forbidden`;
-- `pnpm run verify:package`;
-- exact diff review and clean candidate head;
-- real GitHub dogfood on the exact feature OID using `ci.status(waitMs)` while CI transitions from nonterminal to terminal.
+- focused aggregate Remote-CI + MCP structured + workflow + surface regression: 10 files, 147 tests PASS;
+- complete Vitest inventory split into two deterministic shards:
+  - shard 1/2: 70 files PASS, 535 tests PASS, 1 intentional Playwright spike test skipped;
+  - shard 2/2: 71 files PASS, 557 tests PASS;
+  - aggregate: 141 passing files plus 1 intentionally skipped file, 1,092 tests PASS, 1 skipped, 0 failed;
+- `pnpm run typecheck` — PASS across all 13 participating workspace projects;
+- `pnpm run build` — PASS;
+- `cargo test --workspace` — PASS with only existing warnings and intentional ignored helper tests;
+- `pnpm run verify:forbidden` — PASS;
+- `pnpm run verify:package` — PASS;
+- exact implementation diff review confirmed the change is limited to the existing `ci.status` contract/service, host workflow guidance, semantic-surface compatibility, tests, and release documentation; no new public tool or authority is present.
+
+Still required before merge:
+
+- real GitHub dogfood on the exact final feature OID using candidate `ci.status(waitMs)` while CI transitions from nonterminal to terminal.
 
 After local verification:
 
