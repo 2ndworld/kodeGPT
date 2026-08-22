@@ -14,6 +14,7 @@ import {
   MAX_CI_RUNS_LIMIT,
   MAX_CI_STATUS_FAILURE_SUMMARIES,
   MAX_CI_STATUS_SUMMARIES,
+  MAX_CI_STATUS_WAIT_MS,
   MAX_CI_WORKFLOW,
   type CiCancelInput,
   type CiDispatchInput,
@@ -178,7 +179,8 @@ export const CiRepositoryInputSchema: z.ZodType<CiRepositoryInput> = z
 export const CiStatusInputSchema: z.ZodType<CiStatusInput> = z
   .object({
     workspaceId: z.string().min(1).optional(),
-    revision: GitRevisionSchema.optional()
+    revision: GitRevisionSchema.optional(),
+    waitMs: z.number().int().nonnegative().max(MAX_CI_STATUS_WAIT_MS).safe().optional()
   })
   .strict();
 

@@ -4,6 +4,8 @@ export const DEFAULT_CI_RUNS_LIMIT = 10;
 export const MAX_CI_RUNS_LIMIT = 50;
 export const MAX_CI_STATUS_SUMMARIES = 50;
 export const MAX_CI_STATUS_FAILURE_SUMMARIES = 20;
+export const MAX_CI_STATUS_WAIT_MS = 30_000;
+export const MAX_CI_STATUS_OBSERVATIONS = 4;
 export const MAX_CI_RUN_JOBS = 100;
 export const MAX_CI_JOB_STEPS = 100;
 export const MAX_CI_ANNOTATIONS = 100;
@@ -86,6 +88,7 @@ export interface CiRepositoryResult {
 export interface CiStatusInput {
   workspaceId?: string;
   revision?: GitRevision;
+  waitMs?: number;
 }
 
 export interface CiCheckSummary {

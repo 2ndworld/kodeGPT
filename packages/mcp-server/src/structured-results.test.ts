@@ -605,6 +605,10 @@ describe("structured MCP tool results", () => {
         expect(inputSchema.safeParse({ ...required, [field]: value }).success).toBe(false);
       }
     }
+    expect(CiStatusInputSchema.safeParse({ waitMs: 30_000 }).success).toBe(true);
+    for (const waitMs of [-1, 1.5, 30_001]) {
+      expect(CiStatusInputSchema.safeParse({ waitMs }).success).toBe(false);
+    }
 
     const result = (await handlers.get("ci.repository")!({} as never)) as { structuredContent?: unknown };
     expect(result.structuredContent).toEqual(repositoryResult);

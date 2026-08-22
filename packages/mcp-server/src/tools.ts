@@ -722,7 +722,7 @@ export function registerKodegptTools(
   server.registerTool(
     "ci.status",
     {
-      description: "Observe bounded GitHub CI status evidence for a trusted workspace revision without polling.",
+      description: "Observe bounded GitHub CI status evidence for a trusted workspace revision, with an optional bounded wait for terminal evidence.",
       inputSchema: CiStatusInputSchema,
       outputSchema: CiStatusResultSchema,
       annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
