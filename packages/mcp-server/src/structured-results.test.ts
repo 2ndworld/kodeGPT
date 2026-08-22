@@ -555,11 +555,12 @@ describe("structured MCP tool results", () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
     const context = makeContext();
+    const repository = { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" };
     const repositoryResult = {
       schemaVersion: 1 as const,
       workspaceId: "ws_1",
       provider: "github" as const,
-      repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" },
+      repository,
       selectedRemote: "origin",
       defaultBranch: "main",
       currentRevision: { oid: "1".repeat(40), branch: "main" },
@@ -569,7 +570,55 @@ describe("structured MCP tool results", () => {
       truncated: false,
       truncationReasons: []
     };
+    const statusResult = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      provider: "github" as const,
+      repository,
+      revision: { oid: "2".repeat(40), branch: "feat/p1b" },
+      state: "FAIL" as const,
+      checks: [],
+      runs: [],
+      failures: [
+        {
+          runId: "123",
+          jobId: null,
+          jobName: null,
+          stepName: null,
+          conclusion: "FAILURE" as const,
+          url: null
+        }
+      ],
+      truncated: false,
+      truncationReasons: []
+    };
+    const runResult = {
+      schemaVersion: 1 as const,
+      workspaceId: "ws_1",
+      provider: "github" as const,
+      repository,
+      run: {
+        id: "123",
+        name: "CI",
+        workflow: "ci.yml",
+        status: "COMPLETED" as const,
+        conclusion: "SUCCESS" as const,
+        headOid: "3".repeat(40),
+        ref: "feat/p1b",
+        event: "push",
+        url: null,
+        createdAt: null,
+        startedAt: null,
+        updatedAt: null
+      },
+      jobs: [],
+      annotations: [],
+      truncated: false,
+      truncationReasons: []
+    };
     context.ci.repository = async () => repositoryResult;
+    context.ci.status = async () => statusResult;
+    context.ci.run = async () => runResult;
     const server = {
       registerTool(name: string, definition: Record<string, unknown>, handler: CapturedHandler) {
         definitions.set(name, definition);
@@ -577,7 +626,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
 
     const specs = [
       ["ci.repository", CiRepositoryInputSchema, CiRepositoryResultSchema],
@@ -613,6 +663,31 @@ describe("structured MCP tool results", () => {
 
     const result = (await handlers.get("ci.repository")!({} as never)) as { structuredContent?: unknown };
     expect(result.structuredContent).toEqual(repositoryResult);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.remote.ci
+    ).toMatchObject({ repository: "2ndworld/kodeGPT", branch: "main", oid: "1".repeat(40) });
+
+    await handlers.get("ci.status")!({ revision: { kind: "head" } } as never);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.remote.ci
+    ).toMatchObject({
+      repository: "2ndworld/kodeGPT",
+      state: "FAIL",
+      branch: "feat/p1b",
+      oid: "2".repeat(40),
+      failures: 1
+    });
+
+    await handlers.get("ci.run")!({ runId: "123" } as never);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.remote.ci
+    ).toMatchObject({
+      repository: "2ndworld/kodeGPT",
+      state: "SUCCESS",
+      branch: "feat/p1b",
+      oid: "3".repeat(40),
+      failures: 0
+    });
   });
 
   it("registers typed bounded CI mutations with non-idempotent annotations and structured results", async () => {
@@ -743,7 +818,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
 
     const specs = [
       ["github.repository.inspect", GitHubRepositoryInspectInputSchema, GitHubRepositoryInspectResultSchema, { repository: "2ndworld/kodeGPT" }, repositoryResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
@@ -782,6 +858,17 @@ describe("structured MCP tool results", () => {
       expect(serialized).not.toContain("semanticCapabilityId");
       expect(serialized).not.toContain("authorization");
     }
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.remote.pullRequest
+    ).toMatchObject({
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      title: "Skill Capability Resolution v2",
+      state: "closed",
+      headBranch: "feat/skill-capability-resolution-v2",
+      baseBranch: "main",
+      merged: true
+    });
   });
 
   it("registers the small trust control plane without caller-supplied filesystem identity", async () => {
@@ -1073,7 +1160,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
     const definition = definitions.get("workspace.checkpoint");
     const handler = handlers.get("workspace.checkpoint");
     expect(definition).toBeDefined();
@@ -1116,6 +1204,14 @@ describe("structured MCP tool results", () => {
     for (const forbidden of ["trustId", "capabilityId", "deviceMajor", "inode"] ) {
       expect(JSON.stringify(info.structuredContent)).not.toContain(forbidden);
     }
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.objective
+    ).toMatchObject({
+      revision: 2,
+      objective: "Continue checkpoint integration",
+      status: "active",
+      nextActions: ["Wire MCP"]
+    });
 
     const upsert = (await handler!({
       workspaceId: "ws_1",
@@ -1125,6 +1221,9 @@ describe("structured MCP tool results", () => {
     } as never)) as { structuredContent?: unknown };
     expect(upsert.structuredContent).toEqual({ schemaVersion: 1, operation: "upsert", checkpoint });
     expect(JSON.stringify(upsert.structuredContent)).not.toContain("trustId");
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.objective
+    ).toMatchObject({ revision: 2, objective: "Continue checkpoint integration" });
 
     const cleared = (await handler!({
       workspaceId: "ws_1",
@@ -1132,6 +1231,9 @@ describe("structured MCP tool results", () => {
       expectedRevision: 2
     } as never)) as { structuredContent?: unknown };
     expect(cleared.structuredContent).toEqual({ schemaVersion: 1, operation: "clear", cleared: true });
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.objective
+    ).toBeUndefined();
 
     context.workspace.checkpoint = async () => {
       throw Object.assign(new Error("internal stale details"), { code: "CHECKPOINT_STALE" });
@@ -1265,7 +1367,8 @@ describe("structured MCP tool results", () => {
       capturedInput = input;
       return typedContextBuildResult;
     };
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
     const handler = handlers.get("context.build");
     const definition = definitions.get("context.build");
     expect(handler).toBeDefined();
@@ -1291,6 +1394,14 @@ describe("structured MCP tool results", () => {
     });
     expect(result.structuredContent).toEqual(typedContextBuildResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.workspace
+    ).toMatchObject({
+      workspaceId: "ws_1",
+      headOid: typedGitChangesResult.sourceState.headOid,
+      dirty: true,
+      freshness: "fresh"
+    });
   });
 
   it("accepts additive resume synthesis only for context.build resume intent", async () => {
@@ -1334,7 +1445,8 @@ describe("structured MCP tool results", () => {
       }
     };
     context.context.build = async () => resumeResult as never;
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
 
     const result = (await handlers.get("context.build")!({
       workspaceId: "ws_1",
@@ -1342,6 +1454,15 @@ describe("structured MCP tool results", () => {
     } as never)) as { structuredContent?: unknown };
 
     expect(result.structuredContent).toEqual(resumeResult);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.objective
+    ).toEqual({
+      revision: 2,
+      objective: "Resume implementation",
+      status: "active",
+      relation: "fresh",
+      nextActions: ["Continue"]
+    });
   });
 
   it("keeps file.patch schemas, mutating annotations, and structured fallback aligned", async () => {
@@ -1383,7 +1504,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, makeContext(), consoleState);
     const handler = handlers.get("git.changes");
     const definition = definitions.get("git.changes");
     expect(handler).toBeDefined();
@@ -1398,6 +1520,14 @@ describe("structured MCP tool results", () => {
 
     expect(result.structuredContent).toEqual(typedGitChangesResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.workspace
+    ).toMatchObject({
+      workspaceId: "ws_1",
+      headOid: typedGitChangesResult.sourceState.headOid,
+      dirty: true,
+      freshness: "fresh"
+    });
   });
 
   it("keeps verify.list schemas, read-only annotations, and structured fallback aligned", async () => {
@@ -1477,10 +1607,14 @@ describe("structured MCP tool results", () => {
     };
     expect(result.structuredContent).toEqual(typedVerifyRunResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
-    expect(
-      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).processes
-        .operations
-    ).toContainEqual(typedVerifyRunResult.operation);
+    const consoleSnapshot = consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } });
+    expect(consoleSnapshot.processes.operations).toContainEqual(typedVerifyRunResult.operation);
+    expect(consoleSnapshot.cockpit.verification.items[0]).toMatchObject({
+      recipeId: "package:test",
+      label: "Package test",
+      state: "completed",
+      exitCode: 0
+    });
   });
 
   it("keeps process.status wait bounded and forwards the optional wait", async () => {
@@ -1525,6 +1659,59 @@ describe("structured MCP tool results", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });
 
+  it("keeps process observations associated with the workspace across run, status, and cancel", async () => {
+    const handlers = new Map<string, CapturedHandler>();
+    const context = makeContext();
+    const running = {
+      operationId: "op_process",
+      state: "running" as const,
+      exitCode: null,
+      stdoutPreview: "",
+      stderrPreview: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      sourceTruncated: false,
+      bytesSpooled: 0,
+      artifact: {
+        schemaVersion: 1 as const,
+        uri: "artifact://ka_process_fixture",
+        mediaType: "application/vnd.kodegpt.execution-stream",
+        sizeBytes: 0,
+        sourceTruncated: false
+      }
+    };
+    const cancelled = { ...running, state: "cancelled" as const };
+    context.process.run = async () => running as never;
+    context.process.status = async () => running as never;
+    context.process.cancel = async () => cancelled as never;
+    const server = {
+      registerTool(name: string, _definition: Record<string, unknown>, handler: CapturedHandler) {
+        handlers.set(name, handler);
+      }
+    } as unknown as McpServer;
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
+
+    await handlers.get("process.run")!({
+      workspaceId: "ws_1",
+      logicalExecutable: "node",
+      argv: ["script.mjs"]
+    } as never);
+    await handlers.get("process.status")!({ workspaceId: "ws_1", operationId: "op_process" } as never);
+
+    expect(
+      consoleState.snapshot({ workspaces: [{ id: "ws_2" }, { id: "ws_1" }], health: { ok: true } }).cockpit.processes.active
+    ).toEqual([]);
+    expect(
+      consoleState.snapshot({ workspaces: [{ id: "ws_1" }, { id: "ws_2" }], health: { ok: true } }).cockpit.processes.active
+    ).toEqual([{ operationId: "op_process", state: "running" }]);
+
+    await handlers.get("process.cancel")!({ workspaceId: "ws_1", operationId: "op_process" } as never);
+    expect(
+      consoleState.snapshot({ workspaces: [{ id: "ws_1" }], health: { ok: true } }).cockpit.processes.active
+    ).toEqual([]);
+  });
+
   it("keeps preview schemas closed to caller-selected network targets", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
@@ -1552,7 +1739,8 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, context);
+    const consoleState = new ConsoleStateStore();
+    registerKodegptTools(server, context, consoleState);
     const startDefinition = definitions.get("preview.start");
     const startSchema = z.object(startDefinition?.inputSchema as z.ZodRawShape).strict();
     const base = {
@@ -1593,6 +1781,14 @@ describe("structured MCP tool results", () => {
     };
     expect(result.structuredContent).toEqual(previewResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(previewResult);
+    expect(
+      consoleState.snapshot({ workspaces: typedWorkspaceListResult, health: { ok: true } }).cockpit.previews.active[0]
+    ).toMatchObject({
+      previewId: previewResult.previewId,
+      operationId: "op_preview",
+      processState: "running",
+      reachable: true
+    });
   });
 
   it("publishes source-state-bound browser output schemas", async () => {

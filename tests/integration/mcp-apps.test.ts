@@ -24,8 +24,11 @@ describe("MCP Apps Dev Console contract", () => {
         frameDomains: []
       });
       expect(resource.text).toContain("KodeGPT Dev Console");
-      expect(resource.text).toContain("Workspace");
-      expect(resource.text).toContain("Diagnostics");
+      for (const view of ["Dashboard", "Evidence", "Processes", "Remote", "Security", "Diagnostics"]) {
+        expect(resource.text).toContain(view);
+      }
+      expect(resource.text).toContain("Next actions");
+      expect(resource.text).toContain("Verification");
       expect(resource.text).not.toMatch(/(?:src|href)=["']https?:\/\//i);
       expect(resource.text).not.toMatch(/url\(\s*["']?https?:\/\//i);
     }
@@ -49,6 +52,8 @@ describe("MCP Apps Dev Console contract", () => {
     const consoleBlock = source.slice(start, nextTool);
     expect(consoleBlock).toContain("ui: { resourceUri: DEV_CONSOLE_RESOURCE_URI }");
     expect(consoleBlock).not.toContain("context.git");
+    expect(consoleBlock).not.toContain("context.ci");
+    expect(consoleBlock).not.toContain("context.github");
     expect(consoleBlock).toContain("context.workspace.list()");
     expect(consoleBlock).toContain("context.system.health()");
   });

@@ -583,7 +583,7 @@ describe("installed service run entrypoint", () => {
                 host: "127.0.0.1",
                 port: 43_121,
                 protocolVersion: "2026-07-28",
-                surfaceVersion: "0.23",
+                surfaceVersion: "0.24",
                 runtimeVersion: "0.1",
                 auditHealthy: true,
                 filesystemBoundaryAvailable: true
@@ -615,7 +615,7 @@ describe("installed service run entrypoint", () => {
       localPort: 43_121,
       runtimeVersion: "0.1",
       protocolVersion: "2026-07-28",
-      surfaceVersion: "0.23",
+      surfaceVersion: "0.24",
       reservedName: fixture.release.reservedName,
       publicUrl: "https://kodegpt.example.invalid/mcp"
     });

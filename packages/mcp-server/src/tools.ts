@@ -714,9 +714,11 @@ export function registerKodegptTools(
       annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () =>
-        CiRepositoryResultSchema.parse(await context.ci.repository(input))
-      )
+      nativeCapabilityResult(async () => {
+        const value = CiRepositoryResultSchema.parse(await context.ci.repository(input));
+        consoleState.recordCi(value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -728,7 +730,11 @@ export function registerKodegptTools(
       annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () => CiStatusResultSchema.parse(await context.ci.status(input)))
+      nativeCapabilityResult(async () => {
+        const value = CiStatusResultSchema.parse(await context.ci.status(input));
+        consoleState.recordCi(value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -752,7 +758,11 @@ export function registerKodegptTools(
       annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () => CiRunResultSchema.parse(await context.ci.run(input)))
+      nativeCapabilityResult(async () => {
+        const value = CiRunResultSchema.parse(await context.ci.run(input));
+        consoleState.recordCi(value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -826,9 +836,11 @@ export function registerKodegptTools(
       annotations: REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () =>
-        GitHubPrCreateResultSchema.parse(await context.github.prCreate(input))
-      )
+      nativeCapabilityResult(async () => {
+        const value = GitHubPrCreateResultSchema.parse(await context.github.prCreate(input));
+        consoleState.recordPullRequest(value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -840,9 +852,11 @@ export function registerKodegptTools(
       annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () =>
-        GitHubPrInspectResultSchema.parse(await context.github.prInspect(input))
-      )
+      nativeCapabilityResult(async () => {
+        const value = GitHubPrInspectResultSchema.parse(await context.github.prInspect(input));
+        consoleState.recordPullRequest(value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -970,8 +984,8 @@ export function registerKodegptTools(
       annotations: WORKSPACE_LIFECYCLE_TOOL_ANNOTATIONS
     },
     async (input) =>
-      checkpointToolResult(async () =>
-        WorkspaceCheckpointResultSchema.parse(
+      checkpointToolResult(async () => {
+        const value = WorkspaceCheckpointResultSchema.parse(
           await context.workspace.checkpoint(
             input.operation === "upsert"
               ? {
@@ -988,8 +1002,10 @@ export function registerKodegptTools(
                   expectedRevision: input.expectedRevision!
                 }
           )
-        )
-      )
+        );
+        consoleState.recordCheckpointResult(input.workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -1000,10 +1016,11 @@ export function registerKodegptTools(
       outputSchema: WorkspaceInfoResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId }) =>
-      structuredToolResult(
-        WorkspaceInfoResultSchema.parse(await context.workspace.info({ workspaceId }))
-      )
+    async ({ workspaceId }) => {
+      const value = WorkspaceInfoResultSchema.parse(await context.workspace.info({ workspaceId }));
+      consoleState.recordWorkspaceInfo(workspaceId, value);
+      return structuredToolResult(value);
+    }
   );
 
   server.registerTool(
@@ -1063,11 +1080,13 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, intent, target, focus, maxBytes }) =>
-      nativeCapabilityResult(async () =>
-        ContextBuildToolResultSchema.parse(
+      nativeCapabilityResult(async () => {
+        const value = ContextBuildToolResultSchema.parse(
           await context.context.build({ workspaceId, intent, target, focus, maxBytes })
-        )
-      )
+        );
+        consoleState.recordContextBuild(workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -1171,9 +1190,11 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, includePatch }) =>
-      nativeCapabilityResult(async () =>
-        GitChangesResultSchema.parse(await context.git.changes({ workspaceId, includePatch }))
-      )
+      nativeCapabilityResult(async () => {
+        const value = GitChangesResultSchema.parse(await context.git.changes({ workspaceId, includePatch }));
+        consoleState.recordGitStatus(workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -1399,7 +1420,8 @@ export function registerKodegptTools(
         const value = VerifyRunResultSchema.parse(
           await context.verify.run({ workspaceId, recipeId, background })
         );
-        consoleState.recordProcessOperation(value.operation);
+        consoleState.recordProcessOperation(value.operation, value.workspaceId);
+        consoleState.recordVerification(value);
         return value;
       })
   );
@@ -1427,7 +1449,7 @@ export function registerKodegptTools(
         env,
         background
       });
-      consoleState.recordProcessOperation(value);
+      consoleState.recordProcessOperation(value, workspaceId);
       return structuredToolResult(value);
     }
   );
@@ -1445,7 +1467,7 @@ export function registerKodegptTools(
     },
     async ({ workspaceId, operationId, waitMs }) => {
       const value = await context.process.status({ workspaceId, operationId, waitMs });
-      consoleState.recordProcessOperation(value);
+      consoleState.recordProcessOperation(value, workspaceId);
       return structuredToolResult(value);
     }
   );
@@ -1462,7 +1484,7 @@ export function registerKodegptTools(
     },
     async ({ workspaceId, operationId }) => {
       const value = await context.process.cancel({ workspaceId, operationId });
-      consoleState.recordProcessOperation(value);
+      consoleState.recordProcessOperation(value, workspaceId);
       return structuredToolResult(value);
     }
   );
@@ -1489,8 +1511,8 @@ export function registerKodegptTools(
       annotations: PROCESS_RUN_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, logicalExecutable, argv, port, cwd, env, requestPath, waitMs }) =>
-      previewToolResult(() =>
-        context.preview.start({
+      previewToolResult(async () => {
+        const value = await context.preview.start({
           workspaceId,
           logicalExecutable,
           argv,
@@ -1499,8 +1521,10 @@ export function registerKodegptTools(
           env,
           requestPath,
           waitMs
-        })
-      )
+        });
+        consoleState.recordPreview(workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -1515,7 +1539,11 @@ export function registerKodegptTools(
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
-      previewToolResult(() => context.preview.inspect({ workspaceId, previewId }))
+      previewToolResult(async () => {
+        const value = await context.preview.inspect({ workspaceId, previewId });
+        consoleState.recordPreview(workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
@@ -1530,7 +1558,11 @@ export function registerKodegptTools(
       annotations: PROCESS_CANCEL_TOOL_ANNOTATIONS
     },
     async ({ workspaceId, previewId }) =>
-      previewToolResult(() => context.preview.stop({ workspaceId, previewId }))
+      previewToolResult(async () => {
+        const value = await context.preview.stop({ workspaceId, previewId });
+        consoleState.recordPreview(workspaceId, value);
+        return value;
+      })
   );
 
   server.registerTool(
