@@ -174,7 +174,7 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships only the intended typed trust, Git, bounded GitHub, preview, browser, and visual surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.23");
+    expect(MCP_SURFACE_VERSION).toBe("0.24");
     const names = listSurfaceTools().map(({ name }) => name);
     expect(names).toHaveLength(76);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
