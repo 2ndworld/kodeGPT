@@ -308,12 +308,15 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
     "Build bounded repository context for a stated intent and target, including resume context.",
     [
       "build context",
+      "continue the work from the previous chat",
+      "continue workspace",
       "gather context",
+      "lanjutkan pekerjaan sebelumnya",
       "project context",
       "repository context",
+      "resume context",
       "resume development",
-      "continue workspace",
-      "resume context"
+      "resume workspace"
     ],
     ["context", "repository", "understand", "resume", "continuity"],
     "composite",
@@ -712,14 +715,7 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
   ),
   "workspace.info": define(
     "Read current open-workspace policy and bounded continuity checkpoint state.",
-    [
-      "cek status workspace",
-      "continue the work from the previous chat",
-      "current workspace",
-      "lanjutkan pekerjaan sebelumnya",
-      "resume workspace",
-      "workspace state"
-    ],
+    ["cek status workspace", "current workspace", "workspace state"],
     ["continuity", "resume", "state", "workspace"],
     "introspection",
     "workspace",

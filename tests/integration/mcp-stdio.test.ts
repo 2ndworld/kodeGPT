@@ -454,10 +454,9 @@ describe("strict MCP 2026-07-28 stdio transport", () => {
       });
       const resumeDiscoverPayload = await resumeDiscoverResponse;
       const resumeDiscovery = JSON.parse(resumeDiscoverPayload.result.content[0].text);
-      const workspaceInfo = resumeDiscovery.actions.find(
-        (action: { id: string }) => action.id === "workspace.info"
-      );
-      expect(workspaceInfo.availability).toEqual({
+      const resumeAction = resumeDiscovery.actions[0];
+      expect(resumeAction?.id).toBe("context.build");
+      expect(resumeAction?.availability).toEqual({
         status: "CONTEXT_REQUIRED",
         reasons: ["WORKSPACE_REQUIRED"]
       });

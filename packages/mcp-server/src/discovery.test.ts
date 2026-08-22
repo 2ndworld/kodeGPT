@@ -299,12 +299,12 @@ describe("discoverKodegpt", () => {
       baseDeps({ workspaceInfo })
     );
 
-    const noContext = withoutWorkspace.actions.find((item) => item.id === "workspace.info")!;
+    const noContext = withoutWorkspace.actions.find((item) => item.id === "context.build")!;
     expect(noContext.availability).toEqual({
       status: "CONTEXT_REQUIRED",
       reasons: ["WORKSPACE_REQUIRED"]
     });
-    const unavailable = invalidWorkspace.actions.find((item) => item.id === "workspace.info")!;
+    const unavailable = invalidWorkspace.actions.find((item) => item.id === "context.build")!;
     expect(unavailable.availability).toEqual({
       status: "UNAVAILABLE",
       reasons: ["WORKSPACE_UNAVAILABLE"]
