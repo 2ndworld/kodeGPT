@@ -215,6 +215,13 @@ export interface CodeSearchInput {
   mode?: CodeSearchMode;
   path?: string;
   maxResults?: number;
+  contextLines?: number;
+}
+
+export interface CodeSearchSnippet {
+  startLine: number;
+  endLine: number;
+  text: string;
 }
 
 export interface CodeSearchMatch {
@@ -223,6 +230,7 @@ export interface CodeSearchMatch {
   column?: number;
   kind: CodeSearchMode;
   preview?: string;
+  snippet?: CodeSearchSnippet;
 }
 
 export interface CodeSearchResult {

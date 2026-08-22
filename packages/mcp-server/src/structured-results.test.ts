@@ -64,6 +64,7 @@ import {
   WorkspaceInspectResultSchema,
   type CiMutationResult,
   type CodeImpactResult,
+  type CodeSearchInput,
   type CodeSearchResult,
   type ContextBuildResult,
   type FilePatchResult,
@@ -1181,7 +1182,13 @@ describe("structured MCP tool results", () => {
       }
     } as unknown as McpServer;
 
-    registerKodegptTools(server, makeContext());
+    const context = makeContext();
+    let forwardedInput: CodeSearchInput | undefined;
+    context.code.search = async (input) => {
+      forwardedInput = input;
+      return typedCodeSearchResult;
+    };
+    registerKodegptTools(server, context);
     const handler = handlers.get("code.search");
     const definition = definitions.get("code.search");
     expect(handler).toBeDefined();
@@ -1192,12 +1199,21 @@ describe("structured MCP tool results", () => {
     const result = (await handler!({
       workspaceId: "ws_1",
       query: "needle",
-      mode: "definition"
+      mode: "definition",
+      contextLines: 2
     } as never)) as {
       content: Array<{ type: string; text: string }>;
       structuredContent?: unknown;
     };
 
+    expect(forwardedInput).toEqual({
+      workspaceId: "ws_1",
+      query: "needle",
+      mode: "definition",
+      path: undefined,
+      maxResults: undefined,
+      contextLines: 2
+    });
     expect(result.structuredContent).toEqual(typedCodeSearchResult);
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
   });

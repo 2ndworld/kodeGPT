@@ -1030,10 +1030,10 @@ export function registerKodegptTools(
       outputSchema: CodeSearchResultSchema,
       annotations: READ_ONLY_TOOL_ANNOTATIONS
     },
-    async ({ workspaceId, query, mode, path, maxResults }) =>
+    async ({ workspaceId, query, mode, path, maxResults, contextLines }) =>
       nativeCapabilityResult(async () =>
         CodeSearchResultSchema.parse(
-          await context.code.search({ workspaceId, query, mode, path, maxResults })
+          await context.code.search({ workspaceId, query, mode, path, maxResults, contextLines })
         )
       )
   );

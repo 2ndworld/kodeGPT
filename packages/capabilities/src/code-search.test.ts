@@ -96,6 +96,92 @@ describe("code.search", () => {
     });
   });
 
+  it("adds deterministic bounded surrounding snippets only when contextLines is requested", async () => {
+    const capability = service({
+      files: {
+        "src/main.ts": ["before", "const value = needle + 1;", "after", "tail"].join("\n")
+      },
+      search: [{ path: "src/main.ts", line: 2, lineText: "const value = needle + 1;" }]
+    });
+
+    const result = await capability.searchCode({
+      workspaceId: "ws_snippet",
+      query: "needle",
+      mode: "text",
+      contextLines: 1
+    });
+
+    expect(result.matches).toEqual([
+      {
+        path: "src/main.ts",
+        line: 2,
+        column: 15,
+        kind: "text",
+        preview: "const value = needle + 1;",
+        snippet: {
+          startLine: 1,
+          endLine: 3,
+          text: "before\nconst value = needle + 1;\nafter\n"
+        }
+      }
+    ]);
+    expect(result.truncated).toBe(false);
+    expect(result.truncationReasons).toEqual([]);
+  });
+
+  it("clamps surrounding snippets at the beginning and end of a file", async () => {
+    const capability = service({
+      files: {
+        "src/start.ts": ["needle", "two", "three"].join("\n"),
+        "src/end.ts": ["one", "two", "needle"].join("\n")
+      },
+      search: [
+        { path: "src/start.ts", line: 1, lineText: "needle" },
+        { path: "src/end.ts", line: 3, lineText: "needle" }
+      ]
+    });
+
+    const result = await capability.searchCode({
+      workspaceId: "ws_snippet_edges",
+      query: "needle",
+      mode: "text",
+      contextLines: 2
+    });
+
+    expect(result.matches.map((match) => match.snippet)).toEqual([
+      { startLine: 1, endLine: 3, text: "needle\ntwo\nthree" },
+      { startLine: 1, endLine: 3, text: "one\ntwo\nneedle" }
+    ]);
+  });
+
+  it("caps aggregate surrounding snippet bytes and reports snippet truncation truthfully", async () => {
+    const files: Record<string, string> = {};
+    const search: CapabilitySearchMatch[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const path = `src/file-${String(index).padStart(2, "0")}.ts`;
+      const padding = "x".repeat(900);
+      files[path] = [padding, `needle-${index}`, padding].join("\n");
+      search.push({ path, line: 2, lineText: `needle-${index}` });
+    }
+    const capability = service({ files, search });
+
+    const result = await capability.searchCode({
+      workspaceId: "ws_snippet_budget",
+      query: "needle",
+      mode: "text",
+      contextLines: 1,
+      maxResults: 20
+    });
+
+    const snippetBytes = result.matches.reduce(
+      (total, match) => total + Buffer.byteLength(match.snippet?.text ?? "", "utf8"),
+      0
+    );
+    expect(snippetBytes).toBeLessThanOrEqual(16 * 1024);
+    expect(result.truncated).toBe(true);
+    expect(result.truncationReasons).toContain("SNIPPET_BYTE_LIMIT");
+  });
+
   it("filters path mode case-sensitively and reports configured truncation", async () => {
     const capability = service({
       tree: [

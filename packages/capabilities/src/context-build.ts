@@ -3,6 +3,7 @@ import {
   MAX_CONTEXT_MAX_BYTES,
   type CodeSearchInput,
   type CodeSearchResult,
+  type CodeSearchTruncationReason,
   type ContextBuildInput,
   type ContextBuildResult,
   type ContextEvidenceState,
@@ -152,9 +153,7 @@ export async function buildContext(
       const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
       const focusedTarget =
         input.focus !== undefined && input.target !== undefined && candidate.path === input.target;
-      let region = focusedTarget
-        ? undefined
-        : selectFocusRegion(candidate, workspace, input, focusEvidence);
+      let region = selectFocusRegion(candidate, workspace, input, focusEvidence);
       const sourceReadLimit =
         region === undefined && !focusedTarget
           ? readLimit
@@ -170,7 +169,7 @@ export async function buildContext(
         continue;
       }
 
-      if (focusedTarget && read.eof) {
+      if (focusedTarget && region === undefined && read.eof) {
         region = selectFocusedTargetRegion(candidate.path, read.contents, input.focus!);
       }
 
@@ -297,21 +296,51 @@ async function collectFocusReferenceEvidence(
   targetArea: string | undefined
 ): Promise<EvidenceResult<CodeSearchResult> | undefined> {
   if (input.focus === undefined) return undefined;
-  try {
-    const value = await adapter.search({
-      workspaceId: input.workspaceId,
-      query: input.focus,
-      mode: "reference",
-      ...(targetArea === undefined || targetArea === "." ? {} : { path: targetArea }),
-      maxResults: 100
-    });
-    return { state: value.truncated ? "incomplete" : "available", value };
-  } catch (error) {
-    if (isKnownSourceFailure(error, SEARCH_EVIDENCE_UNAVAILABLE_CODES)) {
-      return { state: "unavailable" };
+
+  const matches: CodeSearchResult["matches"] = [];
+  const truncationReasons = new Set<CodeSearchResult["truncationReasons"][number]>();
+  let observedSearch = false;
+  let incomplete = false;
+
+  for (const query of focusQueries(input.focus)) {
+    for (const mode of ["reference", "text"] as const) {
+      try {
+        const value = await adapter.search({
+          workspaceId: input.workspaceId,
+          query,
+          mode,
+          ...(targetArea === undefined || targetArea === "." ? {} : { path: targetArea }),
+          maxResults: 100
+        });
+        observedSearch = true;
+        matches.push(...value.matches);
+        if (value.truncated) incomplete = true;
+        for (const reason of value.truncationReasons) truncationReasons.add(reason);
+      } catch (error) {
+        if (isKnownSourceFailure(error, SEARCH_EVIDENCE_UNAVAILABLE_CODES)) {
+          incomplete = true;
+          continue;
+        }
+        throw error;
+      }
     }
-    throw error;
   }
+
+  if (!observedSearch) return { state: "unavailable" };
+  const deduplicated = deduplicateMatches(matches);
+  if (deduplicated.length > 100) {
+    incomplete = true;
+    truncationReasons.add("MATCH_LIMIT");
+  }
+  const value: CodeSearchResult = {
+    schemaVersion: 1,
+    mode: "text",
+    precision: "exact",
+    matches: deduplicated.slice(0, 100),
+    truncated: incomplete,
+    truncationReasons: orderedSearchTruncationReasons(truncationReasons)
+  };
+  return { state: incomplete ? "incomplete" : "available", value };
 }
 
 function mergeEvidenceStates(
@@ -366,11 +395,7 @@ function selectFocusRegion(
 ): SourceRegion | undefined {
   if (input.target === undefined || input.focus === undefined) return undefined;
 
-  if (
-    focusEvidence === undefined ||
-    focusEvidence.state === "unavailable" ||
-    focusEvidence.value.precision !== "structural"
-  ) {
+  if (focusEvidence === undefined || focusEvidence.state === "unavailable") {
     return undefined;
   }
 
@@ -392,11 +417,31 @@ function selectFocusedTargetRegion(
 ): SourceRegion | undefined {
   const analysis = analyzeStructuralFile({ path, contents });
   if (analysis?.precision !== "structural") return undefined;
-  return uniqueRegion(
-    analysis.symbols
-      .filter((symbol) => symbol.name === focus && symbol.region !== undefined)
-      .map((symbol) => symbol.region!)
-  );
+  const queries = new Set(focusQueries(focus));
+  const regions = analysis.symbols
+    .filter((symbol) => queries.has(symbol.name) && symbol.region !== undefined)
+    .map((symbol) => symbol.region!);
+  for (const reference of analysis.references) {
+    if (!queries.has(reference.name)) continue;
+    const enclosing = analysis.symbols
+      .filter(
+        (symbol) =>
+          symbol.region !== undefined &&
+          symbol.region.startLine <= reference.line &&
+          symbol.region.endLine >= reference.line
+      )
+      .sort((left, right) => {
+        const leftRegion = left.region!;
+        const rightRegion = right.region!;
+        return (
+          leftRegion.endLine - leftRegion.startLine - (rightRegion.endLine - rightRegion.startLine) ||
+          leftRegion.startLine - rightRegion.startLine ||
+          compareLexical(left.name, right.name)
+        );
+      })[0]?.region;
+    if (enclosing !== undefined) regions.push(enclosing);
+  }
+  return uniqueRegion(regions);
 }
 
 function enclosingSymbolRegion(
@@ -621,6 +666,45 @@ function sortedMatches(matches: CodeSearchResult["matches"]): CodeSearchResult["
       (left.column ?? 0) - (right.column ?? 0) ||
       compareLexical(left.kind, right.kind)
   );
+}
+
+function orderedSearchTruncationReasons(
+  reasons: ReadonlySet<CodeSearchTruncationReason>
+): CodeSearchTruncationReason[] {
+  const order: CodeSearchTruncationReason[] = [
+    "TREE_LIMIT",
+    "FILE_SIZE_LIMIT",
+    "SCAN_BYTE_LIMIT",
+    "MATCH_LIMIT",
+    "SNIPPET_BYTE_LIMIT"
+  ];
+  return order.filter((reason) => reasons.has(reason));
+}
+
+function deduplicateMatches(matches: CodeSearchResult["matches"]): CodeSearchResult["matches"] {
+  const unique = new Map<string, CodeSearchResult["matches"][number]>();
+  for (const match of sortedMatches(matches)) {
+    const key = `${match.path}:${match.line ?? 0}:${match.column ?? 0}`;
+    if (!unique.has(key)) unique.set(key, match);
+  }
+  return [...unique.values()];
+}
+
+function focusQueries(focus: string): string[] {
+  const tokens = [...focus.matchAll(/[A-Za-z_$][A-Za-z0-9_$.-]*/g)].map((match, index) => ({
+    value: match[0],
+    index,
+    score:
+      (/[a-z][A-Z]/.test(match[0]) ? 4 : 0) +
+      (/[._$]/.test(match[0]) ? 3 : 0) +
+      (/\d/.test(match[0]) ? 1 : 0) +
+      (match[0].length >= 4 ? 1 : 0)
+  }));
+  const useful = tokens.filter(({ value }) => value.length >= 3);
+  const ranked = (useful.length > 0 ? useful : tokens).sort(
+    (left, right) => right.score - left.score || left.index - right.index || compareLexical(left.value, right.value)
+  );
+  return [...new Set(ranked.map(({ value }) => value))].slice(0, 2);
 }
 
 function emptySearchResult(): CodeSearchResult {
