@@ -216,17 +216,22 @@ describe("capability contracts", () => {
         query: "needle",
         mode: "definition",
         path: "src",
-        maxResults: 500
+        maxResults: 500,
+        contextLines: 8
       })
     ).toEqual({
       workspaceId: "ws_1",
       query: "needle",
       mode: "definition",
       path: "src",
-      maxResults: 500
+      maxResults: 500,
+      contextLines: 8
     });
     expect(() =>
       CodeSearchInputSchema.parse({ workspaceId: "ws_1", query: "x".repeat(513) })
+    ).toThrow();
+    expect(() =>
+      CodeSearchInputSchema.parse({ workspaceId: "ws_1", query: "needle", contextLines: 9 })
     ).toThrow();
 
     const validResult = {
@@ -239,7 +244,12 @@ describe("capability contracts", () => {
           line: 1,
           column: 10,
           kind: "definition" as const,
-          preview: "function needle() {}"
+          preview: "function needle() {}",
+          snippet: {
+            startLine: 1,
+            endLine: 2,
+            text: "function needle() {}\nneedle();\n"
+          }
         }
       ],
       truncated: false,

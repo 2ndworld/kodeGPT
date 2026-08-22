@@ -228,7 +228,8 @@ export const CodeSearchInputSchema: z.ZodType<CodeSearchInput> = z
     query: z.string().min(1).max(512),
     mode: codeSearchModeSchema.optional(),
     path: z.string().min(1).optional(),
-    maxResults: z.number().int().positive().max(MAX_SEARCH_MAX_RESULTS).safe().optional()
+    maxResults: z.number().int().positive().max(MAX_SEARCH_MAX_RESULTS).safe().optional(),
+    contextLines: z.number().int().min(0).max(8).safe().optional()
   })
   .strict();
 
@@ -244,7 +245,15 @@ export const CodeSearchResultSchema: z.ZodType<CodeSearchResult> = z
           line: z.number().int().positive().safe().optional(),
           column: z.number().int().positive().safe().optional(),
           kind: codeSearchModeSchema,
-          preview: z.string().optional()
+          preview: z.string().optional(),
+          snippet: z
+            .object({
+              startLine: z.number().int().positive().safe(),
+              endLine: z.number().int().positive().safe(),
+              text: z.string()
+            })
+            .strict()
+            .optional()
         })
         .strict()
     ),

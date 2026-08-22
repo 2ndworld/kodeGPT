@@ -20,6 +20,9 @@ import { analyzeStructuralFile } from "./structural-analysis.js";
 const MAX_STRUCTURAL_SEARCH_FILES = 64;
 const MAX_STRUCTURAL_SEARCH_FILE_BYTES = 128 * 1024;
 const MAX_STRUCTURAL_SEARCH_TOTAL_BYTES = 4 * 1024 * 1024;
+const MAX_SEARCH_CONTEXT_LINES = 8;
+const MAX_SEARCH_SNIPPET_SOURCE_BYTES = 128 * 1024;
+const MAX_SEARCH_SNIPPET_TOTAL_BYTES = 16 * 1024;
 
 export async function searchCode(
   workspaceInspection: WorkspaceInspectionAdapter,
@@ -44,15 +47,23 @@ export async function searchCode(
   );
   if (mode === "text") {
     const classified = classifyMatches(lowLevel.matches, input.query, mode);
+    const visible = classified.slice(0, maxResults);
+    const enriched = await attachSurroundingSnippets(
+      workspaceInspection,
+      input.workspaceId,
+      visible,
+      input.contextLines
+    );
     const truncationReasons = orderedReasons([
       ...lowLevel.truncationReasons,
-      ...(classified.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+      ...(classified.length > maxResults ? (["MATCH_LIMIT"] as const) : []),
+      ...enriched.truncationReasons
     ]);
     return {
       schemaVersion: CAPABILITY_SCHEMA_VERSION,
       mode,
       precision: "exact",
-      matches: classified.slice(0, maxResults),
+      matches: enriched.matches,
       truncated: truncationReasons.length > 0,
       truncationReasons
     };
@@ -65,20 +76,117 @@ export async function searchCode(
     mode,
     lowLevel.matches
   );
+  const visible = structural.matches.slice(0, maxResults);
+  const enriched = await attachSurroundingSnippets(
+    workspaceInspection,
+    input.workspaceId,
+    visible,
+    input.contextLines
+  );
   const truncationReasons = orderedReasons([
     ...lowLevel.truncationReasons,
     ...structural.truncationReasons,
-    ...(structural.matches.length > maxResults ? (["MATCH_LIMIT"] as const) : [])
+    ...(structural.matches.length > maxResults ? (["MATCH_LIMIT"] as const) : []),
+    ...enriched.truncationReasons
   ]);
 
   return {
     schemaVersion: CAPABILITY_SCHEMA_VERSION,
     mode,
     precision: structural.fullyStructural ? "structural" : "heuristic",
-    matches: structural.matches.slice(0, maxResults),
+    matches: enriched.matches,
     truncated: truncationReasons.length > 0,
     truncationReasons
   };
+}
+
+async function attachSurroundingSnippets(
+  workspace: WorkspaceInspectionAdapter,
+  workspaceId: string,
+  matches: CodeSearchMatch[],
+  contextLines: number | undefined
+): Promise<{ matches: CodeSearchMatch[]; truncationReasons: CodeSearchTruncationReason[] }> {
+  if (contextLines === undefined) return { matches, truncationReasons: [] };
+
+  type ReadResult = Awaited<ReturnType<WorkspaceInspectionAdapter["readFile"]>>;
+  const reads = new Map<string, ReadResult | null>();
+  const enriched: CodeSearchMatch[] = [];
+  let snippetBytes = 0;
+  let snippetTruncated = false;
+
+  for (const match of matches) {
+    if (match.line === undefined) {
+      enriched.push(match);
+      continue;
+    }
+
+    let read = reads.get(match.path);
+    if (read === undefined) {
+      try {
+        read = await workspace.readFile(workspaceId, match.path, {
+          offset: 0,
+          maxBytes: MAX_SEARCH_SNIPPET_SOURCE_BYTES
+        });
+        reads.set(match.path, read);
+      } catch {
+        reads.set(match.path, null);
+        snippetTruncated = true;
+        enriched.push(match);
+        continue;
+      }
+    }
+    if (read === null) {
+      snippetTruncated = true;
+      enriched.push(match);
+      continue;
+    }
+
+    const starts = lineStarts(read.contents);
+    if (match.line > starts.length) {
+      snippetTruncated = true;
+      enriched.push(match);
+      continue;
+    }
+
+    const startLine = Math.max(1, match.line - contextLines);
+    const requestedEndLine = match.line + contextLines;
+    if (!read.eof && requestedEndLine >= starts.length) {
+      snippetTruncated = true;
+      enriched.push(match);
+      continue;
+    }
+    const endLine = Math.min(requestedEndLine, starts.length);
+    const text = sliceLines(read.contents, starts, startLine, endLine);
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (snippetBytes + bytes > MAX_SEARCH_SNIPPET_TOTAL_BYTES) {
+      snippetTruncated = true;
+      enriched.push(match);
+      continue;
+    }
+
+    snippetBytes += bytes;
+    enriched.push({ ...match, snippet: { startLine, endLine, text } });
+  }
+
+  return {
+    matches: enriched,
+    truncationReasons: snippetTruncated ? ["SNIPPET_BYTE_LIMIT"] : []
+  };
+}
+
+function lineStarts(contents: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < contents.length; index += 1) {
+    if (contents[index] === "\n") starts.push(index + 1);
+  }
+  if (starts.length > 1 && starts[starts.length - 1] === contents.length) starts.pop();
+  return starts;
+}
+
+function sliceLines(contents: string, starts: number[], startLine: number, endLine: number): string {
+  const start = starts[startLine - 1]!;
+  const end = endLine < starts.length ? starts[endLine]! : contents.length;
+  return contents.slice(start, end);
 }
 
 async function searchPaths(
@@ -353,6 +461,17 @@ function validateInput(input: CodeSearchInput): void {
     throw new CapabilityError(
       "CAPABILITY_LIMIT_EXCEEDED",
       "code.search maxResults must be between 1 and 500"
+    );
+  }
+  if (
+    input.contextLines !== undefined &&
+    (!Number.isSafeInteger(input.contextLines) ||
+      input.contextLines < 0 ||
+      input.contextLines > MAX_SEARCH_CONTEXT_LINES)
+  ) {
+    throw new CapabilityError(
+      "CAPABILITY_LIMIT_EXCEEDED",
+      "code.search contextLines must be between 0 and 8"
     );
   }
 }

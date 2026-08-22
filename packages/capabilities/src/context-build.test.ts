@@ -319,6 +319,142 @@ describe("context.build", () => {
     });
   });
 
+  it("uses code-like terms from natural-language focus to slice implementation, schema, and test regions", async () => {
+    const target = "packages/core/src/remote-ci/service.ts";
+    const schema = "packages/core/src/remote-ci/schemas.ts";
+    const relatedTest = "packages/core/src/remote-ci/service.test.ts";
+    const makeLines = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, index) => `// ${prefix}-${index + 1}`);
+    const targetLines = makeLines(260, "target-filler");
+    targetLines[99] = "export async function status(input: CiStatusInput) {";
+    targetLines[109] = "  const waitMs = input.waitMs ?? 0;";
+    targetLines[139] = "}";
+    const schemaLines = makeLines(180, "schema-filler");
+    schemaLines[39] = "export const CiStatusInputSchema = z.object({";
+    schemaLines[44] = "  waitMs: z.number().int().min(0).max(30000).optional()";
+    schemaLines[59] = "});";
+    const testLines = makeLines(240, "test-filler");
+    testLines[169] = "function waitsForTerminalStatus() {";
+    testLines[179] = "  return service.status({ waitMs: 30000 });";
+    testLines[199] = "}";
+    const fixture = sources(
+      {
+        [target]: targetLines.join("\n"),
+        [schema]: schemaLines.join("\n"),
+        [relatedTest]: testLines.join("\n"),
+        "packages/core/src/helper.ts": "helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [
+          { from: target, to: schema, kind: "imports" },
+          { from: relatedTest, to: target, kind: "tests" }
+        ]
+      }
+    );
+    const originalInspect = fixture.adapter.inspect;
+    fixture.adapter.inspect = async (input) => ({
+      ...(await originalInspect(input)),
+      symbols: [
+        {
+          name: "status",
+          kind: "function" as const,
+          path: target,
+          line: 100,
+          exported: true,
+          region: { startLine: 100, endLine: 140 }
+        },
+        {
+          name: "CiStatusInputSchema",
+          kind: "variable" as const,
+          path: schema,
+          line: 40,
+          exported: true,
+          region: { startLine: 40, endLine: 60 }
+        },
+        {
+          name: "waitsForTerminalStatus",
+          kind: "function" as const,
+          path: relatedTest,
+          line: 170,
+          exported: false,
+          region: { startLine: 170, endLine: 200 }
+        }
+      ]
+    });
+    const originalSearch = fixture.adapter.search;
+    const searchCalls: CodeSearchInput[] = [];
+    fixture.adapter.search = async (input) => {
+      searchCalls.push(input);
+      if (input.query === "waitMs") {
+        return {
+          schemaVersion: 1,
+          mode: input.mode ?? "text",
+          precision: input.mode === "reference" ? "structural" : "exact",
+          matches: [
+            { path: target, line: 110, column: 9, kind: input.mode ?? "text", preview: targetLines[109] },
+            { path: schema, line: 45, column: 3, kind: input.mode ?? "text", preview: schemaLines[44] },
+            {
+              path: relatedTest,
+              line: 180,
+              column: 27,
+              kind: input.mode ?? "text",
+              preview: testLines[179]
+            }
+          ],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      if (input.mode === "reference") {
+        return {
+          schemaVersion: 1,
+          mode: "reference",
+          precision: "structural",
+          matches: [],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      if (input.mode === "path") {
+        return {
+          schemaVersion: 1,
+          mode: "path",
+          precision: "lexical",
+          matches: [{ path: target, kind: "path" }],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      return originalSearch(input);
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target,
+      focus: "ci.status waitMs implementation schema tests",
+      maxBytes: 16 * 1024
+    });
+
+    expect(searchCalls.some((call) => call.query === "waitMs")).toBe(true);
+    expect(result.selectedFiles.find((file) => file.path === target)).toMatchObject({
+      region: { startLine: 100, endLine: 140 },
+      truncated: false
+    });
+    expect(result.selectedFiles.find((file) => file.path === schema)).toMatchObject({
+      region: { startLine: 40, endLine: 60 },
+      truncated: false
+    });
+    expect(result.selectedFiles.find((file) => file.path === relatedTest)).toMatchObject({
+      region: { startLine: 170, endLine: 200 },
+      truncated: false
+    });
+    expect(result.totalBytes).toBeLessThan(8 * 1024);
+    expect(result.truncated).toBe(false);
+  });
+
   it("rejects focus without an explicit target path", async () => {
     const fixture = sources({});
     await expect(
