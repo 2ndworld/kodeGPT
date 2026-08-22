@@ -452,6 +452,70 @@ describe("strict MCP 2026-07-28 HTTP transport", () => {
     }
   });
 
+  it("retains Dev Console observations across stateless HTTP tool calls", async () => {
+    const handler = createKodegptHttpHandler({
+      toolContext: {
+        ...toolContext,
+        workspace: {
+          ...toolContext.workspace,
+          list: async () => [{ id: "ws_test", canonicalRoot: "/tmp/ws-test" }]
+        }
+      },
+      httpTrust: trust,
+      bearerAuthenticator: {
+        authenticate: async (authorization) => authorization === validAuthorization()
+      }
+    });
+    try {
+      const gitStatusResponse = await post(
+        handler,
+        {
+          jsonrpc: "2.0",
+          id: "observe-git",
+          method: "tools/call",
+          params: {
+            name: "git.status",
+            arguments: { workspaceId: "ws_test" },
+            _meta: meta()
+          }
+        },
+        {
+          authorization: validAuthorization(),
+          mcpMethod: "tools/call",
+          mcpName: "git.status"
+        }
+      );
+      expect(gitStatusResponse.status).toBe(200);
+
+      const consoleResponse = await post(
+        handler,
+        {
+          jsonrpc: "2.0",
+          id: "read-console",
+          method: "tools/call",
+          params: {
+            name: "console.state",
+            arguments: {},
+            _meta: meta()
+          }
+        },
+        {
+          authorization: validAuthorization(),
+          mcpMethod: "tools/call",
+          mcpName: "console.state"
+        }
+      );
+      expect(consoleResponse.status).toBe(200);
+      const payload = (await consoleResponse.json()) as Record<string, any>;
+      expect(payload.result.structuredContent.changes.gitStatus).toMatchObject({
+        stdoutPreview: " M tracked.txt\n",
+        exitCode: 0
+      });
+    } finally {
+      await handler.close();
+    }
+  });
+
   it("rejects legacy GET and DELETE instead of exposing a session/SSE compatibility path", async () => {
     const handler = createHandler();
     try {

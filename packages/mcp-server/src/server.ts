@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import {
+  ConsoleStateStore,
   DEV_CONSOLE_CURRENT_RESOURCE_URI,
   DEV_CONSOLE_MIME_TYPE,
   DEV_CONSOLE_RESOURCE_URI,
@@ -16,7 +17,10 @@ export const KODEGPT_MCP_SERVER_INFO = Object.freeze({
 
 export { listSurfaceTools };
 
-export function createKodegptMcpServer(context: KodegptToolContext): McpServer {
+export function createKodegptMcpServer(
+  context: KodegptToolContext,
+  consoleState = new ConsoleStateStore()
+): McpServer {
   const server = new McpServer(KODEGPT_MCP_SERVER_INFO, {
     capabilities: {
       extensions: {
@@ -26,7 +30,7 @@ export function createKodegptMcpServer(context: KodegptToolContext): McpServer {
       }
     }
   });
-  registerKodegptTools(server, context);
+  registerKodegptTools(server, context, consoleState);
   registerDevConsoleResource(server, "kodegpt-dev-console-v1", DEV_CONSOLE_RESOURCE_URI);
   registerDevConsoleResource(server, "kodegpt-dev-console-current", DEV_CONSOLE_CURRENT_RESOURCE_URI);
   return server;
