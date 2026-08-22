@@ -774,7 +774,11 @@ export function registerKodegptTools(
       annotations: REMOTE_CI_READ_ONLY_TOOL_ANNOTATIONS
     },
     async (input) =>
-      nativeCapabilityResult(async () => CiFailureResultSchema.parse(await context.ci.failure(input)))
+      nativeCapabilityResult(async () => {
+        const value = CiFailureResultSchema.parse(await context.ci.failure(input));
+        consoleState.recordCi(value);
+        return value;
+      })
   );
 
   server.registerTool(
