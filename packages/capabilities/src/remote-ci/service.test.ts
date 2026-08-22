@@ -69,6 +69,10 @@ class Fixture {
   statusPageLimited = false;
   statusSummaryLimitReached = false;
   statusInput: Parameters<RemoteCiAdapter["statusEvidence"]>[0] | undefined;
+  statusInputs: Parameters<RemoteCiAdapter["statusEvidence"]>[0][] = [];
+  statusEvidenceSequence: Array<Awaited<ReturnType<RemoteCiAdapter["statusEvidence"]>>> = [];
+  nowMs = 1_000;
+  sleptMs: number[] = [];
   revisionResult = { oid: "b".repeat(40), branch: "release" as string | null };
   revisionInput: { workspaceId: string; revision: unknown } | undefined;
   runsRequests = 1;
@@ -159,7 +163,10 @@ class Fixture {
     statusEvidence: async (input) => {
       this.events.push("provider-status");
       this.statusInput = input;
+      this.statusInputs.push(input);
       if (this.providerError !== undefined) throw this.providerError;
+      const sequenced = this.statusEvidenceSequence.shift();
+      if (sequenced !== undefined) return sequenced;
       return {
         checks: this.statusChecks,
         runs: this.statusRuns,
@@ -221,20 +228,26 @@ class Fixture {
   };
 
   service() {
-    return new RemoteCiService({
+    const dependencies = {
       resolver: this.resolver,
       roots: this.roots,
       revisions: this.revisions,
       credentialProvider: this.credential,
       adapterFactory: {
-        create: (credential) => {
+        create: (credential: { token: string }) => {
           this.factoryCredentials.push(credential.token);
           return this.adapter;
         }
       },
       audit: this.audit,
-      operationIdFactory: () => "op_ci_test"
-    });
+      operationIdFactory: () => "op_ci_test",
+      now: () => this.nowMs,
+      sleep: async (ms: number) => {
+        this.sleptMs.push(ms);
+        this.nowMs += ms;
+      }
+    };
+    return new RemoteCiService(dependencies);
   }
 }
 
@@ -271,6 +284,86 @@ describe("RemoteCiService status", () => {
       "provider-status",
       "audit-success"
     ]);
+  });
+
+  it("keeps waitMs zero and terminal observations strictly one-shot", async () => {
+    const fixture = new Fixture();
+    fixture.statusChecks = [
+      { id: "1", name: "pass", state: "PASS", conclusion: "SUCCESS", url: null }
+    ];
+
+    await expect(fixture.service().status({ waitMs: 0 })).resolves.toMatchObject({ state: "PASS" });
+    expect(fixture.statusInputs).toHaveLength(1);
+    expect(fixture.sleptMs).toEqual([]);
+
+    const terminal = new Fixture();
+    terminal.statusChecks = [
+      { id: "1", name: "pass", state: "PASS", conclusion: "SUCCESS", url: null }
+    ];
+    await expect(terminal.service().status({ waitMs: 30_000 })).resolves.toMatchObject({ state: "PASS" });
+    expect(terminal.statusInputs).toHaveLength(1);
+    expect(terminal.sleptMs).toEqual([]);
+  });
+
+  it("re-observes a fixed resolved revision until CI becomes terminal", async () => {
+    const fixture = new Fixture();
+    fixture.statusEvidenceSequence = [
+      {
+        checks: [{ id: "1", name: "build", state: "PENDING", conclusion: null, url: null }],
+        runs: [],
+        providerPageLimited: false,
+        summaryLimitReached: false,
+        providerRequests: 3
+      },
+      {
+        checks: [{ id: "1", name: "build", state: "UNKNOWN", conclusion: null, url: null }],
+        runs: [],
+        providerPageLimited: false,
+        summaryLimitReached: false,
+        providerRequests: 3
+      },
+      {
+        checks: [{ id: "1", name: "build", state: "PASS", conclusion: "SUCCESS", url: null }],
+        runs: [],
+        providerPageLimited: false,
+        summaryLimitReached: false,
+        providerRequests: 3
+      }
+    ];
+
+    const result = await fixture.service().status({
+      revision: { kind: "branch", name: "release" },
+      waitMs: 30_000
+    });
+
+    expect(result).toMatchObject({
+      state: "PASS",
+      revision: { oid: "b".repeat(40), branch: "release" }
+    });
+    expect(fixture.events.filter((event) => event === "resolve-revision")).toHaveLength(1);
+    expect(fixture.statusInputs).toEqual([
+      { repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" }, oid: "b".repeat(40) },
+      { repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" }, oid: "b".repeat(40) },
+      { repository: { owner: "2ndworld", name: "kodeGPT", fullName: "2ndworld/kodeGPT" }, oid: "b".repeat(40) }
+    ]);
+    expect(fixture.sleptMs).toEqual([10_000, 10_000]);
+  });
+
+  it("caps one ci.status wait at four observations across the requested window", async () => {
+    const fixture = new Fixture();
+    fixture.statusEvidenceSequence = Array.from({ length: 4 }, () => ({
+      checks: [{ id: "1", name: "build", state: "PENDING" as const, conclusion: null, url: null }],
+      runs: [],
+      providerPageLimited: false,
+      summaryLimitReached: false,
+      providerRequests: 3
+    }));
+
+    const result = await fixture.service().status({ waitMs: 30_000 });
+
+    expect(result.state).toBe("PENDING");
+    expect(fixture.statusInputs).toHaveLength(4);
+    expect(fixture.sleptMs).toEqual([10_000, 10_000, 10_000]);
   });
 
   it("applies exact FAIL > PENDING > CANCELLED > UNKNOWN > PASS precedence", async () => {

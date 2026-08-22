@@ -10,7 +10,9 @@ import {
   MAX_CI_RESPONSE_BYTES,
   MAX_CI_RUN_JOBS,
   MAX_CI_STATUS_FAILURE_SUMMARIES,
-  MAX_CI_STATUS_SUMMARIES
+  MAX_CI_STATUS_OBSERVATIONS,
+  MAX_CI_STATUS_SUMMARIES,
+  MAX_CI_STATUS_WAIT_MS
 } from "./contracts.js";
 import * as remoteCiSchemas from "./schemas.js";
 import {
@@ -67,6 +69,14 @@ describe("Remote-CI v1 public contracts", () => {
     expect(() => CiRepositoryInputSchema.parse({ page: 2 })).toThrow();
   });
 
+  it("accepts only bounded integer ci.status waitMs values", () => {
+    expect(CiStatusInputSchema.parse({ waitMs: 0 })).toEqual({ waitMs: 0 });
+    expect(CiStatusInputSchema.parse({ waitMs: 30_000 })).toEqual({ waitMs: 30_000 });
+    for (const waitMs of [-1, 1.5, 30_001, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => CiStatusInputSchema.parse({ waitMs })).toThrow();
+    }
+  });
+
   it("uses decimal-string ids and a hard 50-run limit", () => {
     expect(CiRunInputSchema.parse({ runId: "90071992547409931234" }).runId).toBe("90071992547409931234");
     expect(() => CiRunInputSchema.parse({ runId: "1e3" })).toThrow();
@@ -78,6 +88,8 @@ describe("Remote-CI v1 public contracts", () => {
     expect({
       MAX_CI_STATUS_SUMMARIES,
       MAX_CI_STATUS_FAILURE_SUMMARIES,
+      MAX_CI_STATUS_WAIT_MS,
+      MAX_CI_STATUS_OBSERVATIONS,
       MAX_CI_RUN_JOBS,
       MAX_CI_JOB_STEPS,
       MAX_CI_ANNOTATIONS,
@@ -86,6 +98,8 @@ describe("Remote-CI v1 public contracts", () => {
     }).toEqual({
       MAX_CI_STATUS_SUMMARIES: 50,
       MAX_CI_STATUS_FAILURE_SUMMARIES: 20,
+      MAX_CI_STATUS_WAIT_MS: 30_000,
+      MAX_CI_STATUS_OBSERVATIONS: 4,
       MAX_CI_RUN_JOBS: 100,
       MAX_CI_JOB_STEPS: 100,
       MAX_CI_ANNOTATIONS: 100,

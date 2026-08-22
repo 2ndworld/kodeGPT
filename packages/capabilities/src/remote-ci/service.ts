@@ -16,6 +16,7 @@ import {
   CI_TRUNCATION_REASONS,
   DEFAULT_CI_RUNS_LIMIT,
   MAX_CI_STATUS_FAILURE_SUMMARIES,
+  MAX_CI_STATUS_OBSERVATIONS,
   MAX_CI_STATUS_SUMMARIES,
   type CiAnnotation,
   type CiCancelInput,
@@ -77,6 +78,7 @@ export interface RemoteCiServiceDependencies {
   audit: RemoteCiAuditAdapter;
   operationIdFactory?: () => string;
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export class RemoteCiService {
@@ -88,6 +90,7 @@ export class RemoteCiService {
   readonly #audit: RemoteCiAuditAdapter;
   readonly #operationIdFactory: () => string;
   readonly #now: () => number;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(dependencies: RemoteCiServiceDependencies) {
     this.#resolver = dependencies.resolver;
@@ -98,6 +101,7 @@ export class RemoteCiService {
     this.#audit = dependencies.audit;
     this.#operationIdFactory = dependencies.operationIdFactory ?? (() => `op_ci_${randomUUID().replaceAll("-", "")}`);
     this.#now = dependencies.now ?? Date.now;
+    this.#sleep = dependencies.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async repository(input: CiRepositoryInput): Promise<CiRepositoryResult> {
@@ -226,76 +230,95 @@ export class RemoteCiService {
       const credential = await this.#credentialProvider.getCredential({ workspaceRoot: root });
       credentialSource = credential.source;
       const adapter = this.#adapterFactory.create(credential);
-      const provider = await adapter.statusEvidence({
-        repository: publicRepository(resolved),
-        oid: revision.oid
-      });
-      enforceProviderBudget("status", provider.providerRequests);
+      const repository = publicRepository(resolved);
+      const observeStatus = async (): Promise<CiStatusResult> => {
+        const provider = await adapter.statusEvidence({ repository, oid: revision.oid });
+        enforceProviderBudget("status", provider.providerRequests);
 
-      const observations = [
-        ...provider.checks.map((check, index) => ({
-          kind: "check" as const,
-          state: check.state,
-          index,
-          value: check
-        })),
-        ...provider.runs.map((run, index) => ({
-          kind: "run" as const,
-          state: stateForRun(run),
-          index,
-          value: run
-        }))
-      ];
-      const overallState = aggregateState(observations.map((observation) => observation.state));
-      const retained = [...observations]
-        .sort((left, right) => {
-          const rank = CI_STATE_RANK[right.state] - CI_STATE_RANK[left.state];
-          if (rank !== 0) return rank;
-          if (left.kind !== right.kind) return left.kind === "check" ? -1 : 1;
-          return left.index - right.index;
-        })
-        .slice(0, MAX_CI_STATUS_SUMMARIES);
-      const checks = retained
-        .filter((observation): observation is Extract<(typeof retained)[number], { kind: "check" }> => observation.kind === "check")
-        .map((observation) => observation.value);
-      const runs = retained
-        .filter((observation): observation is Extract<(typeof retained)[number], { kind: "run" }> => observation.kind === "run")
-        .map((observation) => observation.value);
+        const observations = [
+          ...provider.checks.map((check, index) => ({
+            kind: "check" as const,
+            state: check.state,
+            index,
+            value: check
+          })),
+          ...provider.runs.map((run, index) => ({
+            kind: "run" as const,
+            state: stateForRun(run),
+            index,
+            value: run
+          }))
+        ];
+        const overallState = aggregateState(observations.map((observation) => observation.state));
+        const retained = [...observations]
+          .sort((left, right) => {
+            const rank = CI_STATE_RANK[right.state] - CI_STATE_RANK[left.state];
+            if (rank !== 0) return rank;
+            if (left.kind !== right.kind) return left.kind === "check" ? -1 : 1;
+            return left.index - right.index;
+          })
+          .slice(0, MAX_CI_STATUS_SUMMARIES);
+        const checks = retained
+          .filter((observation): observation is Extract<(typeof retained)[number], { kind: "check" }> => observation.kind === "check")
+          .map((observation) => observation.value);
+        const runs = retained
+          .filter((observation): observation is Extract<(typeof retained)[number], { kind: "run" }> => observation.kind === "run")
+          .map((observation) => observation.value);
 
-      const failureCandidates = provider.runs
-        .filter((run) => stateForRun(run) === "FAIL")
-        .map<CiFailureSummary>((run) => ({
-          runId: run.id,
-          jobId: null,
-          jobName: null,
-          stepName: null,
-          conclusion: run.conclusion,
-          url: run.url
-        }));
-      const failures = failureCandidates.slice(0, MAX_CI_STATUS_FAILURE_SUMMARIES);
-      const reasons: CiTruncationReason[] = [];
-      if (
-        provider.summaryLimitReached ||
-        observations.length > MAX_CI_STATUS_SUMMARIES ||
-        failureCandidates.length > MAX_CI_STATUS_FAILURE_SUMMARIES
+        const failureCandidates = provider.runs
+          .filter((run) => stateForRun(run) === "FAIL")
+          .map<CiFailureSummary>((run) => ({
+            runId: run.id,
+            jobId: null,
+            jobName: null,
+            stepName: null,
+            conclusion: run.conclusion,
+            url: run.url
+          }));
+        const failures = failureCandidates.slice(0, MAX_CI_STATUS_FAILURE_SUMMARIES);
+        const reasons: CiTruncationReason[] = [];
+        if (
+          provider.summaryLimitReached ||
+          observations.length > MAX_CI_STATUS_SUMMARIES ||
+          failureCandidates.length > MAX_CI_STATUS_FAILURE_SUMMARIES
+        ) {
+          reasons.push("SUMMARY_LIMIT");
+        }
+        if (provider.providerPageLimited) reasons.push("PROVIDER_PAGE_LIMIT");
+
+        return this.#finalizeStatus({
+          schemaVersion: 1,
+          workspaceId: resolved.workspaceId,
+          provider: "github",
+          repository,
+          revision,
+          state: overallState,
+          checks,
+          runs,
+          failures,
+          truncated: reasons.length > 0,
+          truncationReasons: reasons
+        });
+      };
+
+      const waitMs = parsed.waitMs ?? 0;
+      const waitStartedAt = this.#now();
+      let result = await observeStatus();
+      for (
+        let observationIndex = 1;
+        observationIndex < MAX_CI_STATUS_OBSERVATIONS && waitMs > 0 && isCiWaitingState(result.state);
+        observationIndex += 1
       ) {
-        reasons.push("SUMMARY_LIMIT");
+        const elapsed = Math.max(0, this.#now() - waitStartedAt);
+        if (elapsed >= waitMs) break;
+        const targetElapsed = Math.ceil(
+          (waitMs * observationIndex) / (MAX_CI_STATUS_OBSERVATIONS - 1)
+        );
+        const delay = Math.max(0, targetElapsed - elapsed);
+        if (delay > 0) await this.#sleep(delay);
+        result = await observeStatus();
       }
-      if (provider.providerPageLimited) reasons.push("PROVIDER_PAGE_LIMIT");
 
-      const result = this.#finalizeStatus({
-        schemaVersion: 1,
-        workspaceId: resolved.workspaceId,
-        provider: "github",
-        repository: publicRepository(resolved),
-        revision,
-        state: overallState,
-        checks,
-        runs,
-        failures,
-        truncated: reasons.length > 0,
-        truncationReasons: reasons
-      });
       await this.#success(operation, result.truncated, credentialSource);
       return result;
     } catch (error) {
@@ -688,6 +711,10 @@ function aggregateState(states: CiOverallState[]): CiOverallState {
   return states.reduce<CiOverallState>((highest, state) =>
     CI_STATE_RANK[state] > CI_STATE_RANK[highest] ? state : highest
   , "PASS");
+}
+
+function isCiWaitingState(state: CiOverallState): boolean {
+  return state === "PENDING" || state === "UNKNOWN";
 }
 
 function stateForRun(run: CiRunSummary): CiOverallState {

@@ -270,6 +270,7 @@ describe("SkillCatalog live discovery", () => {
       "Focused proof first",
       "`background: true`",
       "`process.status` with bounded `waitMs`",
+      "`ci.status(waitMs: 30_000)`",
       "Do not automatically cancel sibling verification",
       "final diff review",
       "CI failure evidence",
