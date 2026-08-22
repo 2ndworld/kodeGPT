@@ -12,12 +12,16 @@ const GITHUB_ACCEPT = "application/vnd.github+json";
 const GITHUB_USER_AGENT = "KodeGPT/0.1 Provider-GitHub-Read";
 const GITHUB_PR_NUMBER_MAX = 2_147_483_647;
 const GITHUB_PR_LIST_LIMIT_MAX = 50;
+const GITHUB_PR_FEEDBACK_LIMIT_MAX = 50;
+const GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES = 2048;
+const GITHUB_PR_FEEDBACK_PROVIDER_TEXT_MAX = 64 * 1024;
 const GITHUB_ISSUE_NUMBER_MAX = GITHUB_PR_NUMBER_MAX;
 const GITHUB_ISSUE_LIST_LIMIT_MAX = GITHUB_PR_LIST_LIMIT_MAX;
 const GITHUB_ISSUE_LABELS_MAX = 20;
 const GITHUB_ISSUE_ASSIGNEES_MAX = 20;
 const GITHUB_ISSUE_LABEL_NAME_MAX = 255;
 const REPOSITORY_COMPONENT = /^[A-Za-z0-9._-]{1,100}$/;
+const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const FIXED_HEADERS = Object.freeze({
   accept: GITHUB_ACCEPT,
@@ -49,6 +53,12 @@ const PrListInputSchema = z.object({
   limit: z.number().int().min(1).max(GITHUB_PR_LIST_LIMIT_MAX).default(30)
 }).strict();
 
+export const GitHubPrFeedbackInspectInputSchema = z.object({
+  repository: RepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  limit: z.number().int().min(1).max(GITHUB_PR_FEEDBACK_LIMIT_MAX).default(30)
+}).strict();
+
 const IssueInspectInputSchema = z.object({
   repository: RepositorySchema,
   number: z.number().int().min(1).max(GITHUB_ISSUE_NUMBER_MAX)
@@ -65,6 +75,15 @@ const GitHubTimestampSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\
 const GitHubLoginSchema = z.string().min(1).max(100);
 const GitHubBranchSchema = z.string().min(1).max(255);
 const GitHubTitleSchema = z.string().max(1024);
+const GitHubPathSchema = z.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+const GitHubReviewStateSchema = z.enum([
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "COMMENTED",
+  "DISMISSED",
+  "PENDING"
+]);
+const GitHubDiffSideSchema = z.enum(["LEFT", "RIGHT"]);
 
 const RawRepositorySchema = z.object({
   full_name: RepositorySchema,
@@ -98,6 +117,7 @@ const RawPrSummarySchema = z.object({
 });
 
 const RawPrInspectSchema = RawPrSummarySchema.extend({
+  head: z.object({ ref: GitHubBranchSchema, sha: z.string().regex(GIT_OBJECT_ID) }),
   merged: z.boolean(),
   closed_at: GitHubTimestampSchema.nullable(),
   merged_at: GitHubTimestampSchema.nullable()
@@ -122,6 +142,41 @@ const RawIssueSchema = z.object({
 
 const RawIssueListSchema = z.array(RawIssueSchema).max(GITHUB_ISSUE_LIST_LIMIT_MAX);
 
+const RawPrReviewSchema = z.object({
+  id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  user: z.object({ login: GitHubLoginSchema }).nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_PROVIDER_TEXT_MAX).nullable(),
+  state: GitHubReviewStateSchema,
+  html_url: GitHubUrlSchema,
+  commit_id: z.string().regex(GIT_OBJECT_ID).nullable(),
+  submitted_at: GitHubTimestampSchema.nullable()
+});
+
+const RawPrReviewListSchema = z.array(RawPrReviewSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX + 1);
+
+const RawPrReviewCommentSchema = z.object({
+  id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  pull_request_review_id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  user: z.object({ login: GitHubLoginSchema }).nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_PROVIDER_TEXT_MAX),
+  diff_hunk: z.string().max(GITHUB_PR_FEEDBACK_PROVIDER_TEXT_MAX),
+  path: GitHubPathSchema,
+  line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  original_line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  start_line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  original_start_line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  side: GitHubDiffSideSchema.nullable().optional(),
+  start_side: GitHubDiffSideSchema.nullable().optional(),
+  commit_id: z.string().regex(GIT_OBJECT_ID),
+  original_commit_id: z.string().regex(GIT_OBJECT_ID),
+  in_reply_to_id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  html_url: GitHubUrlSchema,
+  created_at: GitHubTimestampSchema,
+  updated_at: GitHubTimestampSchema
+});
+
+const RawPrReviewCommentListSchema = z.array(RawPrReviewCommentSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX + 1);
+
 const RepositoryInspectOutputSchema = z.object({
   repository: RepositorySchema,
   name: z.string().min(1).max(100),
@@ -145,6 +200,7 @@ const PrInspectOutputSchema = z.object({
   authorLogin: GitHubLoginSchema.nullable(),
   baseBranch: GitHubBranchSchema,
   headBranch: GitHubBranchSchema,
+  headOid: z.string().regex(GIT_OBJECT_ID),
   merged: z.boolean(),
   draft: z.boolean(),
   htmlUrl: GitHubUrlSchema,
@@ -152,6 +208,76 @@ const PrInspectOutputSchema = z.object({
   updatedAt: GitHubTimestampSchema,
   closedAt: GitHubTimestampSchema.nullable(),
   mergedAt: GitHubTimestampSchema.nullable()
+}).strict();
+
+export const GitHubPrFeedbackReviewSchema = z.object({
+  reviewId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  authorLogin: GitHubLoginSchema.nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES),
+  bodyTruncated: z.boolean(),
+  state: GitHubReviewStateSchema,
+  commitOid: z.string().regex(GIT_OBJECT_ID).nullable(),
+  htmlUrl: GitHubUrlSchema,
+  submittedAt: GitHubTimestampSchema.nullable()
+}).strict();
+
+export const GitHubPrFeedbackCommentSchema = z.object({
+  commentId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  reviewId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  authorLogin: GitHubLoginSchema.nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES),
+  bodyTruncated: z.boolean(),
+  diffHunk: z.string().max(GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES),
+  diffHunkTruncated: z.boolean(),
+  path: GitHubPathSchema,
+  line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  originalLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  startLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  originalStartLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  side: GitHubDiffSideSchema.nullable(),
+  startSide: GitHubDiffSideSchema.nullable(),
+  commitOid: z.string().regex(GIT_OBJECT_ID),
+  originalCommitOid: z.string().regex(GIT_OBJECT_ID),
+  inReplyToId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  htmlUrl: GitHubUrlSchema,
+  createdAt: GitHubTimestampSchema,
+  updatedAt: GitHubTimestampSchema
+}).strict();
+
+export const GitHubPrFeedbackReviewsResultSchema = z.object({
+  repository: RepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  items: z.array(GitHubPrFeedbackReviewSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX),
+  truncated: z.boolean()
+}).strict();
+
+export const GitHubPrFeedbackCommentsResultSchema = z.object({
+  repository: RepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  items: z.array(GitHubPrFeedbackCommentSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX),
+  truncated: z.boolean()
+}).strict();
+
+export const GitHubPrFeedbackThreadSchema = z.object({
+  rootCommentId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  path: GitHubPathSchema,
+  line: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  originalLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  startLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  originalStartLine: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
+  side: GitHubDiffSideSchema.nullable(),
+  startSide: GitHubDiffSideSchema.nullable(),
+  comments: z.array(GitHubPrFeedbackCommentSchema).min(1).max(GITHUB_PR_FEEDBACK_LIMIT_MAX)
+}).strict();
+
+export const GitHubPrFeedbackResultSchema = z.object({
+  repository: RepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  reviews: z.array(GitHubPrFeedbackReviewSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX),
+  threads: z.array(GitHubPrFeedbackThreadSchema).max(GITHUB_PR_FEEDBACK_LIMIT_MAX),
+  reviewListTruncated: z.boolean(),
+  commentListTruncated: z.boolean(),
+  changeRequestedReviewIds: z.array(z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(GITHUB_PR_FEEDBACK_LIMIT_MAX)
 }).strict();
 
 const PrListItemOutputSchema = z.object({
@@ -219,6 +345,10 @@ export type GitHubPrInspectInput = z.infer<typeof GitHubPrInspectInputSchema>;
 export type GitHubPrInspectResult = z.infer<typeof GitHubPrInspectResultSchema>;
 export type GitHubPrListInput = z.input<typeof GitHubPrListInputSchema>;
 export type GitHubPrListResult = z.infer<typeof GitHubPrListResultSchema>;
+export type GitHubPrFeedbackInspectInput = z.input<typeof GitHubPrFeedbackInspectInputSchema>;
+export type GitHubPrFeedbackResult = z.infer<typeof GitHubPrFeedbackResultSchema>;
+export type GitHubPrFeedbackReviewsResult = z.infer<typeof GitHubPrFeedbackReviewsResultSchema>;
+export type GitHubPrFeedbackCommentsResult = z.infer<typeof GitHubPrFeedbackCommentsResultSchema>;
 export type GitHubIssueInspectInput = z.infer<typeof GitHubIssueInspectInputSchema>;
 export type GitHubIssueInspectResult = z.infer<typeof GitHubIssueInspectResultSchema>;
 export type GitHubIssueListInput = z.input<typeof GitHubIssueListInputSchema>;
@@ -227,8 +357,8 @@ export type GitHubIssueListResult = z.infer<typeof GitHubIssueListResultSchema>;
 const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   adapterId: GITHUB_ADAPTER_ID,
   adapterContractVersion: GITHUB_ADAPTER_CONTRACT_VERSION,
-  schemaRevision: 2,
-  normalizerRevision: 2,
+  schemaRevision: 3,
+  normalizerRevision: 3,
   origin: GITHUB_API_ORIGIN,
   apiVersion: GITHUB_API_VERSION,
   accept: GITHUB_ACCEPT,
@@ -238,6 +368,8 @@ const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
     ["repository.inspect", "GET", "/repos/{owner}/{repo}"],
     ["pr.inspect", "GET", "/repos/{owner}/{repo}/pulls/{number}"],
     ["pr.list", "GET", "/repos/{owner}/{repo}/pulls", ["state", "per_page"]],
+    ["pr.feedback.reviews", "GET", "/repos/{owner}/{repo}/pulls/{number}/reviews", ["per_page"]],
+    ["pr.feedback.comments", "GET", "/repos/{owner}/{repo}/pulls/{number}/comments", ["per_page"]],
     ["issue.inspect", "GET", "/repos/{owner}/{repo}/issues/{number}"],
     ["issue.list", "GET", "/repos/{owner}/{repo}/issues", ["state", "per_page"]]
   ],
@@ -245,6 +377,8 @@ const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
     "github.repository.inspect",
     "github.pr.inspect",
     "github.pr.list",
+    "github.pr.feedback.reviews",
+    "github.pr.feedback.comments",
     "github.issue.inspect",
     "github.issue.list"
   ]
@@ -284,6 +418,17 @@ function encodePrList(input: unknown): ProviderEncodedRequest {
       state: parsed.state,
       per_page: parsed.limit
     }
+  };
+}
+
+function encodePrFeedbackList(input: unknown): ProviderEncodedRequest {
+  const parsed = GitHubPrFeedbackInspectInputSchema.parse(input);
+  return {
+    pathParameters: {
+      ...repositoryParts(parsed.repository),
+      number: String(parsed.number)
+    },
+    query: { per_page: parsed.limit + 1 }
   };
 }
 
@@ -346,6 +491,7 @@ function mapPrInspect(providerValue: unknown, semanticInput: unknown): unknown {
     authorLogin: raw.user?.login ?? null,
     baseBranch: raw.base.ref,
     headBranch: raw.head.ref,
+    headOid: raw.head.sha,
     merged: raw.merged,
     draft: raw.draft,
     htmlUrl: raw.html_url,
@@ -378,6 +524,75 @@ function mapPrList(providerValue: unknown, semanticInput: unknown): unknown {
     };
   });
   return { repository: input.repository, items };
+}
+
+function truncateUtf8(value: string): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(value, "utf8") <= GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES) {
+    return { text: value, truncated: false };
+  }
+  const bytes = Buffer.from(value, "utf8").subarray(0, GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES);
+  let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  while (Buffer.byteLength(text, "utf8") > GITHUB_PR_FEEDBACK_TEXT_MAX_BYTES) text = text.slice(0, -1);
+  return { text, truncated: true };
+}
+
+function mapPrFeedbackReviews(providerValue: unknown, semanticInput: unknown): unknown {
+  const input = GitHubPrFeedbackInspectInputSchema.parse(semanticInput);
+  const raw = RawPrReviewListSchema.parse(providerValue);
+  return {
+    repository: input.repository,
+    number: input.number,
+    items: raw.slice(0, input.limit).map((review) => {
+      const body = truncateUtf8(review.body ?? "");
+      return {
+        reviewId: review.id,
+        authorLogin: review.user?.login ?? null,
+        body: body.text,
+        bodyTruncated: body.truncated,
+        state: review.state,
+        commitOid: review.commit_id,
+        htmlUrl: review.html_url,
+        submittedAt: review.submitted_at
+      };
+    }),
+    truncated: raw.length > input.limit
+  };
+}
+
+function mapPrFeedbackComments(providerValue: unknown, semanticInput: unknown): unknown {
+  const input = GitHubPrFeedbackInspectInputSchema.parse(semanticInput);
+  const raw = RawPrReviewCommentListSchema.parse(providerValue);
+  return {
+    repository: input.repository,
+    number: input.number,
+    items: raw.slice(0, input.limit).map((comment) => {
+      const body = truncateUtf8(comment.body);
+      const diffHunk = truncateUtf8(comment.diff_hunk);
+      return {
+        commentId: comment.id,
+        reviewId: comment.pull_request_review_id ?? null,
+        authorLogin: comment.user?.login ?? null,
+        body: body.text,
+        bodyTruncated: body.truncated,
+        diffHunk: diffHunk.text,
+        diffHunkTruncated: diffHunk.truncated,
+        path: comment.path,
+        line: comment.line ?? null,
+        originalLine: comment.original_line ?? null,
+        startLine: comment.start_line ?? null,
+        originalStartLine: comment.original_start_line ?? null,
+        side: comment.side ?? null,
+        startSide: comment.start_side ?? null,
+        commitOid: comment.commit_id,
+        originalCommitOid: comment.original_commit_id,
+        inReplyToId: comment.in_reply_to_id ?? null,
+        htmlUrl: comment.html_url,
+        createdAt: comment.created_at,
+        updatedAt: comment.updated_at
+      };
+    }),
+    truncated: raw.length > input.limit
+  };
 }
 
 function mapIssueItem(raw: z.infer<typeof RawIssueSchema>) {
@@ -462,6 +677,26 @@ export const GITHUB_READ_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       encodeRequest: encodePrList
     },
     {
+      id: "pr.feedback.reviews",
+      method: "GET",
+      origin: GITHUB_API_ORIGIN,
+      pathTemplate: "/repos/{owner}/{repo}/pulls/{number}/reviews",
+      allowedQueryKeys: ["per_page"],
+      fixedHeaders: FIXED_HEADERS,
+      inputSchema: GitHubPrFeedbackInspectInputSchema,
+      encodeRequest: encodePrFeedbackList
+    },
+    {
+      id: "pr.feedback.comments",
+      method: "GET",
+      origin: GITHUB_API_ORIGIN,
+      pathTemplate: "/repos/{owner}/{repo}/pulls/{number}/comments",
+      allowedQueryKeys: ["per_page"],
+      fixedHeaders: FIXED_HEADERS,
+      inputSchema: GitHubPrFeedbackInspectInputSchema,
+      encodeRequest: encodePrFeedbackList
+    },
+    {
       id: "issue.inspect",
       method: "GET",
       origin: GITHUB_API_ORIGIN,
@@ -521,6 +756,32 @@ export const GITHUB_READ_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       maxProviderRequests: 1,
       retry: "none",
       auditFields: ["repository", "state", "limit"]
+    },
+    {
+      semanticCapabilityId: "github.pr.feedback.reviews",
+      adapterId: GITHUB_ADAPTER_ID,
+      adapterOperationId: "pr.feedback.reviews",
+      effect: "REMOTE_READ",
+      workspaceBinding: "NONE",
+      inputSchema: GitHubPrFeedbackInspectInputSchema,
+      outputSchema: GitHubPrFeedbackReviewsResultSchema,
+      mapOutput: mapPrFeedbackReviews,
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["repository", "number", "limit"]
+    },
+    {
+      semanticCapabilityId: "github.pr.feedback.comments",
+      adapterId: GITHUB_ADAPTER_ID,
+      adapterOperationId: "pr.feedback.comments",
+      effect: "REMOTE_READ",
+      workspaceBinding: "NONE",
+      inputSchema: GitHubPrFeedbackInspectInputSchema,
+      outputSchema: GitHubPrFeedbackCommentsResultSchema,
+      mapOutput: mapPrFeedbackComments,
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["repository", "number", "limit"]
     },
     {
       semanticCapabilityId: "github.issue.inspect",

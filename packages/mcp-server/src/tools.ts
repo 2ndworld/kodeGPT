@@ -29,6 +29,10 @@ import {
   GitHubIssueListResultSchema,
   GitHubPrCreateInputSchema,
   GitHubPrCreateResultSchema,
+  GitHubPrFeedbackInspectInputSchema,
+  GitHubPrFeedbackReplyInputSchema,
+  GitHubPrFeedbackReplyResultSchema,
+  GitHubPrFeedbackResultSchema,
   GitHubPrInspectInputSchema,
   GitHubPrInspectResultSchema,
   GitHubPrListInputSchema,
@@ -845,6 +849,34 @@ export function registerKodegptTools(
         consoleState.recordPullRequest(value);
         return value;
       })
+  );
+
+  server.registerTool(
+    "github.pr.feedback.inspect",
+    {
+      description: "Inspect bounded normalized GitHub pull-request reviews and review-comment threads through the admitted read-only provider.",
+      inputSchema: GitHubPrFeedbackInspectInputSchema,
+      outputSchema: GitHubPrFeedbackResultSchema,
+      annotations: REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubPrFeedbackResultSchema.parse(await context.github.prFeedbackInspect(input))
+      )
+  );
+
+  server.registerTool(
+    "github.pr.feedback.reply",
+    {
+      description: "Reply to one GitHub pull-request review comment only after exact expected-head preflight.",
+      inputSchema: GitHubPrFeedbackReplyInputSchema,
+      outputSchema: GitHubPrFeedbackReplyResultSchema,
+      annotations: REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS
+    },
+    async (input) =>
+      nativeCapabilityResult(async () =>
+        GitHubPrFeedbackReplyResultSchema.parse(await context.github.prFeedbackReply(input))
+      )
   );
 
   server.registerTool(

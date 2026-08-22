@@ -174,9 +174,9 @@ describe("full security acceptance invariants", () => {
   });
 
   it("ships only the intended typed trust, Git, bounded GitHub, preview, browser, and visual surface with no generic authority", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.24");
+    expect(MCP_SURFACE_VERSION).toBe("0.25");
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(names).toHaveLength(76);
+    expect(names).toHaveLength(78);
     expect(names.some((name) => name.startsWith("provider."))).toBe(false);
     expect(PRODUCTION_PROVIDER_MANIFESTS.map(({ adapterId }) => adapterId)).toEqual([
       "github.read.v1",
@@ -207,6 +207,8 @@ describe("full security acceptance invariants", () => {
       "git.push",
       "github.repository.inspect",
       "github.pr.create",
+      "github.pr.feedback.inspect",
+      "github.pr.feedback.reply",
       "github.pr.inspect",
       "github.pr.list",
       "github.pr.merge",
@@ -307,6 +309,7 @@ describe("full security acceptance invariants", () => {
     }
     for (const name of [
       "github.repository.inspect",
+      "github.pr.feedback.inspect",
       "github.pr.inspect",
       "github.pr.list",
       "github.issue.inspect",
@@ -315,6 +318,7 @@ describe("full security acceptance invariants", () => {
       expect(registrations.get(name)?.annotations).toEqual(REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS);
     }
     expect(registrations.get("github.pr.create")?.annotations).toEqual(REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS);
+    expect(registrations.get("github.pr.feedback.reply")?.annotations).toEqual(REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS);
     expect(registrations.get("github.pr.merge")?.annotations).toEqual(REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS);
   });
 });

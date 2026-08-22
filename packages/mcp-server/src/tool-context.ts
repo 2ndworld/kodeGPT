@@ -1,5 +1,5 @@
 import type { ArtifactReadResult, ArtifactStore } from "../../artifacts/src/index.js";
-import { searchPublicActions } from "@kodegpt/capabilities";
+import { CapabilityError, searchPublicActions } from "@kodegpt/capabilities";
 import type {
   CiCancelInput,
   CiDispatchInput,
@@ -577,7 +577,22 @@ export function createKodegptToolContext(options: {
     },
     github: {
       ...githubRead,
-      ...githubWrite
+      ...githubWrite,
+      prFeedbackReply: async (input) => {
+        const current = await githubRead.prInspect({ repository: input.repository, number: input.number });
+        if (current.headOid !== input.expectedHeadOid) {
+          throw new CapabilityError(
+            "PROVIDER_STATE_INVALID",
+            "GitHub pull request head does not match expectedHeadOid",
+            {
+              reason: "STALE_EXPECTED_STATE",
+              retryable: false,
+              suggestedAction: "refresh-state"
+            }
+          );
+        }
+        return githubWrite.prFeedbackReply(input);
+      }
     },
     skill: {
       list: (input) => skill.list(input),
@@ -641,6 +656,7 @@ function unavailableGitHubRead(): GitHubReadToolAdapter {
     repositoryInspect: () => unavailable("github.repository.inspect"),
     prInspect: () => unavailable("github.pr.inspect"),
     prList: () => unavailable("github.pr.list"),
+    prFeedbackInspect: () => unavailable("github.pr.feedback.inspect"),
     issueInspect: () => unavailable("github.issue.inspect"),
     issueList: () => unavailable("github.issue.list")
   };
@@ -649,7 +665,8 @@ function unavailableGitHubRead(): GitHubReadToolAdapter {
 function unavailableGitHubWrite(): GitHubWriteToolAdapter {
   return {
     prCreate: () => unavailable("github.pr.create"),
-    prMerge: () => unavailable("github.pr.merge")
+    prMerge: () => unavailable("github.pr.merge"),
+    prFeedbackReply: () => unavailable("github.pr.feedback.reply")
   };
 }
 

@@ -59,6 +59,8 @@ const LOCKED_SURFACE = [
   { name: "github.issue.inspect", required: ["repository", "number"] },
   { name: "github.issue.list", required: ["repository"] },
   { name: "github.pr.create", required: ["repository", "title", "headBranch", "baseBranch"] },
+  { name: "github.pr.feedback.inspect", required: ["repository", "number"] },
+  { name: "github.pr.feedback.reply", required: ["repository", "number", "commentId", "expectedHeadOid", "body"] },
   { name: "github.pr.inspect", required: ["repository", "number"] },
   { name: "github.pr.list", required: ["repository"] },
   { name: "github.pr.merge", required: ["repository", "number", "expectedHeadOid"] },
@@ -107,10 +109,10 @@ describe("KodeGPT MCP semantic surface", () => {
   });
 
   it("locks surface version and tool-name/required-field snapshot", () => {
-    expect(MCP_SURFACE_VERSION).toBe("0.24");
+    expect(MCP_SURFACE_VERSION).toBe("0.25");
     const surface = listSurfaceTools();
     expect(surface).toEqual(LOCKED_SURFACE);
-    expect(surface).toHaveLength(76);
+    expect(surface).toHaveLength(78);
     expect(surface.filter(({ name }) => name.startsWith("ci.")).map(({ name }) => name)).toEqual([
       "ci.failure",
       "ci.rerun",
@@ -125,6 +127,8 @@ describe("KodeGPT MCP semantic surface", () => {
       "github.issue.inspect",
       "github.issue.list",
       "github.pr.create",
+      "github.pr.feedback.inspect",
+      "github.pr.feedback.reply",
       "github.pr.inspect",
       "github.pr.list",
       "github.pr.merge",

@@ -20,6 +20,7 @@ const GITHUB_ACCEPT = "application/vnd.github+json";
 const GITHUB_USER_AGENT = "KodeGPT/0.1 Provider-GitHub-Write";
 const GITHUB_PR_NUMBER_MAX = 2_147_483_647;
 const GITHUB_PR_BODY_MAX_BYTES = 16 * 1024;
+const GITHUB_PR_FEEDBACK_REPLY_MAX_BYTES = 8 * 1024;
 const GITHUB_MERGE_MESSAGE_MAX = 4096;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -43,6 +44,13 @@ const GitHubPrBodySchema = z.string()
     "body exceeds 16 KiB"
   );
 
+const GitHubPrFeedbackReplyBodySchema = z.string().min(1)
+  .refine((value) => !value.includes("\0"), "body contains NUL")
+  .refine(
+    (value) => Buffer.byteLength(value, "utf8") <= GITHUB_PR_FEEDBACK_REPLY_MAX_BYTES,
+    "body exceeds 8 KiB"
+  );
+
 export const GitHubPrCreateInputSchema = z.object({
   repository: GitHubRepositorySchema,
   title: GitHubTitleValueSchema.min(1),
@@ -55,6 +63,14 @@ export const GitHubPrMergeInputSchema = z.object({
   repository: GitHubRepositorySchema,
   number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
   expectedHeadOid: z.string().regex(GIT_OBJECT_ID)
+}).strict();
+
+export const GitHubPrFeedbackReplyInputSchema = z.object({
+  repository: GitHubRepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  commentId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  expectedHeadOid: z.string().regex(GIT_OBJECT_ID),
+  body: GitHubPrFeedbackReplyBodySchema
 }).strict();
 
 const RawPrCreateSchema = z.object({
@@ -79,6 +95,16 @@ const RawPrMergeSchema = z.object({
   message: z.string().max(GITHUB_MERGE_MESSAGE_MAX)
 });
 
+const RawPrFeedbackReplySchema = z.object({
+  id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  pull_request_review_id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  user: z.object({ login: GitHubLoginValueSchema }).nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_REPLY_MAX_BYTES),
+  in_reply_to_id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  html_url: GitHubUrlValueSchema,
+  created_at: GitHubTimestampValueSchema
+});
+
 export const GitHubPrCreateResultSchema = z.object({
   repository: GitHubRepositorySchema,
   number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
@@ -100,16 +126,29 @@ export const GitHubPrMergeResultSchema = z.object({
   mergeCommitOid: z.string().regex(GIT_OBJECT_ID)
 }).strict();
 
+export const GitHubPrFeedbackReplyResultSchema = z.object({
+  repository: GitHubRepositorySchema,
+  number: z.number().int().min(1).max(GITHUB_PR_NUMBER_MAX),
+  commentId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  rootCommentId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  authorLogin: GitHubLoginValueSchema.nullable(),
+  body: z.string().max(GITHUB_PR_FEEDBACK_REPLY_MAX_BYTES),
+  htmlUrl: GitHubUrlValueSchema,
+  createdAt: GitHubTimestampValueSchema
+}).strict();
+
 export type GitHubPrCreateInput = z.infer<typeof GitHubPrCreateInputSchema>;
 export type GitHubPrCreateResult = z.infer<typeof GitHubPrCreateResultSchema>;
 export type GitHubPrMergeInput = z.infer<typeof GitHubPrMergeInputSchema>;
 export type GitHubPrMergeResult = z.infer<typeof GitHubPrMergeResultSchema>;
+export type GitHubPrFeedbackReplyInput = z.infer<typeof GitHubPrFeedbackReplyInputSchema>;
+export type GitHubPrFeedbackReplyResult = z.infer<typeof GitHubPrFeedbackReplyResultSchema>;
 
 const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   adapterId: GITHUB_WRITE_ADAPTER_ID,
   adapterContractVersion: GITHUB_WRITE_ADAPTER_CONTRACT_VERSION,
-  schemaRevision: 1,
-  normalizerRevision: 1,
+  schemaRevision: 2,
+  normalizerRevision: 2,
   origin: GITHUB_API_ORIGIN,
   apiVersion: GITHUB_API_VERSION,
   accept: GITHUB_ACCEPT,
@@ -117,9 +156,10 @@ const IMPLEMENTATION_DESCRIPTOR = Object.freeze({
   credential: { kind: "external-helper", credentialKind: "bearer", argv: ["auth", "token"] },
   operations: [
     ["pr.create", "POST", "/repos/{owner}/{repo}/pulls"],
-    ["pr.merge", "PUT", "/repos/{owner}/{repo}/pulls/{number}/merge"]
+    ["pr.merge", "PUT", "/repos/{owner}/{repo}/pulls/{number}/merge"],
+    ["pr.feedback.reply", "POST", "/repos/{owner}/{repo}/pulls/{number}/comments/{commentId}/replies"]
   ],
-  semantics: ["github.pr.create", "github.pr.merge"]
+  semantics: ["github.pr.create", "github.pr.merge", "github.pr.feedback.reply"]
 });
 
 const IMPLEMENTATION_DIGEST = createHash("sha256")
@@ -156,6 +196,18 @@ function encodePrMerge(input: unknown): ProviderEncodedRequest {
       sha: parsed.expectedHeadOid,
       merge_method: "merge"
     }
+  };
+}
+
+function encodePrFeedbackReply(input: unknown): ProviderEncodedRequest {
+  const parsed = GitHubPrFeedbackReplyInputSchema.parse(input);
+  return {
+    pathParameters: {
+      ...repositoryParts(parsed.repository),
+      number: String(parsed.number),
+      commentId: String(parsed.commentId)
+    },
+    body: { body: parsed.body.replace(/\r\n?/g, "\n") }
   };
 }
 
@@ -201,6 +253,24 @@ function mapPrMerge(providerValue: unknown, semanticInput: unknown): unknown {
   };
 }
 
+function mapPrFeedbackReply(providerValue: unknown, semanticInput: unknown): unknown {
+  const input = GitHubPrFeedbackReplyInputSchema.parse(semanticInput);
+  const raw = RawPrFeedbackReplySchema.parse(providerValue);
+  if (raw.in_reply_to_id !== input.commentId || raw.body !== input.body.replace(/\r\n?/g, "\n")) {
+    throw new Error("GitHub review reply identity mismatch");
+  }
+  return {
+    repository: input.repository,
+    number: input.number,
+    commentId: raw.id,
+    rootCommentId: raw.in_reply_to_id,
+    authorLogin: raw.user?.login ?? null,
+    body: raw.body,
+    htmlUrl: raw.html_url,
+    createdAt: raw.created_at
+  };
+}
+
 export const GITHUB_WRITE_PROVIDER_ADAPTER_ID = GITHUB_WRITE_ADAPTER_ID;
 
 export const GITHUB_WRITE_PROVIDER_MANIFEST: ProviderAdapterManifest = {
@@ -239,6 +309,16 @@ export const GITHUB_WRITE_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       fixedHeaders: FIXED_HEADERS,
       inputSchema: GitHubPrMergeInputSchema,
       encodeRequest: encodePrMerge
+    },
+    {
+      id: "pr.feedback.reply",
+      method: "POST",
+      origin: GITHUB_API_ORIGIN,
+      pathTemplate: "/repos/{owner}/{repo}/pulls/{number}/comments/{commentId}/replies",
+      allowedQueryKeys: [],
+      fixedHeaders: FIXED_HEADERS,
+      inputSchema: GitHubPrFeedbackReplyInputSchema,
+      encodeRequest: encodePrFeedbackReply
     }
   ],
   mappings: [
@@ -267,6 +347,19 @@ export const GITHUB_WRITE_PROVIDER_MANIFEST: ProviderAdapterManifest = {
       maxProviderRequests: 1,
       retry: "none",
       auditFields: ["repository", "number", "expectedHeadOid"]
+    },
+    {
+      semanticCapabilityId: "github.pr.feedback.reply",
+      adapterId: GITHUB_WRITE_ADAPTER_ID,
+      adapterOperationId: "pr.feedback.reply",
+      effect: "REMOTE_MUTATION",
+      workspaceBinding: "NONE",
+      inputSchema: GitHubPrFeedbackReplyInputSchema,
+      outputSchema: GitHubPrFeedbackReplyResultSchema,
+      mapOutput: mapPrFeedbackReply,
+      maxProviderRequests: 1,
+      retry: "none",
+      auditFields: ["repository", "number", "commentId", "expectedHeadOid"]
     }
   ]
 };

@@ -19,6 +19,8 @@ export {
   GitHubPrInspectInputSchema,
   GitHubPrInspectResultSchema,
   GitHubPrListInputSchema,
+  GitHubPrFeedbackInspectInputSchema,
+  GitHubPrFeedbackResultSchema,
   GitHubPrListResultSchema,
   GitHubIssueInspectInputSchema,
   GitHubIssueInspectResultSchema,
@@ -32,6 +34,8 @@ export type {
   GitHubPrInspectResult,
   GitHubPrListInput,
   GitHubPrListResult,
+  GitHubPrFeedbackInspectInput,
+  GitHubPrFeedbackResult,
   GitHubIssueInspectInput,
   GitHubIssueInspectResult,
   GitHubIssueListInput,
@@ -40,12 +44,16 @@ export type {
 export {
   GitHubPrCreateInputSchema,
   GitHubPrCreateResultSchema,
+  GitHubPrFeedbackReplyInputSchema,
+  GitHubPrFeedbackReplyResultSchema,
   GitHubPrMergeInputSchema,
   GitHubPrMergeResultSchema
 } from "./github-write.js";
 export type {
   GitHubPrCreateInput,
   GitHubPrCreateResult,
+  GitHubPrFeedbackReplyInput,
+  GitHubPrFeedbackReplyResult,
   GitHubPrMergeInput,
   GitHubPrMergeResult
 } from "./github-write.js";

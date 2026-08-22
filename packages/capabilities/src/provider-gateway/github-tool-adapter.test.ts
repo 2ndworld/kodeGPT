@@ -34,6 +34,7 @@ const prValue = {
   authorLogin: "2ndworld",
   baseBranch: "main",
   headBranch: "feat/skill-capability-resolution-v2",
+  headOid: "a".repeat(40),
   merged: true,
   draft: false,
   htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20",
@@ -57,6 +58,96 @@ const prListValue = {
     createdAt: "2026-08-17T00:00:00Z",
     updatedAt: "2026-08-17T01:00:00Z"
   }]
+};
+
+const feedbackReviewsValue = {
+  repository: "2ndworld/kodeGPT",
+  number: 20,
+  items: [{
+    reviewId: 101,
+    authorLogin: "reviewer",
+    body: "Please address these comments.",
+    bodyTruncated: false,
+    state: "CHANGES_REQUESTED",
+    commitOid: "a".repeat(40),
+    htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#pullrequestreview-101",
+    submittedAt: "2026-08-17T00:30:00Z"
+  }],
+  truncated: false
+};
+
+const feedbackCommentsValue = {
+  repository: "2ndworld/kodeGPT",
+  number: 20,
+  items: [
+    {
+      commentId: 3001,
+      reviewId: 101,
+      authorLogin: "reviewer",
+      body: "Second thread.",
+      bodyTruncated: false,
+      diffHunk: "@@ -30 +30 @@",
+      diffHunkTruncated: false,
+      path: "src/second.ts",
+      line: 30,
+      originalLine: 30,
+      startLine: null,
+      originalStartLine: null,
+      side: "RIGHT",
+      startSide: null,
+      commitOid: "a".repeat(40),
+      originalCommitOid: "9".repeat(40),
+      inReplyToId: null,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#discussion_r3001",
+      createdAt: "2026-08-17T00:32:00Z",
+      updatedAt: "2026-08-17T00:32:00Z"
+    },
+    {
+      commentId: 2001,
+      reviewId: 101,
+      authorLogin: "reviewer",
+      body: "Root comment.",
+      bodyTruncated: false,
+      diffHunk: "@@ -10 +10 @@",
+      diffHunkTruncated: false,
+      path: "src/first.ts",
+      line: 10,
+      originalLine: 10,
+      startLine: null,
+      originalStartLine: null,
+      side: "RIGHT",
+      startSide: null,
+      commitOid: "a".repeat(40),
+      originalCommitOid: "9".repeat(40),
+      inReplyToId: null,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#discussion_r2001",
+      createdAt: "2026-08-17T00:31:00Z",
+      updatedAt: "2026-08-17T00:31:00Z"
+    },
+    {
+      commentId: 2002,
+      reviewId: 101,
+      authorLogin: "2ndworld",
+      body: "Addressed.",
+      bodyTruncated: false,
+      diffHunk: "@@ -10 +10 @@",
+      diffHunkTruncated: false,
+      path: "src/first.ts",
+      line: 10,
+      originalLine: 10,
+      startLine: null,
+      originalStartLine: null,
+      side: "RIGHT",
+      startSide: null,
+      commitOid: "a".repeat(40),
+      originalCommitOid: "9".repeat(40),
+      inReplyToId: 2001,
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#discussion_r2002",
+      createdAt: "2026-08-17T00:33:00Z",
+      updatedAt: "2026-08-17T00:33:00Z"
+    }
+  ],
+  truncated: false
 };
 
 const issueValue = {
@@ -134,6 +225,7 @@ function requireFactory(): (runtime: unknown) => {
   repositoryInspect(input: unknown): Promise<unknown>;
   prInspect(input: unknown): Promise<unknown>;
   prList(input: unknown): Promise<unknown>;
+  prFeedbackInspect(input: unknown): Promise<unknown>;
   issueInspect(input: unknown): Promise<unknown>;
   issueList(input: unknown): Promise<unknown>;
 } {
@@ -143,6 +235,7 @@ function requireFactory(): (runtime: unknown) => {
     repositoryInspect(input: unknown): Promise<unknown>;
     prInspect(input: unknown): Promise<unknown>;
     prList(input: unknown): Promise<unknown>;
+    prFeedbackInspect(input: unknown): Promise<unknown>;
     issueInspect(input: unknown): Promise<unknown>;
     issueList(input: unknown): Promise<unknown>;
   };
@@ -184,6 +277,56 @@ describe("GitHubReadToolAdapter", () => {
       providerInstanceId: PROVIDER_ID,
       input: { repository: "2ndworld/kodeGPT" }
     });
+  });
+
+  it("composes review feedback through one selected provider and groups stable root threads", async () => {
+    const fx = runtimeFixture([providerRecord()], {
+      "github.pr.feedback.reviews": feedbackReviewsValue,
+      "github.pr.feedback.comments": feedbackCommentsValue
+    });
+    const adapter = requireFactory()(fx.runtime);
+
+    await expect(adapter.prFeedbackInspect({
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      limit: 5
+    })).resolves.toEqual({
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      reviews: feedbackReviewsValue.items,
+      threads: [
+        {
+          rootCommentId: 2001,
+          path: "src/first.ts",
+          line: 10,
+          originalLine: 10,
+          startLine: null,
+          originalStartLine: null,
+          side: "RIGHT",
+          startSide: null,
+          comments: [feedbackCommentsValue.items[1], feedbackCommentsValue.items[2]]
+        },
+        {
+          rootCommentId: 3001,
+          path: "src/second.ts",
+          line: 30,
+          originalLine: 30,
+          startLine: null,
+          originalStartLine: null,
+          side: "RIGHT",
+          startSide: null,
+          comments: [feedbackCommentsValue.items[0]]
+        }
+      ],
+      reviewListTruncated: false,
+      commentListTruncated: false,
+      changeRequestedReviewIds: [101]
+    });
+    expect(fx.executions.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
+      "github.pr.feedback.reviews",
+      "github.pr.feedback.comments"
+    ]);
+    expect(fx.executions.every(({ providerInstanceId }) => providerInstanceId === PROVIDER_ID)).toBe(true);
   });
 
   it("fails closed when github.read.v1 is not admitted", async () => {

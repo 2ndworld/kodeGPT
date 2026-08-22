@@ -40,7 +40,18 @@ describe("public action search", () => {
 
   it("can return the complete current public catalog when every action family matches", () => {
     const allFamilies = "artifact browser visual ci code console context file git github process preview profile skill system trust verify workspace";
-    expect(searchPublicActions(allFamilies, { limit: 76 })).toHaveLength(76);
+    expect(searchPublicActions(allFamilies, { limit: 78 })).toHaveLength(78);
+  });
+
+  it("finds GitHub review feedback inspect and guarded reply from review intent", () => {
+    expect(
+      searchPublicActions("inspect PR review comments and requested changes", { limit: 5 }).map(
+        (match) => match.action.id
+      )
+    ).toContain("github.pr.feedback.inspect");
+    expect(
+      searchPublicActions("reply review comment", { limit: 5 }).map((match) => match.action.id)
+    ).toContain("github.pr.feedback.reply");
   });
 
   it("returns bounded immutable scoring evidence", () => {

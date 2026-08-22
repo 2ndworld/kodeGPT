@@ -57,6 +57,8 @@ export const PUBLIC_ACTION_IDS = Object.freeze([
   "github.issue.inspect",
   "github.issue.list",
   "github.pr.create",
+  "github.pr.feedback.inspect",
+  "github.pr.feedback.reply",
   "github.pr.inspect",
   "github.pr.list",
   "github.pr.merge",
@@ -522,6 +524,22 @@ const DEFINITIONS: Readonly<Record<PublicActionId, PublicActionDefinition>> = Ob
     "integration",
     "repository",
     ["repository", "title", "headBranch", "baseBranch"]
+  ),
+  "github.pr.feedback.inspect": define(
+    "Inspect bounded normalized GitHub pull-request review feedback and review-comment threads.",
+    ["inspect review threads", "pr review comments", "requested changes", "review feedback"],
+    ["feedback", "github", "pull-request", "remote", "review"],
+    "integration",
+    "repository",
+    ["repository", "number"]
+  ),
+  "github.pr.feedback.reply": define(
+    "Reply to one GitHub pull-request review-comment thread with an exact expected-head guard.",
+    ["reply review comment", "reply review thread", "respond to pr feedback"],
+    ["feedback", "github", "mutation", "pull-request", "remote", "review"],
+    "integration",
+    "repository",
+    ["repository", "number", "commentId", "expectedHeadOid", "body"]
   ),
   "github.pr.inspect": define(
     "Inspect one bounded GitHub pull request through the typed GitHub read surface.",

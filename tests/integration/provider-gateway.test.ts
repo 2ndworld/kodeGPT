@@ -251,21 +251,26 @@ describe("Provider Gateway conformance boundary", () => {
       "github.repository.inspect",
       "github.pr.inspect",
       "github.pr.list",
+      "github.pr.feedback.reviews",
+      "github.pr.feedback.comments",
       "github.issue.inspect",
       "github.issue.list"
     ]);
     expect(PRODUCTION_PROVIDER_MANIFESTS[1]?.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.pr.create",
-      "github.pr.merge"
+      "github.pr.merge",
+      "github.pr.feedback.reply"
     ]);
     const names = listSurfaceTools().map(({ name }) => name);
-    expect(MCP_SURFACE_VERSION).toBe("0.24");
-    expect(names).toHaveLength(76);
+    expect(MCP_SURFACE_VERSION).toBe("0.25");
+    expect(names).toHaveLength(78);
     expect(names).toContain("system.discover");
     expect(names.filter((name) => name.startsWith("github."))).toEqual([
       "github.issue.inspect",
       "github.issue.list",
       "github.pr.create",
+      "github.pr.feedback.inspect",
+      "github.pr.feedback.reply",
       "github.pr.inspect",
       "github.pr.list",
       "github.pr.merge",

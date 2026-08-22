@@ -42,7 +42,7 @@ function rawCreatedPr() {
 }
 
 describe("github.write.v1", () => {
-  it("defines a separate static mutation adapter with exactly create and merge", () => {
+  it("defines a separate static mutation adapter with create, guarded merge, and review reply", () => {
     expect(GITHUB_WRITE_PROVIDER_ADAPTER_ID).toBe("github.write.v1");
     expect(GITHUB_WRITE_PROVIDER_MANIFEST.adapterId).toBe("github.write.v1");
     expect(GITHUB_WRITE_PROVIDER_MANIFEST.inventoryMode).toBe("STATIC");
@@ -51,10 +51,15 @@ describe("github.write.v1", () => {
       origins: ["https://api.github.com"],
       redirect: null
     });
-    expect(GITHUB_WRITE_PROVIDER_MANIFEST.operations.map(({ id }) => id)).toEqual(["pr.create", "pr.merge"]);
+    expect(GITHUB_WRITE_PROVIDER_MANIFEST.operations.map(({ id }) => id)).toEqual([
+      "pr.create",
+      "pr.merge",
+      "pr.feedback.reply"
+    ]);
     expect(GITHUB_WRITE_PROVIDER_MANIFEST.mappings.map(({ semanticCapabilityId }) => semanticCapabilityId)).toEqual([
       "github.pr.create",
-      "github.pr.merge"
+      "github.pr.merge",
+      "github.pr.feedback.reply"
     ]);
     for (const item of GITHUB_WRITE_PROVIDER_MANIFEST.mappings) {
       expect(item.effect).toBe("REMOTE_MUTATION");

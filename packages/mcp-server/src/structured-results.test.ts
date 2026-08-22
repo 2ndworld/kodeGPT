@@ -30,6 +30,10 @@ import {
   GitHubIssueListResultSchema,
   GitHubPrCreateInputSchema,
   GitHubPrCreateResultSchema,
+  GitHubPrFeedbackInspectInputSchema,
+  GitHubPrFeedbackReplyInputSchema,
+  GitHubPrFeedbackReplyResultSchema,
+  GitHubPrFeedbackResultSchema,
   GitHubPrInspectInputSchema,
   GitHubPrInspectResultSchema,
   GitHubPrListInputSchema,
@@ -473,6 +477,8 @@ function makeContext(): KodegptToolContext {
     github: {
       repositoryInspect: async () => ({} as never),
       prCreate: async () => ({} as never),
+      prFeedbackInspect: async () => ({} as never),
+      prFeedbackReply: async () => ({} as never),
       prInspect: async () => ({} as never),
       prList: async () => ({} as never),
       prMerge: async () => ({} as never),
@@ -718,7 +724,7 @@ describe("structured MCP tool results", () => {
     }
   });
 
-  it("registers exactly five typed GitHub reads with closed schemas and normalized structured results", async () => {
+  it("registers the bounded typed GitHub surface with closed schemas and normalized structured results", async () => {
     const handlers = new Map<string, CapturedHandler>();
     const definitions = new Map<string, Record<string, unknown>>();
     const repositoryResult = {
@@ -743,6 +749,7 @@ describe("structured MCP tool results", () => {
       authorLogin: "2ndworld",
       baseBranch: "main",
       headBranch: "feat/skill-capability-resolution-v2",
+      headOid: "a".repeat(40),
       merged: true,
       draft: false,
       htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20",
@@ -785,6 +792,65 @@ describe("structured MCP tool results", () => {
       merged: true as const,
       mergeCommitOid: "b".repeat(40)
     };
+    const feedbackInspectResult = {
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      reviews: [{
+        reviewId: 101,
+        authorLogin: "reviewer",
+        body: "Please tighten the guard.",
+        bodyTruncated: false,
+        state: "CHANGES_REQUESTED" as const,
+        commitOid: "a".repeat(40),
+        htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#pullrequestreview-101",
+        submittedAt: "2026-08-17T00:30:00Z"
+      }],
+      threads: [{
+        rootCommentId: 201,
+        path: "src/main.ts",
+        line: 12,
+        originalLine: 12,
+        startLine: null,
+        originalStartLine: null,
+        side: "RIGHT" as const,
+        startSide: null,
+        comments: [{
+          commentId: 201,
+          reviewId: 101,
+          authorLogin: "reviewer",
+          body: "Please tighten the guard.",
+          bodyTruncated: false,
+          diffHunk: "@@ -10,3 +10,3 @@",
+          diffHunkTruncated: false,
+          path: "src/main.ts",
+          line: 12,
+          originalLine: 12,
+          startLine: null,
+          originalStartLine: null,
+          side: "RIGHT" as const,
+          startSide: null,
+          commitOid: "a".repeat(40),
+          originalCommitOid: "9".repeat(40),
+          inReplyToId: null,
+          htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#discussion_r201",
+          createdAt: "2026-08-17T00:31:00Z",
+          updatedAt: "2026-08-17T00:31:00Z"
+        }]
+      }],
+      reviewListTruncated: false,
+      commentListTruncated: false,
+      changeRequestedReviewIds: [101]
+    };
+    const feedbackReplyResult = {
+      repository: "2ndworld/kodeGPT",
+      number: 20,
+      commentId: 202,
+      rootCommentId: 201,
+      authorLogin: "2ndworld",
+      body: "Addressed with the exact-head guard.",
+      htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/20#discussion_r202",
+      createdAt: "2026-08-17T00:40:00Z"
+    };
     const issueItem = {
       number: 1,
       title: "Example issue",
@@ -804,6 +870,8 @@ describe("structured MCP tool results", () => {
       github: {
         repositoryInspect: async () => repositoryResult,
         prCreate: async () => prCreateResult,
+        prFeedbackInspect: async () => feedbackInspectResult,
+        prFeedbackReply: async () => feedbackReplyResult,
         prInspect: async () => prInspectResult,
         prList: async () => prListResult,
         prMerge: async () => prMergeResult,
@@ -824,6 +892,8 @@ describe("structured MCP tool results", () => {
     const specs = [
       ["github.repository.inspect", GitHubRepositoryInspectInputSchema, GitHubRepositoryInspectResultSchema, { repository: "2ndworld/kodeGPT" }, repositoryResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
       ["github.pr.create", GitHubPrCreateInputSchema, GitHubPrCreateResultSchema, { repository: "2ndworld/kodeGPT", title: "feat: bounded write", headBranch: "feat/bounded-write", baseBranch: "main" }, prCreateResult, REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS],
+      ["github.pr.feedback.inspect", GitHubPrFeedbackInspectInputSchema, GitHubPrFeedbackResultSchema, { repository: "2ndworld/kodeGPT", number: 20, limit: 5 }, feedbackInspectResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
+      ["github.pr.feedback.reply", GitHubPrFeedbackReplyInputSchema, GitHubPrFeedbackReplyResultSchema, { repository: "2ndworld/kodeGPT", number: 20, commentId: 201, expectedHeadOid: "a".repeat(40), body: "Addressed with the exact-head guard." }, feedbackReplyResult, REMOTE_GITHUB_CREATE_TOOL_ANNOTATIONS],
       ["github.pr.inspect", GitHubPrInspectInputSchema, GitHubPrInspectResultSchema, { repository: "2ndworld/kodeGPT", number: 20 }, prInspectResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
       ["github.pr.list", GitHubPrListInputSchema, GitHubPrListResultSchema, { repository: "2ndworld/kodeGPT", state: "closed", limit: 5 }, prListResult, REMOTE_GITHUB_READ_ONLY_TOOL_ANNOTATIONS],
       ["github.pr.merge", GitHubPrMergeInputSchema, GitHubPrMergeResultSchema, { repository: "2ndworld/kodeGPT", number: 23, expectedHeadOid: "a".repeat(40) }, prMergeResult, REMOTE_GITHUB_MERGE_TOOL_ANNOTATIONS],

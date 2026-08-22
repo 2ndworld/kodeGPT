@@ -23,6 +23,8 @@ const scenarios: readonly Scenario[] = [
   { query: "compare visual evidence", expected: ["visual.compare"] },
   { query: "create a pull request", expected: ["github.pr.create"] },
   { query: "inspect pull request", expected: ["github.pr.inspect"] },
+  { query: "inspect PR review comments", expected: ["github.pr.feedback.inspect"] },
+  { query: "reply review comment", expected: ["github.pr.feedback.reply"] },
   { query: "why did CI fail", expected: ["ci.failure"] },
   { query: "rerun the failed CI workflow", expected: ["ci.rerun"] },
   { query: "continue the work from the previous chat", expected: ["context.build"] },

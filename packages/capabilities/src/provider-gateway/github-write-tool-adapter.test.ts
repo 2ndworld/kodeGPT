@@ -33,6 +33,17 @@ const mergeValue = {
   mergeCommitOid: "b".repeat(40)
 };
 
+const feedbackReplyValue = {
+  repository: "2ndworld/kodeGPT",
+  number: 23,
+  commentId: 2002,
+  rootCommentId: 2001,
+  authorLogin: "2ndworld",
+  body: "Addressed in the current head.",
+  htmlUrl: "https://github.com/2ndworld/kodeGPT/pull/23#discussion_r2002",
+  createdAt: "2026-08-17T06:35:00Z"
+};
+
 function providerRecord(overrides: Partial<ProviderRegistryRecord> = {}): ProviderRegistryRecord {
   return {
     schemaVersion: 1,
@@ -68,7 +79,11 @@ function runtimeFixture(records: ProviderRegistryRecord[]) {
           return {
             semanticCapabilityId: input.semanticCapabilityId,
             providerInstanceId: input.providerInstanceId,
-            value: input.semanticCapabilityId === "github.pr.create" ? createValue : mergeValue,
+            value: input.semanticCapabilityId === "github.pr.create"
+              ? createValue
+              : input.semanticCapabilityId === "github.pr.feedback.reply"
+                ? feedbackReplyValue
+                : mergeValue,
             truncated: false,
             truncationReasons: []
           };
@@ -85,12 +100,14 @@ function factory(): unknown {
 function requireFactory(): (runtime: unknown) => {
   prCreate(input: unknown): Promise<unknown>;
   prMerge(input: unknown): Promise<unknown>;
+  prFeedbackReply(input: unknown): Promise<unknown>;
 } {
   const value = factory();
   expect(value).toBeTypeOf("function");
   return value as (runtime: unknown) => {
     prCreate(input: unknown): Promise<unknown>;
     prMerge(input: unknown): Promise<unknown>;
+    prFeedbackReply(input: unknown): Promise<unknown>;
   };
 }
 
@@ -101,7 +118,7 @@ describe("GitHubWriteToolAdapter", () => {
     expect((providerGateway as Record<string, unknown>).GITHUB_WRITE_PROVIDER_MANIFEST).toBeUndefined();
   });
 
-  it("routes exactly create and guarded merge through one enabled github.write.v1 provider", async () => {
+  it("routes create, guarded merge, and review reply through one enabled github.write.v1 provider", async () => {
     const fx = runtimeFixture([providerRecord()]);
     const adapter = requireFactory()(fx.runtime);
 
@@ -116,6 +133,13 @@ describe("GitHubWriteToolAdapter", () => {
       number: 23,
       expectedHeadOid: OID
     })).resolves.toEqual(mergeValue);
+    await expect(adapter.prFeedbackReply({
+      repository: "2ndworld/kodeGPT",
+      number: 23,
+      commentId: 2001,
+      expectedHeadOid: OID,
+      body: "Addressed in the current head."
+    })).resolves.toEqual(feedbackReplyValue);
 
     expect(fx.executions).toEqual([
       {
@@ -132,6 +156,17 @@ describe("GitHubWriteToolAdapter", () => {
         semanticCapabilityId: "github.pr.merge",
         providerInstanceId: PROVIDER_ID,
         input: { repository: "2ndworld/kodeGPT", number: 23, expectedHeadOid: OID }
+      },
+      {
+        semanticCapabilityId: "github.pr.feedback.reply",
+        providerInstanceId: PROVIDER_ID,
+        input: {
+          repository: "2ndworld/kodeGPT",
+          number: 23,
+          commentId: 2001,
+          expectedHeadOid: OID,
+          body: "Addressed in the current head."
+        }
       }
     ]);
   });
