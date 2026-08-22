@@ -455,6 +455,91 @@ describe("context.build", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("falls back to bounded focus spans for class methods and anonymous test callbacks", async () => {
+    const target = "packages/core/src/remote-ci/service.ts";
+    const relatedTest = "packages/core/src/remote-ci/service.test.ts";
+    const filler = "x".repeat(80);
+    const makeLines = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, index) => `// ${prefix}-${index + 1} ${filler}`);
+    const targetLines = makeLines(260, "target-filler");
+    targetLines[39] = "export class RemoteCiService {";
+    targetLines[89] = "  async status(input: CiStatusInput) {";
+    targetLines[99] = '    const operation = this.#operation("ci.status", resolved);';
+    targetLines[109] = "    const waitMs = input.waitMs ?? 0;";
+    targetLines[119] = "    if (waitMs > 0) return;";
+    targetLines[129] = "  }";
+    targetLines[219] = "}";
+    const testLines = makeLines(240, "test-filler");
+    testLines[149] = 'describe("ci.status", () => {';
+    testLines[169] = '  it("waits for terminal status", async () => {';
+    testLines[179] = "    await service.status({ waitMs: 30000 });";
+    testLines[189] = "  });";
+    testLines[209] = "});";
+    const fixture = sources(
+      {
+        [target]: targetLines.join("\n"),
+        [relatedTest]: testLines.join("\n"),
+        "packages/core/src/helper.ts": "helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [{ from: relatedTest, to: target, kind: "tests" }],
+        workspaceWarnings: ["INSPECT_SYMBOL_LIMIT_REACHED"]
+      }
+    );
+    fixture.adapter.search = async (input) => {
+      if (input.mode === "path") {
+        return {
+          schemaVersion: 1,
+          mode: "path",
+          precision: "lexical",
+          matches: [{ path: target, kind: "path" }],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      const matches =
+        input.query === "waitMs"
+          ? [
+              { path: target, line: 110, column: 11, kind: input.mode ?? "text", preview: targetLines[109] },
+              { path: relatedTest, line: 180, column: 28, kind: input.mode ?? "text", preview: testLines[179] }
+            ]
+          : input.query === "ci.status"
+            ? [
+                { path: target, line: 100, column: 38, kind: input.mode ?? "text", preview: targetLines[99] },
+                { path: relatedTest, line: 150, column: 11, kind: input.mode ?? "text", preview: testLines[149] }
+              ]
+            : [];
+      return {
+        schemaVersion: 1,
+        mode: input.mode ?? "text",
+        precision: input.mode === "reference" ? "structural" : "exact",
+        matches,
+        truncated: false,
+        truncationReasons: []
+      };
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target,
+      focus: "ci.status waitMs implementation schema tests",
+      maxBytes: 16 * 1024
+    });
+
+    const selectedTarget = result.selectedFiles.find((file) => file.path === target);
+    const selectedTest = result.selectedFiles.find((file) => file.path === relatedTest);
+    expect(selectedTarget?.region?.startLine).toBeGreaterThan(1);
+    expect(selectedTarget?.content).toContain("waitMs");
+    expect(selectedTarget?.content).not.toContain("// target-filler-1 ");
+    expect(selectedTest?.region?.startLine).toBeGreaterThan(1);
+    expect(selectedTest?.content).toContain("waitMs");
+    expect(selectedTest?.content).not.toContain("// test-filler-1 ");
+    expect(result.totalBytes).toBeLessThan(12 * 1024);
+  });
+
   it("rejects focus without an explicit target path", async () => {
     const fixture = sources({});
     await expect(

@@ -73,6 +73,7 @@ const TIER_BASE: Record<CandidateKind, number> = {
 const TARGET_FILE_BUDGET_SHARE = 0.5;
 const NON_TARGET_FILE_BUDGET_SHARE = 0.25;
 const MAX_CONTEXT_REGION_SOURCE_BYTES = 128 * 1024;
+const FOCUS_SOURCE_CONTEXT_LINES = 20;
 
 export interface ContextBuildAdapter {
   inspect(input: WorkspaceInspectInput): Promise<WorkspaceInspectResult>;
@@ -153,9 +154,15 @@ export async function buildContext(
       const readLimit = candidateReadLimit(candidate, maxBytes, remaining, input.target !== undefined);
       const focusedTarget =
         input.focus !== undefined && input.target !== undefined && candidate.path === input.target;
+      const focusedSourceCandidate =
+        focusEvidence !== undefined &&
+        focusEvidence.state !== "unavailable" &&
+        focusEvidence.value.matches.some(
+          (match) => match.path === candidate.path && match.line !== undefined
+        );
       let region = selectFocusRegion(candidate, workspace, input, focusEvidence);
       const sourceReadLimit =
-        region === undefined && !focusedTarget
+        region === undefined && !focusedTarget && !focusedSourceCandidate
           ? readLimit
           : Math.min(MAX_CONTEXT_MAX_BYTES, Math.max(readLimit, MAX_CONTEXT_REGION_SOURCE_BYTES));
       let read = await adapter.readFile(input.workspaceId, candidate.path, {
@@ -185,6 +192,28 @@ export async function buildContext(
             truncated: false
           });
           totalBytes += regionBytes;
+          continue;
+        }
+      }
+
+      if (read.eof && input.focus !== undefined) {
+        const fallback = selectBoundedFocusRegion(
+          candidate.path,
+          read.contents,
+          input.focus,
+          focusEvidence,
+          readLimit,
+          remaining
+        );
+        if (fallback !== undefined) {
+          selectedFiles.push({
+            path: candidate.path,
+            reason: candidate.reason,
+            content: fallback.content,
+            region: fallback.region,
+            truncated: false
+          });
+          totalBytes += fallback.bytes;
           continue;
         }
       }
@@ -385,6 +414,50 @@ function scopeSearchEvidence(
       (match) => match.path === target || sameArea(match.path, targetArea)
     )
   };
+}
+
+function selectBoundedFocusRegion(
+  path: string,
+  contents: string,
+  focus: string,
+  focusEvidence: EvidenceResult<CodeSearchResult> | undefined,
+  readLimit: number,
+  remaining: number
+): { region: SourceRegion; content: string; bytes: number } | undefined {
+  if (focusEvidence === undefined || focusEvidence.state === "unavailable") return undefined;
+  const matches = focusEvidence.value.matches.filter(
+    (match) => match.path === path && match.line !== undefined
+  );
+  if (matches.length === 0) return undefined;
+
+  let anchor = matches[0]!;
+  for (const query of focusQueries(focus)) {
+    const normalized = query.toLowerCase();
+    const preferred = matches.find((match) =>
+      [match.preview, match.snippet?.text].some(
+        (text) => text !== undefined && text.toLowerCase().includes(normalized)
+      )
+    );
+    if (preferred !== undefined) {
+      anchor = preferred;
+      break;
+    }
+  }
+
+  const anchorLine = anchor.line!;
+  const lineCount = contents.split("\n").length;
+  if (anchorLine < 1 || anchorLine > lineCount) return undefined;
+  for (let radius = FOCUS_SOURCE_CONTEXT_LINES; radius >= 0; radius -= 1) {
+    const region = {
+      startLine: Math.max(1, anchorLine - radius),
+      endLine: Math.min(lineCount, anchorLine + radius)
+    };
+    const content = sliceLineRegion(contents, region);
+    if (content === undefined) continue;
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes <= readLimit && bytes <= remaining) return { region, content, bytes };
+  }
+  return undefined;
 }
 
 function selectFocusRegion(
