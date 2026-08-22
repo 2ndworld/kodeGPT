@@ -540,6 +540,143 @@ describe("context.build", () => {
     expect(result.totalBytes).toBeLessThan(12 * 1024);
   });
 
+  it("does not backfill focused context with derived candidates that have no focus evidence", async () => {
+    const target = "packages/core/src/remote-ci/service.ts";
+    const relatedTest = "packages/core/src/remote-ci/service.test.ts";
+    const schema = "packages/core/src/remote-ci/schemas.ts";
+    const unrelatedDependency = "packages/core/src/remote-ci/errors.ts";
+    const unrelatedDependent = "packages/core/src/remote-ci/production.ts";
+    const unrelatedSearch = "packages/core/src/remote-ci/helper.ts";
+    const unrelatedNearbyTest = "packages/core/src/remote-ci/helper.test.ts";
+    const noise = `${"x".repeat(120)}\n`.repeat(300);
+    const fixture = sources(
+      {
+        [target]: "export class Service {\n  waitMs = 0;\n}\n",
+        [relatedTest]: "it('waits', () => {\n  service.status({ waitMs: 30000 });\n});\n",
+        [schema]: "export const schema = {\n  waitMs: 30000\n};\n",
+        [unrelatedDependency]: noise,
+        [unrelatedDependent]: noise,
+        [unrelatedSearch]: noise,
+        [unrelatedNearbyTest]: noise,
+        "packages/core/src/helper.ts": "changed-helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      {
+        relationships: [
+          { from: relatedTest, to: target, kind: "tests" },
+          { from: target, to: schema, kind: "imports" },
+          { from: target, to: unrelatedDependency, kind: "imports" },
+          { from: unrelatedDependent, to: target, kind: "imports" }
+        ]
+      }
+    );
+    fixture.adapter.search = async (input) => {
+      if (input.mode === "path") {
+        return {
+          schemaVersion: 1,
+          mode: "path",
+          precision: "lexical",
+          matches: [
+            { path: target, kind: "path" },
+            { path: unrelatedSearch, kind: "path" },
+            { path: unrelatedNearbyTest, kind: "path" }
+          ],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      const matches =
+        input.query === "waitMs"
+          ? [
+              { path: target, line: 2, column: 3, kind: input.mode ?? "text", preview: "  waitMs = 0;" },
+              { path: relatedTest, line: 2, column: 20, kind: input.mode ?? "text", preview: "  service.status({ waitMs: 30000 });" },
+              { path: schema, line: 2, column: 3, kind: input.mode ?? "text", preview: "  waitMs: 30000" }
+            ]
+          : [];
+      return {
+        schemaVersion: 1,
+        mode: input.mode ?? "text",
+        precision: input.mode === "reference" ? "structural" : "exact",
+        matches,
+        truncated: false,
+        truncationReasons: []
+      };
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target,
+      focus: "ci.status waitMs implementation schema tests",
+      maxBytes: 32 * 1024
+    });
+
+    expect(result.selectedFiles.map((file) => file.path)).toEqual([
+      target,
+      relatedTest,
+      schema,
+      "packages/core/src/helper.ts",
+      "package.json",
+      "packages/core/package.json"
+    ]);
+    expect(fixture.readCalls).not.toEqual(expect.arrayContaining([
+      unrelatedDependency,
+      unrelatedDependent,
+      unrelatedSearch,
+      unrelatedNearbyTest
+    ]));
+    expect(result.totalBytes).toBeLessThan(4 * 1024);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("keeps derived candidates when focus evidence is incomplete", async () => {
+    const target = "packages/core/src/service.ts";
+    const dependency = "packages/core/src/dependency.ts";
+    const fixture = sources(
+      {
+        [target]: "target\n",
+        [dependency]: "dependency\n",
+        "packages/core/src/helper.ts": "changed-helper\n",
+        "package.json": "root-manifest\n",
+        "packages/core/package.json": "core-manifest\n"
+      },
+      { relationships: [{ from: target, to: dependency, kind: "imports" }] }
+    );
+    fixture.adapter.search = async (input) => {
+      if (input.mode === "path") {
+        return {
+          schemaVersion: 1,
+          mode: "path",
+          precision: "lexical",
+          matches: [{ path: target, kind: "path" }],
+          truncated: false,
+          truncationReasons: []
+        };
+      }
+      return {
+        schemaVersion: 1,
+        mode: input.mode ?? "text",
+        precision: input.mode === "reference" ? "structural" : "exact",
+        matches: [],
+        truncated: true,
+        truncationReasons: ["MATCH_LIMIT"]
+      };
+    };
+
+    const result = await buildContext(fixture.adapter, {
+      workspaceId: "ws_1",
+      intent: "verify",
+      target,
+      focus: "waitMs implementation",
+      maxBytes: 8 * 1024
+    });
+
+    expect(result.selectedFiles.map((file) => file.path)).toContain(dependency);
+    expect(result.evidenceStatus.search).toBe("incomplete");
+    expect(result.truncated).toBe(true);
+  });
+
   it("rejects focus without an explicit target path", async () => {
     const fixture = sources({});
     await expect(
